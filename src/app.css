@@ -16,6 +16,10 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   display: flex;
@@ -24,6 +28,7 @@ body {
   min-height: 100vh;
   background-color: var(--bg-color);
   color: var(--text-color);
+  overflow-x: hidden; /* Prevent horizontal scroll */
 }
 
 #app {
