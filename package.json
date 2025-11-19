@@ -11,8 +11,8 @@
     "deploy": "gh-pages -d dist"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Nicholas Tinsley",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "@monogrid/gainmap-js": "^3.2.0",
