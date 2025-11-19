@@ -7,6 +7,7 @@
   let maxContentBoost = 2.3;
   let rotation = 0;
   let quality = 0.95;
+  let discardGainMap = false;
   let processing = false;
   let results = [];
   let error = null;
@@ -30,7 +31,9 @@
         const blob = await processImage(file, {
           maxContentBoost,
           rotation,
+          rotation,
           quality,
+          discardGainMap,
         });
         const url = URL.createObjectURL(blob);
         results = [
@@ -106,6 +109,7 @@
     rotation = 0;
     maxContentBoost = 2.3;
     quality = 0.95;
+    discardGainMap = false;
     selectedIndices = new Set();
     dispatch("reset");
   }
@@ -204,6 +208,18 @@
       </div>
     </div>
 
+    <div class="control-group checkbox-group">
+      <input
+        type="checkbox"
+        id="discardGainMap"
+        bind:checked={discardGainMap}
+        disabled={processing}
+      />
+      <label for="discardGainMap" class="inline-label"
+        >Discard existing gain map(s)</label
+      >
+    </div>
+
     <div class="actions">
       <button on:click={reset} disabled={processing} class="secondary">
         Start Over
@@ -298,6 +314,18 @@
     text-align: left;
   }
 
+  .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .inline-label {
+    margin-bottom: 0 !important;
+    font-weight: normal !important;
+    cursor: pointer;
+  }
+
   label,
   .label {
     display: block;
@@ -318,10 +346,12 @@
     background: var(--text-secondary);
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
   }
 
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
+    appearance: none;
     width: 20px;
     height: 20px;
     background: var(--primary-color);

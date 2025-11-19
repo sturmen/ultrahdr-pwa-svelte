@@ -13,7 +13,7 @@ import { processHeic } from './heic-processing.js';
  * @param {number} options.maxContentBoost - Max content boost for gain map.
  * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
  */
-export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95 }) {
+export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false }) {
     console.log('[Process] Starting processing for:', file.name);
 
     // Handle HEIC/HEIF
