@@ -5,6 +5,7 @@ import { TextureLoader, SRGBColorSpace, LinearSRGBColorSpace, HalfFloatType, NoC
 import piexif from 'piexifjs';
 
 import { processHeic } from './heic-processing.js';
+import { processTiff } from './tiff-processing.js';
 
 /**
  * Processes an image file to create an UltraHDR JPEG.
@@ -27,6 +28,21 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
             }
         } catch (e) {
             console.error('[Process] HEIC conversion failed:', e);
+            throw e;
+        }
+    }
+
+    // Handle TIFF
+    if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
+        console.log('[Process] Detected TIFF, converting...');
+        try {
+            const convertedFile = await processTiff(file);
+            if (convertedFile) {
+                file = convertedFile;
+                console.log('[Process] Converted TIFF to:', file.type);
+            }
+        } catch (e) {
+            console.error('[Process] TIFF conversion failed:', e);
             throw e;
         }
     }

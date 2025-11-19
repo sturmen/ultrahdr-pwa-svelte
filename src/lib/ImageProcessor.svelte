@@ -291,7 +291,7 @@
         type="file"
         id="add-files"
         multiple
-        accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif"
+        accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
         style="display: none;"
         on:change={handleAddFiles}
         disabled={processing}

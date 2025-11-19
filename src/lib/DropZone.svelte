@@ -21,7 +21,7 @@
     }
   }
 
-  function handleInput(e) {
+  function handleFiles(e) {
     if (e.target.files && e.target.files.length > 0) {
       dispatch("files", e.target.files);
     }
@@ -40,13 +40,13 @@
 >
   <input
     type="file"
-    id="file-input"
+    id="file-upload"
     multiple
-    accept="image/*,.heic,.heif"
-    on:change={handleInput}
+    accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
+    on:change={handleFiles}
     hidden
   />
-  <label for="file-input" class="drop-label">
+  <label for="file-upload" class="drop-label">
     <div class="icon">
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -63,8 +63,10 @@
         />
       </svg>
     </div>
-    <p>Drag & Drop images here or <span class="highlight">Browse</span></p>
-    <p class="subtext">Supports JPEG, PNG, WebP, HEIC, HEIF</p>
+    <p>
+      Drag & drop images here, or click to select<br />
+      <span class="sub-text">(JPG, PNG, WebP, HEIC, TIFF)</span>
+    </p>
   </label>
 </div>
 
@@ -110,12 +112,7 @@
     color: var(--text-color);
   }
 
-  .highlight {
-    color: var(--primary-color);
-    font-weight: 600;
-  }
-
-  .subtext {
+  .sub-text {
     font-size: 0.9rem;
     color: var(--text-secondary);
   }
