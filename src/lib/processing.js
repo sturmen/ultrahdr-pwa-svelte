@@ -1,7 +1,7 @@
 import { compress, encode, findTextureMinMax } from '@monogrid/gainmap-js/encode';
 import { encodeJPEGMetadata } from '@monogrid/gainmap-js/libultrahdr';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
-import { TextureLoader, SRGBColorSpace, LinearSRGBColorSpace, HalfFloatType, NoColorSpace, Texture, DataTexture, FloatType, RGBAFormat, NoToneMapping } from 'three';
+import { TextureLoader, SRGBColorSpace, LinearSRGBColorSpace, HalfFloatType, NoColorSpace, Texture, DataTexture, FloatType, RGBAFormat, NoToneMapping, DataUtils } from 'three';
 import piexif from 'piexifjs';
 
 /**
@@ -34,8 +34,8 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     });
 
     // Handle Rotation and Get Pixel Data
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+    let canvas = document.createElement('canvas');
+    let ctx = canvas.getContext('2d');
 
     let width = img.width;
     let height = img.height;
@@ -56,13 +56,19 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     ctx.rotate(rotation * Math.PI / 180);
     ctx.drawImage(img, -width / 2, -height / 2);
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const rgba = imageData.data;
+    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let rgba = imageData.data;
 
-    // Convert to Float32 DataTexture (HDR)
+    // Cleanup canvas immediately
+    canvas.width = 1;
+    canvas.height = 1;
+    canvas = null;
+    ctx = null;
+
+    // Convert to HalfFloat DataTexture (HDR)
     // We perform Inverse Tone Mapping here by converting sRGB to Linear and applying boost
     const length = rgba.length;
-    const float32 = new Float32Array(length);
+    const uint16 = new Uint16Array(length); // Use Uint16 for HalfFloat
     const maxContentBoost = options.maxContentBoost || 4.0;
 
     // sRGB to Linear conversion helper
@@ -78,15 +84,23 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
         // we simply boost the linear values.
         // Note: gainmap-js expects the 'image' parameter to be the HDR representation.
 
-        float32[i] = toLinear(rgba[i]) * maxContentBoost;     // R
-        float32[i + 1] = toLinear(rgba[i + 1]) * maxContentBoost; // G
-        float32[i + 2] = toLinear(rgba[i + 2]) * maxContentBoost; // B
-        float32[i + 3] = rgba[i + 3] / 255; // Alpha
+        // Use DataUtils.toHalfFloat to convert float to half-float (uint16)
+        uint16[i] = DataUtils.toHalfFloat(toLinear(rgba[i]) * maxContentBoost);     // R
+        uint16[i + 1] = DataUtils.toHalfFloat(toLinear(rgba[i + 1]) * maxContentBoost); // G
+        uint16[i + 2] = DataUtils.toHalfFloat(toLinear(rgba[i + 2]) * maxContentBoost); // B
+        uint16[i + 3] = DataUtils.toHalfFloat(rgba[i + 3] / 255); // Alpha
     }
 
-    const texture = new DataTexture(float32, canvas.width, canvas.height, RGBAFormat, FloatType);
+    // We don't need rgba anymore for the HDR texture, but we need it for SDR compression.
+    // However, we can't dispose it yet.
+
+    const texture = new DataTexture(uint16, imageData.width, imageData.height, RGBAFormat, HalfFloatType);
     texture.colorSpace = LinearSRGBColorSpace;
     texture.needsUpdate = true;
+
+    // Free uint16 array after texture creation (Three.js clones it? No, it uses it by reference usually, but DataTexture might take ownership or we should keep it until upload. 
+    // Actually, DataTexture keeps a reference. We can't null it until texture is disposed or uploaded.
+    // But we can null the local variable reference.
 
     // Encode
     // We use NoToneMapping and adjust exposure to ensure the generated SDR matches our original SDR (conceptually).
@@ -112,7 +126,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
 
     // Create ImageDatas
     // For SDR, we use the ORIGINAL image data to preserve it exactly as requested.
-    const sdrImageData = imageData;
+    let sdrImageData = imageData;
 
     // For GainMap, we use the result from the encoder.
     // We must ensure the gain map is calculated. Calling toArray() triggers render.
@@ -121,8 +135,6 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     // Force SDR render first (by calling toArray, even if we discard it, or just render())
     // encodingResult.sdr.render();
     // But toArray() reads pixels which is slow. render() is fast.
-    // Let's assume toArray() on gainMap handles dependencies or we just rely on Promise.all if independent.
-    // But wait, if I changed exposure, I definitely need that change to propagate.
     // Let's assume Promise.all is fine if gainmap-js is well written, BUT to be safe given my manual material tweak:
 
     // We'll run gainMap compression. This calls toArray() on gainMap renderer.
@@ -131,54 +143,45 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     encodingResult.sdr.render();
 
     const gainMapArray = encodingResult.gainMap.toArray();
-    const gainMapImageData = new ImageData(
+    let gainMapImageData = new ImageData(
         new Uint8ClampedArray(gainMapArray),
         encodingResult.gainMap.width,
         encodingResult.gainMap.height
     );
 
-    // DEBUG: Visualize Gain Map
-    const debugCanvas = document.createElement('canvas');
-    debugCanvas.width = encodingResult.gainMap.width;
-    debugCanvas.height = encodingResult.gainMap.height;
-    debugCanvas.style.position = 'fixed';
-    debugCanvas.style.top = '10px';
-    debugCanvas.style.right = '10px';
-    debugCanvas.style.zIndex = '9999';
-    debugCanvas.style.border = '2px solid red';
-    debugCanvas.style.width = '200px'; // Scale down for view
-    const debugCtx = debugCanvas.getContext('2d');
-
-    // WebGL data is bottom-up, so we need to flip it to visualize correctly on canvas (which is top-down)
-    // Create a temporary bitmap to flip it or manually flip?
-    // Actually, let's just draw it directly. If it looks upside down here, that confirms it's bottom-up data.
-    debugCtx.putImageData(gainMapImageData, 0, 0);
-
-    // To visualize it "correctly" as it will be encoded (with flipY: true), we should flip it here?
-    // No, let's just see the raw data.
-    // If raw data is upside-down, and we pass flipY: true to compress, then compress flips it to be right-side up.
-    // So if we see it upside-down here, that's GOOD (matches expectation).
-    // If we see it right-side up here, then flipY: true will make it upside-down!
-
-    document.body.appendChild(debugCanvas);
-    console.log('Debug canvas added');
+    // Cleanup WebGL resources immediately
+    encodingResult.gainMap.dispose();
+    encodingResult.sdr.dispose();
+    texture.dispose();
 
     // Compress
     const mimeType = 'image/jpeg';
     const quality = options.quality || 0.95;
 
-    const [sdr, gainMap] = await Promise.all([
-        compress({
-            source: sdrImageData, // Use ORIGINAL SDR
-            mimeType,
-            quality
-        }),
-        compress({
-            source: gainMapImageData,
-            mimeType,
-            quality
-        })
-    ]);
+    // Serialize compression to save memory
+    // Compress SDR
+    const sdr = await compress({
+        source: sdrImageData, // Use ORIGINAL SDR
+        mimeType,
+        quality,
+        flipY: false // Explicitly false as requested
+    });
+
+    // Release SDR data
+    sdrImageData = null;
+    rgba = null;
+    imageData = null;
+
+    // Compress GainMap
+    const gainMap = await compress({
+        source: gainMapImageData,
+        mimeType,
+        quality,
+        flipY: false // Explicitly false as requested (user said removing it fixed the issue)
+    });
+
+    // Release GainMap data
+    gainMapImageData = null;
 
     // Get Metadata
     const metadata = encodingResult.getMetadata();
@@ -190,11 +193,6 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
         sdr,
         gainMap
     });
-
-    // Cleanup
-    encodingResult.gainMap.dispose();
-    encodingResult.sdr.dispose();
-    texture.dispose();
 
     // Re-insert EXIF if it existed
     let finalJpeg = jpegUint8Array;
