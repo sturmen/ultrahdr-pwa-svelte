@@ -4,6 +4,8 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { TextureLoader, SRGBColorSpace, LinearSRGBColorSpace, HalfFloatType, NoColorSpace, Texture, DataTexture, FloatType, RGBAFormat, NoToneMapping, DataUtils } from 'three';
 import piexif from 'piexifjs';
 
+import { processHeic } from './heic-processing.js';
+
 /**
  * Processes an image file to create an UltraHDR JPEG.
  * @param {File} file - The input image file.
@@ -13,6 +15,22 @@ import piexif from 'piexifjs';
  */
 export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95 }) {
     console.log('[Process] Starting processing for:', file.name);
+
+    // Handle HEIC/HEIF
+    if (file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+        console.log('[Process] Detected HEIC/HEIF, converting...');
+        try {
+            const convertedFile = await processHeic(file, options);
+            if (convertedFile) {
+                file = convertedFile;
+                console.log('[Process] Converted HEIC to:', file.type);
+            }
+        } catch (e) {
+            console.error('[Process] HEIC conversion failed:', e);
+            throw e;
+        }
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const dataUrl = await readFileAsDataURL(file);
     console.log('[Process] File loaded');
@@ -177,8 +195,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const sdr = await compress({
         source: sdrImageData, // Use ORIGINAL SDR
         mimeType,
-        quality,
-        flipY: false // Explicitly false as requested
+        quality
     });
     console.log('[Process] SDR compression complete');
 
@@ -193,8 +210,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const gainMap = await compress({
         source: gainMapImageData,
         mimeType,
-        quality,
-        flipY: false // Explicitly false as requested (user said removing it fixed the issue)
+        quality
     });
     console.log('[Process] GainMap compression complete');
 
@@ -222,8 +238,6 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
             if (exifObj["0th"] && exifObj["0th"][piexif.ImageIFD.Orientation]) {
                 exifObj["0th"][piexif.ImageIFD.Orientation] = 1;
             }
-            // Remove thumbnail to save space/avoid conflicts? Optional.
-            // delete exifObj["thumbnail"];
 
             const binary = Array.from(finalJpeg).map(b => String.fromCharCode(b)).join('');
             const exifBytes = piexif.dump(exifObj);
@@ -244,7 +258,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     return new Blob([finalJpeg], { type: 'image/jpeg' });
 }
 
-function readFileAsDataURL(file) {
+export function readFileAsDataURL(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);

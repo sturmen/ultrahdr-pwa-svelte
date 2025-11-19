@@ -119,7 +119,7 @@
     <h2>Settings</h2>
 
     <div class="control-group">
-      <label>Rotation</label>
+      <span class="label">Rotation</span>
       <div class="button-group">
         <button
           on:click={() => rotate(-90)}
@@ -298,7 +298,8 @@
     text-align: left;
   }
 
-  label {
+  label,
+  .label {
     display: block;
     margin-bottom: 0.5rem;
     font-weight: 500;

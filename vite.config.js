@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { VitePWA } from 'vite-plugin-pwa'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -28,6 +29,14 @@ export default defineConfig({
           }
         ]
       }
+    }),
+    viteStaticCopy({
+      targets: [
+        {
+          src: 'node_modules/libheif-js/libheif-wasm/libheif.wasm',
+          dest: 'assets'
+        }
+      ]
     })
   ],
   optimizeDeps: {
