@@ -12,14 +12,17 @@ import piexif from 'piexifjs';
  * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
  */
 export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95 }) {
+    console.log('[Process] Starting processing for:', file.name);
     const arrayBuffer = await file.arrayBuffer();
     const dataUrl = await readFileAsDataURL(file);
+    console.log('[Process] File loaded');
 
     // Extract EXIF
     let exifObj = null;
     try {
         if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
             exifObj = piexif.load(dataUrl);
+            console.log('[Process] EXIF extracted');
         }
     } catch (e) {
         console.warn('Could not extract EXIF:', e);
@@ -32,6 +35,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
         i.onerror = reject;
         i.src = dataUrl;
     });
+    console.log('[Process] Image object created', img.width, 'x', img.height);
 
     // Handle Rotation and Get Pixel Data
     let canvas = document.createElement('canvas');
@@ -55,15 +59,18 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate(rotation * Math.PI / 180);
     ctx.drawImage(img, -width / 2, -height / 2);
+    console.log('[Process] Canvas drawn (rotation applied)');
 
     let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     let rgba = imageData.data;
+    console.log('[Process] Image data retrieved');
 
     // Cleanup canvas immediately
     canvas.width = 1;
     canvas.height = 1;
     canvas = null;
     ctx = null;
+    console.log('[Process] Canvas cleaned up');
 
     // Convert to HalfFloat DataTexture (HDR)
     // We perform Inverse Tone Mapping here by converting sRGB to Linear and applying boost
@@ -90,6 +97,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
         uint16[i + 2] = DataUtils.toHalfFloat(toLinear(rgba[i + 2]) * maxContentBoost); // B
         uint16[i + 3] = DataUtils.toHalfFloat(rgba[i + 3] / 255); // Alpha
     }
+    console.log('[Process] Converted to HalfFloat Uint16Array');
 
     // We don't need rgba anymore for the HDR texture, but we need it for SDR compression.
     // However, we can't dispose it yet.
@@ -97,6 +105,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const texture = new DataTexture(uint16, imageData.width, imageData.height, RGBAFormat, HalfFloatType);
     texture.colorSpace = LinearSRGBColorSpace;
     texture.needsUpdate = true;
+    console.log('[Process] HDR DataTexture created');
 
     // Free uint16 array after texture creation (Three.js clones it? No, it uses it by reference usually, but DataTexture might take ownership or we should keep it until upload. 
     // Actually, DataTexture keeps a reference. We can't null it until texture is disposed or uploaded.
@@ -110,6 +119,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
         maxContentBoost: maxContentBoost,
         toneMapping: NoToneMapping
     });
+    console.log('[Process] gainmap-js encode() called');
 
     // Adjust SDR renderer exposure to compensate for the boost.
     // HDR = SDR_linear * boost
@@ -141,8 +151,10 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     // Does gainMap renderer automatically render sdr renderer? Probably not.
     // So we should render sdr first.
     encodingResult.sdr.render();
+    console.log('[Process] SDR rendered');
 
     const gainMapArray = encodingResult.gainMap.toArray();
+    console.log('[Process] GainMap toArray() completed');
     let gainMapImageData = new ImageData(
         new Uint8ClampedArray(gainMapArray),
         encodingResult.gainMap.width,
@@ -153,6 +165,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     encodingResult.gainMap.dispose();
     encodingResult.sdr.dispose();
     texture.dispose();
+    console.log('[Process] WebGL resources disposed');
 
     // Compress
     const mimeType = 'image/jpeg';
@@ -160,25 +173,30 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
 
     // Serialize compression to save memory
     // Compress SDR
+    console.log('[Process] Starting SDR compression...');
     const sdr = await compress({
         source: sdrImageData, // Use ORIGINAL SDR
         mimeType,
         quality,
         flipY: false // Explicitly false as requested
     });
+    console.log('[Process] SDR compression complete');
 
     // Release SDR data
     sdrImageData = null;
     rgba = null;
     imageData = null;
+    console.log('[Process] SDR data released');
 
     // Compress GainMap
+    console.log('[Process] Starting GainMap compression...');
     const gainMap = await compress({
         source: gainMapImageData,
         mimeType,
         quality,
         flipY: false // Explicitly false as requested (user said removing it fixed the issue)
     });
+    console.log('[Process] GainMap compression complete');
 
     // Release GainMap data
     gainMapImageData = null;
@@ -187,12 +205,14 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const metadata = encodingResult.getMetadata();
 
     // Embed Metadata and Images
+    console.log('[Process] Embedding metadata...');
     const jpegUint8Array = await encodeJPEGMetadata({
         ...encodingResult,
         ...metadata,
         sdr,
         gainMap
     });
+    console.log('[Process] Metadata embedded');
 
     // Re-insert EXIF if it existed
     let finalJpeg = jpegUint8Array;
@@ -214,11 +234,13 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
             for (let i = 0; i < len; i++) {
                 finalJpeg[i] = newBinary.charCodeAt(i);
             }
+            console.log('[Process] EXIF re-inserted');
         } catch (e) {
             console.warn('Could not re-insert EXIF:', e);
         }
     }
 
+    console.log('[Process] Processing complete, returning Blob');
     return new Blob([finalJpeg], { type: 'image/jpeg' });
 }
 

@@ -45,8 +45,9 @@
         selectedIndices.add(i); // Auto-select new results
       }
       selectedIndices = selectedIndices; // Trigger reactivity
+      selectedIndices = selectedIndices; // Trigger reactivity
     } catch (e) {
-      console.error(e);
+      console.error("[UI] Error processing files:", e);
       error = e.message;
     } finally {
       processing = false;
