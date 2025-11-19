@@ -37,11 +37,11 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 
 ## Roadmap
 
-- Preservation of HEIC input gain maps rather than generating a new one
+- Improve preservation of HEIC input gain maps rather than generating a new one
 
 ## How you can help
 
-- Fix iOS Safari support
+- Improve iOS Safari (and other memory-constrained environments) support
 - Create and implement a better gain map algorithm
 - Create and implement a way to up-map the color gamut from sRGB to P3
 - General improvements (testing, code organization, etc)
