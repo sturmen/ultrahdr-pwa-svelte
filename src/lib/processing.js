@@ -13,7 +13,7 @@ import { processHeic } from './heic-processing.js';
  * @param {number} options.maxContentBoost - Max content boost for gain map.
  * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
  */
-export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false }) {
+export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false }) {
     console.log('[Process] Starting processing for:', file.name);
 
     // Handle HEIC/HEIF
@@ -230,9 +230,9 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     });
     console.log('[Process] Metadata embedded');
 
-    // Re-insert EXIF if it existed
+    // Re-insert EXIF if it existed and not stripping
     let finalJpeg = jpegUint8Array;
-    if (exifObj) {
+    if (exifObj && !options.stripExif) {
         try {
             // Reset Orientation to 1 (Normal)
             if (exifObj["0th"] && exifObj["0th"][piexif.ImageIFD.Orientation]) {

@@ -8,6 +8,7 @@
   let rotation = 0;
   let quality = 0.95;
   let discardGainMap = false;
+  let stripExif = false;
   let processing = false;
   let results = [];
   let error = null;
@@ -34,6 +35,7 @@
           rotation,
           quality,
           discardGainMap,
+          stripExif,
         });
         const url = URL.createObjectURL(blob);
         results = [
@@ -110,6 +112,7 @@
     maxContentBoost = 2.3;
     quality = 0.95;
     discardGainMap = false;
+    stripExif = false;
     selectedIndices = new Set();
     dispatch("reset");
   }
@@ -213,11 +216,23 @@
         type="checkbox"
         id="discardGainMap"
         bind:checked={discardGainMap}
+        on:change={handleSettingChange}
         disabled={processing}
       />
       <label for="discardGainMap" class="inline-label"
         >Discard existing gain map(s)</label
       >
+    </div>
+
+    <div class="control-group checkbox-group">
+      <input
+        type="checkbox"
+        id="stripExif"
+        bind:checked={stripExif}
+        on:change={handleSettingChange}
+        disabled={processing}
+      />
+      <label for="stripExif" class="inline-label">Strip EXIF data</label>
     </div>
 
     <div class="actions">
