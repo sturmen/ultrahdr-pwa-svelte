@@ -15,42 +15,38 @@
   let debounceTimer;
   let selectedIndices = new Set();
 
-  // Initial process
-  onMount(() => {
-    processFiles();
-  });
-
-  async function processFiles() {
+  // Process a specific list of files and append results
+  async function processSubset(subset, startIndex) {
     processing = true;
-    results = [];
     error = null;
-    selectedIndices = new Set(); // Reset selection on re-process? Or keep? Let's reset for simplicity as results are regenerated.
 
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (let i = 0; i < subset.length; i++) {
+        const file = subset[i];
+        const globalIndex = startIndex + i;
+
         const blob = await processImage(file, {
           maxContentBoost,
-          rotation,
           rotation,
           quality,
           discardGainMap,
           stripExif,
         });
         const url = URL.createObjectURL(blob);
+
+        // Append result
         results = [
           ...results,
           {
             originalName: file.name,
             url,
             size: blob.size,
-            index: i,
+            index: globalIndex,
           },
         ];
-        selectedIndices.add(i); // Auto-select new results
+        selectedIndices.add(globalIndex); // Auto-select new results
+        selectedIndices = selectedIndices; // Trigger reactivity
       }
-      selectedIndices = selectedIndices; // Trigger reactivity
-      selectedIndices = selectedIndices; // Trigger reactivity
     } catch (e) {
       console.error("[UI] Error processing files:", e);
       error = e.message;
@@ -59,10 +55,65 @@
     }
   }
 
+  // Process ALL files (re-process everything)
+  async function processAll() {
+    results = [];
+    selectedIndices = new Set();
+    await processSubset(files, 0);
+  }
+
+  // Initial process
+  onMount(() => {
+    processAll();
+  });
+
+  // Handle adding new files
+  async function handleAddFiles(event) {
+    const newFiles = Array.from(event.target.files);
+    if (newFiles.length === 0) return;
+
+    const startIndex = files.length;
+    files = [...files, ...newFiles];
+
+    // Process only the new files
+    await processSubset(newFiles, startIndex);
+
+    // Reset input
+    event.target.value = "";
+  }
+
+  // Handle removing a file
+  function removeImage(index) {
+    // Revoke URL to avoid memory leak
+    if (results[index] && results[index].url) {
+      URL.revokeObjectURL(results[index].url);
+    }
+
+    // Remove from files and results
+    files = files.filter((_, i) => i !== index);
+    results = results.filter((_, i) => i !== index);
+
+    // Re-calculate indices in results
+    results = results.map((r, i) => ({ ...r, index: i }));
+
+    // Update selection
+    const newSelection = new Set();
+    selectedIndices.forEach((i) => {
+      if (i < index) newSelection.add(i);
+      else if (i > index) newSelection.add(i - 1);
+    });
+    selectedIndices = newSelection;
+
+    // If no files left, reset (which might trigger parent to show dropzone if bound, or we just show empty state)
+    if (files.length === 0) {
+      reset();
+    }
+  }
+
   function handleSettingChange() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      processFiles();
+      processAll();
     }, 500);
   }
 
@@ -236,6 +287,22 @@
     </div>
 
     <div class="actions">
+      <input
+        type="file"
+        id="add-files"
+        multiple
+        accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif"
+        style="display: none;"
+        on:change={handleAddFiles}
+        disabled={processing}
+      />
+      <button
+        class="secondary"
+        on:click={() => document.getElementById("add-files").click()}
+        disabled={processing}
+      >
+        Add Images
+      </button>
       <button on:click={reset} disabled={processing} class="secondary">
         Start Over
       </button>
@@ -302,6 +369,24 @@
                   <div class="circle"></div>
                 {/if}
               </div>
+              <button
+                class="remove-btn"
+                on:click|stopPropagation={() => removeImage(i)}
+                title="Remove image"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  class="w-5 h-5"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+              </button>
               <div class="preview">
                 <img src={result.url} alt="Processed result" />
               </div>
@@ -542,6 +627,29 @@
     right: 0.75rem;
     z-index: 2;
     color: var(--primary-color);
+  }
+
+  .remove-btn {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 2;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    padding: 0;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .remove-btn:hover {
+    background: rgba(255, 69, 58, 0.9);
   }
 
   .selection-indicator svg {
