@@ -4,6 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: process.env.NODE_ENV === 'production' ? '/ultrahdr-pwa-svelte/' : '/',
   plugins: [
     svelte(),
     VitePWA({
@@ -43,6 +44,5 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp'
     }
-  },
-  base:"/ultrahdr-pwa-svelte/"
+  }
 })
