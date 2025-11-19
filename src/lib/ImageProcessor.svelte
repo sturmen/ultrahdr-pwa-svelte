@@ -4,7 +4,7 @@
 
   export let files = [];
 
-  let maxContentBoost = 4.0;
+  let maxContentBoost = 2.3;
   let rotation = 0;
   let quality = 0.95;
   let processing = false;
@@ -104,7 +104,7 @@
     files = [];
     results = [];
     rotation = 0;
-    maxContentBoost = 4.0;
+    maxContentBoost = 2.3;
     quality = 0.95;
     selectedIndices = new Set();
     dispatch("reset");
@@ -176,7 +176,7 @@
           type="range"
           id="boost"
           min="1.0"
-          max="10.0"
+          max="4.0"
           step="0.1"
           bind:value={maxContentBoost}
           on:input={handleSettingChange}
