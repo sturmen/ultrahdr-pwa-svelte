@@ -1,12 +1,14 @@
 {
   "name": "ultrahdr-pwa-svelte",
   "version": "1.0.0",
-  "description": "",
+  "description": "A progressive webapp to encode UltraHDR images.",
+  "homepage": "https://sturmen.github.io/ultrahdr-pwa-svelte",
   "main": "index.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "gh-pages -d dist"
   },
   "keywords": [],
   "author": "",
@@ -20,5 +22,8 @@
     "three": "^0.181.2",
     "vite": "^7.2.2",
     "vite-plugin-pwa": "^1.1.0"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0"
   }
 }
