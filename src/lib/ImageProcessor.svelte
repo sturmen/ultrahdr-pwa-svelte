@@ -482,11 +482,20 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 1rem;
+    background-color: transparent;
+    border: 1px solid var(--text-secondary);
+    color: var(--text-color);
+    border-radius: 8px;
+    cursor: pointer;
   }
 
   .icon-btn svg {
     width: 1.2rem;
     height: 1.2rem;
+  }
+
+  .icon-btn:hover {
+    border-color: var(--text-color);
   }
 
   .actions {
