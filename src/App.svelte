@@ -14,9 +14,11 @@
 </script>
 
 <main>
-  <h1>UltraHDR Converter</h1>
+  <h1>UltraHDR Image Enhancer</h1>
   <p class="subtitle">
-    Convert your images to UltraHDR with gain maps, entirely offline.
+    Convert your images to UltraHDR.<br />
+    No cost, no cloud, no server, no registration, no ads.<br />
+    Completely private, completely offline.
   </p>
 
   {#if files.length === 0}
@@ -26,6 +28,13 @@
   {:else}
     <ImageProcessor {files} on:reset={handleReset} />
   {/if}
+  <p class="footer">
+    May not work well on memory-constrained devices (smartphones/tablets/etc).
+    Try on a desktop/laptop if you run into issues.<br />
+    <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a><br
+    />
+    <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
+  </p>
 </main>
 
 <style>
