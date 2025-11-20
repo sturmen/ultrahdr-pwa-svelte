@@ -66,8 +66,48 @@
 
   // Initial process
   onMount(() => {
+    checkSharedFiles();
     processAll();
   });
+
+  // Check for files shared via Web Share Target API
+  async function checkSharedFiles() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("share-target") === "true") {
+      console.log("[Share Target] Detected share target launch");
+      try {
+        // Open IndexedDB to get files
+        const db = await new Promise((resolve, reject) => {
+          const request = indexedDB.open("ultrahdr-share-store", 1);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+
+        const transaction = db.transaction(["shared-files"], "readonly");
+        const store = transaction.objectStore("shared-files");
+        const getAllRequest = store.getAll();
+
+        const sharedFiles = await new Promise((resolve, reject) => {
+          getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+          getAllRequest.onerror = () => reject(getAllRequest.error);
+        });
+
+        if (sharedFiles && sharedFiles.length > 0) {
+          console.log("[Share Target] Found", sharedFiles.length, "files");
+
+          // Clean URL
+          window.history.replaceState({}, "", window.location.pathname);
+
+          // Add to files
+          const startIndex = files.length;
+          files = [...files, ...sharedFiles];
+          await processSubset(sharedFiles, startIndex);
+        }
+      } catch (e) {
+        console.error("[Share Target] Error retrieving files:", e);
+      }
+    }
+  }
 
   // Handle adding new files
   async function handleAddFiles(event) {
@@ -156,6 +196,38 @@
         download(result);
       }
     });
+  }
+
+  async function shareSelected() {
+    const selectedResults = results.filter((_, i) => selectedIndices.has(i));
+    if (selectedResults.length === 0) return;
+
+    try {
+      const filesToShare = await Promise.all(
+        selectedResults.map(async (res) => {
+          const blob = await fetch(res.url).then((r) => r.blob());
+          // Use original name but ensure .jpg extension
+          const name = res.originalName.replace(/\.[^/.]+$/, "") + ".jpg";
+          return new File([blob], name, { type: "image/jpeg" });
+        }),
+      );
+
+      if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
+        await navigator.share({
+          files: filesToShare,
+          title: "UltraHDR Images",
+          text: "Processed with UltraHDR Converter",
+        });
+      } else {
+        alert("Your browser does not support sharing these files.");
+      }
+    } catch (e) {
+      console.error("Error sharing:", e);
+      // Ignore AbortError (user cancelled)
+      if (e.name !== "AbortError") {
+        alert("Share failed: " + e.message);
+      }
+    }
   }
 
   function reset() {
@@ -361,8 +433,32 @@
               on:click={downloadSelected}
               disabled={selectedIndices.size === 0}
             >
-              Download Selected ({selectedIndices.size})
+              Download ({selectedIndices.size})
             </button>
+            {#if typeof navigator !== "undefined" && navigator.canShare}
+              <button
+                class="primary small share-btn"
+                on:click={shareSelected}
+                disabled={selectedIndices.size === 0}
+                title="Share to other apps"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.5"
+                  stroke="currentColor"
+                  class="w-5 h-5"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.935-2.186 2.25 2.25 0 00-3.935 2.186z"
+                  />
+                </svg>
+                Share ({selectedIndices.size})
+              </button>
+            {/if}
           </div>
         </div>
         <div class="grid">
@@ -544,6 +640,13 @@
 
   button.primary:hover {
     background-color: #0071e3;
+  }
+
+  .share-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
   }
 
   button.secondary {

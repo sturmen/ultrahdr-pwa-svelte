@@ -27,8 +27,27 @@ export default defineConfig({
             sizes: '512x512',
             type: 'image/png'
           }
-        ]
-      }
+        ],
+        share_target: {
+          action: '_share-target',
+          method: 'POST',
+          enctype: 'multipart/form-data',
+          params: {
+            title: 'title',
+            text: 'text',
+            url: 'url',
+            files: [
+              {
+                name: 'file',
+                accept: ['image/*', '.heic', '.heif', '.tif', '.tiff']
+              }
+            ]
+          }
+        }
+      },
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
     }),
     viteStaticCopy({
       targets: [
