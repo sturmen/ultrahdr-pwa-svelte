@@ -14,7 +14,7 @@ import { processTiff } from './tiff-processing.js';
  * @param {number} options.maxContentBoost - Max content boost for gain map.
  * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
  */
-export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false }) {
+export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false, highlightExponent: 3.0 }) {
     console.log('[Process] Starting processing for:', file.name);
 
     // Handle HEIC/HEIF
@@ -112,6 +112,8 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const uint16 = new Uint16Array(length); // Use Uint16 for HalfFloat
     const maxContentBoost = options.maxContentBoost || 4.0;
 
+    const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 3.0;
+
     // sRGB to Linear conversion helper
     const toLinear = (v) => {
         v /= 255;
@@ -125,10 +127,21 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
         // we simply boost the linear values.
         // Note: gainmap-js expects the 'image' parameter to be the HDR representation.
 
+        const rLin = toLinear(rgba[i]);
+        const gLin = toLinear(rgba[i + 1]);
+        const bLin = toLinear(rgba[i + 2]);
+
+        // Apply Per-Channel Boost (Soft Threshold)
+        // boost = 1 + (maxContentBoost - 1) * Math.pow(linearVal, highlightExponent)
+        // This keeps shadows/midtones near 1.0 boost and ramps up highlights to maxContentBoost.
+        const rBoost = 1 + (maxContentBoost - 1) * Math.pow(rLin, highlightExponent);
+        const gBoost = 1 + (maxContentBoost - 1) * Math.pow(gLin, highlightExponent);
+        const bBoost = 1 + (maxContentBoost - 1) * Math.pow(bLin, highlightExponent);
+
         // Use DataUtils.toHalfFloat to convert float to half-float (uint16)
-        uint16[i] = DataUtils.toHalfFloat(toLinear(rgba[i]) * maxContentBoost);     // R
-        uint16[i + 1] = DataUtils.toHalfFloat(toLinear(rgba[i + 1]) * maxContentBoost); // G
-        uint16[i + 2] = DataUtils.toHalfFloat(toLinear(rgba[i + 2]) * maxContentBoost); // B
+        uint16[i] = DataUtils.toHalfFloat(rLin * rBoost);     // R
+        uint16[i + 1] = DataUtils.toHalfFloat(gLin * gBoost); // G
+        uint16[i + 2] = DataUtils.toHalfFloat(bLin * bBoost); // B
         uint16[i + 3] = DataUtils.toHalfFloat(rgba[i + 3] / 255); // Alpha
     }
     console.log('[Process] Converted to HalfFloat Uint16Array');

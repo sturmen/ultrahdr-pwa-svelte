@@ -5,6 +5,7 @@
   export let files = [];
 
   let maxContentBoost = 2.3;
+  let highlightExponent = 3.0;
   let rotation = 0;
   let quality = 0.95;
   let discardGainMap = false;
@@ -31,6 +32,7 @@
           quality,
           discardGainMap,
           stripExif,
+          highlightExponent,
         });
         const url = URL.createObjectURL(blob);
 
@@ -161,6 +163,7 @@
     results = [];
     rotation = 0;
     maxContentBoost = 2.3;
+    highlightExponent = 3.0;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
@@ -243,6 +246,27 @@
         <span class="value">{maxContentBoost.toFixed(1)}x</span>
       </div>
       <p class="help-text">Higher values create brighter highlights.</p>
+    </div>
+
+    <div class="control-group">
+      <label for="exponent">Highlight Exponent (Boost Curve)</label>
+      <div class="range-wrapper">
+        <input
+          type="range"
+          id="exponent"
+          min="1.0"
+          max="5.0"
+          step="0.1"
+          bind:value={highlightExponent}
+          on:input={handleSettingChange}
+          disabled={processing}
+        />
+        <span class="value">{highlightExponent.toFixed(1)}</span>
+      </div>
+      <p class="help-text">
+        Controls how aggressively highlights are boosted vs shadows. Higher =
+        more separation.
+      </p>
     </div>
 
     <div class="control-group">
