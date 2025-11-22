@@ -322,12 +322,9 @@
 
     <div class="control-group">
       <label for="shadowCutoff">
-        Shadow Cutoff: {Math.round(shadowCutoff * 100)}%
-        <span
-          class="tooltip"
-          title="Pixels below this brightness (linear) will not be boosted."
-          >ⓘ</span
-        >
+        Minimum Brightness Threshold for Enhancement: {Math.round(
+          shadowCutoff * 100,
+        )}%
       </label>
       <div class="range-wrapper">
         <input
@@ -343,49 +340,50 @@
         <span class="value">{Math.round(shadowCutoff * 100)}%</span>
       </div>
       <p class="help-text">
-        Pixels below this threshold are ignored by the boost.
+        Brightness values below this threshold are not enhanced.
       </p>
     </div>
 
-    <div class="control-group">
+    <div class="control-group horizontal">
       <label for="quality">JPEG Quality</label>
-      <div class="range-wrapper">
-        <input
-          type="range"
+      <div class="select-wrapper">
+        <select
           id="quality"
-          min="0.1"
-          max="1.0"
-          step="0.05"
           bind:value={quality}
-          on:input={handleSettingChange}
+          on:change={handleSettingChange}
           disabled={processing}
-        />
-        <span class="value">{Math.round(quality * 100)}%</span>
+        >
+          <option value={0.95}>High</option>
+          <option value={0.75}>Medium</option>
+          <option value={0.5}>Low</option>
+        </select>
       </div>
     </div>
 
-    <div class="control-group checkbox-group">
-      <input
-        type="checkbox"
-        id="discardGainMap"
-        bind:checked={discardGainMap}
-        on:change={handleSettingChange}
-        disabled={processing}
-      />
-      <label for="discardGainMap" class="inline-label"
-        >Discard existing gain map(s)</label
-      >
+    <div class="control-group switch-group">
+      <label class="switch">
+        <input
+          type="checkbox"
+          bind:checked={discardGainMap}
+          on:change={handleSettingChange}
+          disabled={processing}
+        />
+        <span class="slider"></span>
+      </label>
+      <span class="switch-label">Discard existing gain map(s)</span>
     </div>
 
-    <div class="control-group checkbox-group">
-      <input
-        type="checkbox"
-        id="stripExif"
-        bind:checked={stripExif}
-        on:change={handleSettingChange}
-        disabled={processing}
-      />
-      <label for="stripExif" class="inline-label">Strip EXIF data</label>
+    <div class="control-group switch-group">
+      <label class="switch">
+        <input
+          type="checkbox"
+          bind:checked={stripExif}
+          on:change={handleSettingChange}
+          disabled={processing}
+        />
+        <span class="slider"></span>
+      </label>
+      <span class="switch-label">Strip EXIF data</span>
     </div>
 
     <div class="actions">
@@ -540,16 +538,84 @@
     text-align: left;
   }
 
-  .checkbox-group {
+  .control-group.horizontal {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 1rem;
   }
 
-  .inline-label {
-    margin-bottom: 0 !important;
-    font-weight: normal !important;
+  .control-group.horizontal label {
+    margin-bottom: 0;
+    min-width: max-content;
+  }
+
+  .control-group.horizontal .select-wrapper {
+    flex-grow: 0;
+    width: auto;
+  }
+
+  .switch-group {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .switch-label {
     cursor: pointer;
+  }
+
+  /* The switch - the box around the slider */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+
+  /* Hide default HTML checkbox */
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  /* The slider */
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--text-secondary);
+    transition: 0.4s;
+    border-radius: 34px;
+  }
+
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 24px;
+    width: 24px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: 0.4s;
+    border-radius: 50%;
+  }
+
+  input:checked + .slider {
+    background-color: var(--primary-color);
+  }
+
+  input:focus + .slider {
+    box-shadow: 0 0 1px var(--primary-color);
+  }
+
+  input:checked + .slider:before {
+    transform: translateX(22px);
   }
 
   label,
@@ -559,7 +625,8 @@
     font-weight: 500;
   }
 
-  .range-wrapper {
+  .range-wrapper,
+  .select-wrapper {
     display: flex;
     align-items: center;
     gap: 1rem;
@@ -573,6 +640,17 @@
     outline: none;
     -webkit-appearance: none;
     appearance: none;
+  }
+
+  select {
+    flex: 1;
+    padding: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--text-secondary);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    font-size: 1rem;
+    cursor: pointer;
   }
 
   input[type="range"]::-webkit-slider-thumb {
