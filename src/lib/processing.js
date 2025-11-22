@@ -1,7 +1,6 @@
-import { compress, encode, findTextureMinMax } from '@monogrid/gainmap-js/encode';
+import { compress, encode } from '@monogrid/gainmap-js/encode';
 import { encodeJPEGMetadata } from '@monogrid/gainmap-js/libultrahdr';
-import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
-import { TextureLoader, SRGBColorSpace, LinearSRGBColorSpace, HalfFloatType, NoColorSpace, Texture, DataTexture, FloatType, RGBAFormat, NoToneMapping, DataUtils } from 'three';
+import { LinearSRGBColorSpace, HalfFloatType, DataTexture, RGBAFormat, NoToneMapping, DataUtils } from 'three';
 import piexif from 'piexifjs';
 
 import { processHeic } from './heic-processing.js';
@@ -12,74 +11,121 @@ import { processTiff } from './tiff-processing.js';
  * @param {File} file - The input image file.
  * @param {Object} options - Processing options.
  * @param {number} options.maxContentBoost - Max content boost for gain map.
+ * @param {number} options.rotation - Rotation in degrees.
+ * @param {number} options.quality - JPEG quality (0-1).
+ * @param {boolean} options.discardGainMap - (Unused in current logic but kept for API compat).
+ * @param {boolean} options.stripExif - Whether to strip EXIF data.
+ * @param {number} options.highlightExponent - Exponent for highlight boost curve.
  * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
  */
 export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false, highlightExponent: 3.0 }) {
     console.log('[Process] Starting processing for:', file.name);
 
-    // Handle HEIC/HEIF
-    if (file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+    // 1. Preprocess (HEIC/TIFF conversion)
+    file = await preprocessFile(file, options);
+
+    // 2. Load Data & EXIF
+    const dataUrl = await readFileAsDataURL(file);
+    const exifObj = extractExif(file, dataUrl);
+    console.log('[Process] File loaded and EXIF extracted');
+
+    // 3. Load Image Data (Canvas/Rotation)
+    const { imageData } = await loadImageData(dataUrl, options.rotation);
+    console.log('[Process] Image data retrieved');
+
+    // 4. Generate HDR Texture (ITM)
+    const { texture, maxContentBoost } = generateHdrTexture(imageData, options);
+    console.log('[Process] HDR DataTexture created');
+
+    // 5. Generate Gain Map
+    const { gainMapImageData, encodingResult } = await generateGainMap(texture, maxContentBoost);
+    console.log('[Process] GainMap generated');
+
+    // 6. Compress Images
+    const { sdr, gainMap } = await compressImages(imageData, gainMapImageData, options.quality);
+    console.log('[Process] Compression complete');
+
+    // 7. Finalize UltraHDR
+    const blob = await finalizeUltraHDR(encodingResult, sdr, gainMap, exifObj, options.stripExif);
+    console.log('[Process] Processing complete, returning Blob');
+
+    return blob;
+}
+
+/**
+ * Preprocesses the file, converting HEIC/TIFF to a format we can read if necessary.
+ * @param {File} file 
+ * @param {Object} options 
+ * @returns {Promise<File>}
+ */
+async function preprocessFile(file, options) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.heic') || name.endsWith('.heif')) {
         console.log('[Process] Detected HEIC/HEIF, converting...');
         try {
-            const convertedFile = await processHeic(file, options);
-            if (convertedFile) {
-                file = convertedFile;
-                console.log('[Process] Converted HEIC to:', file.type);
+            const converted = await processHeic(file, options);
+            if (converted) {
+                console.log('[Process] Converted HEIC to:', converted.type);
+                return converted;
             }
         } catch (e) {
             console.error('[Process] HEIC conversion failed:', e);
             throw e;
         }
-    }
-
-    // Handle TIFF
-    if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
+    } else if (name.endsWith('.tif') || name.endsWith('.tiff')) {
         console.log('[Process] Detected TIFF, converting...');
         try {
-            const convertedFile = await processTiff(file);
-            if (convertedFile) {
-                file = convertedFile;
-                console.log('[Process] Converted TIFF to:', file.type);
+            const converted = await processTiff(file);
+            if (converted) {
+                console.log('[Process] Converted TIFF to:', converted.type);
+                return converted;
             }
         } catch (e) {
             console.error('[Process] TIFF conversion failed:', e);
             throw e;
         }
     }
+    return file;
+}
 
-    const arrayBuffer = await file.arrayBuffer();
-    const dataUrl = await readFileAsDataURL(file);
-    console.log('[Process] File loaded');
-
-    // Extract EXIF
-    let exifObj = null;
+/**
+ * Extracts EXIF data from the file if it's a JPEG.
+ * @param {File} file 
+ * @param {string} dataUrl 
+ * @returns {Object|null}
+ */
+function extractExif(file, dataUrl) {
     try {
         if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
-            exifObj = piexif.load(dataUrl);
-            console.log('[Process] EXIF extracted');
+            return piexif.load(dataUrl);
         }
     } catch (e) {
         console.warn('Could not extract EXIF:', e);
     }
+    return null;
+}
 
-    // Load Image
+/**
+ * Loads the image data from a Data URL, applying rotation if needed.
+ * @param {string} dataUrl 
+ * @param {number} rotation 
+ * @returns {Promise<{imageData: ImageData, width: number, height: number}>}
+ */
+async function loadImageData(dataUrl, rotation = 0) {
     const img = await new Promise((resolve, reject) => {
         const i = new Image();
         i.onload = () => resolve(i);
         i.onerror = reject;
         i.src = dataUrl;
     });
-    console.log('[Process] Image object created', img.width, 'x', img.height);
 
-    // Handle Rotation and Get Pixel Data
     let canvas = document.createElement('canvas');
     let ctx = canvas.getContext('2d');
 
     let width = img.width;
     let height = img.height;
-    let rotation = options.rotation || 0;
 
-    // Normalize rotation to 0, 90, 180, 270
+    // Normalize rotation
     rotation = (rotation % 360 + 360) % 360;
 
     if (rotation === 90 || rotation === 270) {
@@ -93,25 +139,29 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate(rotation * Math.PI / 180);
     ctx.drawImage(img, -width / 2, -height / 2);
-    console.log('[Process] Canvas drawn (rotation applied)');
 
-    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    let rgba = imageData.data;
-    console.log('[Process] Image data retrieved');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    // Cleanup canvas immediately
+    // Cleanup
     canvas.width = 1;
     canvas.height = 1;
     canvas = null;
     ctx = null;
-    console.log('[Process] Canvas cleaned up');
 
-    // Convert to HalfFloat DataTexture (HDR)
-    // We perform Inverse Tone Mapping here by converting sRGB to Linear and applying boost
+    return { imageData, width: canvas?.width || width, height: canvas?.height || height };
+}
+
+/**
+ * Generates an HDR DataTexture from SDR ImageData using Inverse Tone Mapping.
+ * @param {ImageData} imageData 
+ * @param {Object} options 
+ * @returns {{texture: DataTexture, maxContentBoost: number}}
+ */
+function generateHdrTexture(imageData, options) {
+    const rgba = imageData.data;
     const length = rgba.length;
-    const uint16 = new Uint16Array(length); // Use Uint16 for HalfFloat
+    const uint16 = new Uint16Array(length);
     const maxContentBoost = options.maxContentBoost || 4.0;
-
     const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 3.0;
 
     // sRGB to Linear conversion helper
@@ -121,149 +171,113 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     };
 
     for (let i = 0; i < length; i += 4) {
-        // RGB: Convert to Linear and Boost
-        // We assume the input SDR image represents the "base" layer.
-        // To create an HDR target that gainmap-js can use to generate a gain map,
-        // we simply boost the linear values.
-        // Note: gainmap-js expects the 'image' parameter to be the HDR representation.
-
         const rLin = toLinear(rgba[i]);
         const gLin = toLinear(rgba[i + 1]);
         const bLin = toLinear(rgba[i + 2]);
 
-        // Apply Per-Channel Boost (Soft Threshold)
-        // boost = 1 + (maxContentBoost - 1) * Math.pow(linearVal, highlightExponent)
-        // This keeps shadows/midtones near 1.0 boost and ramps up highlights to maxContentBoost.
+        // Apply Per-Channel Boost
         const rBoost = 1 + (maxContentBoost - 1) * Math.pow(rLin, highlightExponent);
         const gBoost = 1 + (maxContentBoost - 1) * Math.pow(gLin, highlightExponent);
         const bBoost = 1 + (maxContentBoost - 1) * Math.pow(bLin, highlightExponent);
 
-        // Use DataUtils.toHalfFloat to convert float to half-float (uint16)
         uint16[i] = DataUtils.toHalfFloat(rLin * rBoost);     // R
         uint16[i + 1] = DataUtils.toHalfFloat(gLin * gBoost); // G
         uint16[i + 2] = DataUtils.toHalfFloat(bLin * bBoost); // B
         uint16[i + 3] = DataUtils.toHalfFloat(rgba[i + 3] / 255); // Alpha
     }
-    console.log('[Process] Converted to HalfFloat Uint16Array');
-
-    // We don't need rgba anymore for the HDR texture, but we need it for SDR compression.
-    // However, we can't dispose it yet.
 
     const texture = new DataTexture(uint16, imageData.width, imageData.height, RGBAFormat, HalfFloatType);
     texture.colorSpace = LinearSRGBColorSpace;
     texture.needsUpdate = true;
-    console.log('[Process] HDR DataTexture created');
 
-    // Free uint16 array after texture creation (Three.js clones it? No, it uses it by reference usually, but DataTexture might take ownership or we should keep it until upload. 
-    // Actually, DataTexture keeps a reference. We can't null it until texture is disposed or uploaded.
-    // But we can null the local variable reference.
+    return { texture, maxContentBoost };
+}
 
-    // Encode
-    // We use NoToneMapping and adjust exposure to ensure the generated SDR matches our original SDR (conceptually).
-    // This ensures the Gain Map is calculated relative to a linear scaling of the HDR, which matches our ITM logic.
+/**
+ * Generates the Gain Map using monogrid/gainmap-js.
+ * @param {DataTexture} texture - The HDR texture.
+ * @param {number} maxContentBoost 
+ * @returns {Promise<{gainMapImageData: ImageData, encodingResult: Object}>}
+ */
+async function generateGainMap(texture, maxContentBoost) {
     const encodingResult = encode({
         image: texture,
         maxContentBoost: maxContentBoost,
         toneMapping: NoToneMapping
     });
-    console.log('[Process] gainmap-js encode() called');
 
-    // Adjust SDR renderer exposure to compensate for the boost.
-    // HDR = SDR_linear * boost
-    // We want SDR_renderer_output = HDR / boost = SDR_linear
-    // So exposure = 1 / boost
+    // Adjust SDR renderer exposure
     encodingResult.sdr.material.exposure = 1.0 / maxContentBoost;
     encodingResult.sdr.material.needsUpdate = true;
 
-    // Render SDR first to ensure texture is ready for GainMap calculation (if dependent)
-    // Although gainmap-js might handle this, explicit render is safer when we mess with materials.
-    // Actually, we don't need the result of this render for the final file (we use original imageData),
-    // but we need it to be correct for the GainMap calculation which likely samples the SDR texture.
-    // encodingResult.sdr.render(); // encode() returns a QuadRenderer, render() renders to its target.
-
-    // Create ImageDatas
-    // For SDR, we use the ORIGINAL image data to preserve it exactly as requested.
-    let sdrImageData = imageData;
-
-    // For GainMap, we use the result from the encoder.
-    // We must ensure the gain map is calculated. Calling toArray() triggers render.
-    // We serialize this to ensure SDR is rendered before GainMap if there's a dependency.
-
-    // Force SDR render first (by calling toArray, even if we discard it, or just render())
-    // encodingResult.sdr.render();
-    // But toArray() reads pixels which is slow. render() is fast.
-    // Let's assume Promise.all is fine if gainmap-js is well written, BUT to be safe given my manual material tweak:
-
-    // We'll run gainMap compression. This calls toArray() on gainMap renderer.
-    // Does gainMap renderer automatically render sdr renderer? Probably not.
-    // So we should render sdr first.
+    // Render SDR first (needed for correct gain map calculation context sometimes)
     encodingResult.sdr.render();
-    console.log('[Process] SDR rendered');
 
+    // Get Gain Map data
     const gainMapArray = encodingResult.gainMap.toArray();
-    console.log('[Process] GainMap toArray() completed');
-    let gainMapImageData = new ImageData(
+    const gainMapImageData = new ImageData(
         new Uint8ClampedArray(gainMapArray),
         encodingResult.gainMap.width,
         encodingResult.gainMap.height
     );
 
-    // Cleanup WebGL resources immediately
+    // Cleanup WebGL resources
     encodingResult.gainMap.dispose();
     encodingResult.sdr.dispose();
     texture.dispose();
-    console.log('[Process] WebGL resources disposed');
 
-    // Compress
+    return { gainMapImageData, encodingResult };
+}
+
+/**
+ * Compresses the SDR and Gain Map images to JPEG.
+ * @param {ImageData} sdrImageData 
+ * @param {ImageData} gainMapImageData 
+ * @param {number} quality 
+ * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
+ */
+async function compressImages(sdrImageData, gainMapImageData, quality) {
     const mimeType = 'image/jpeg';
-    const quality = options.quality || 0.95;
 
-    // Serialize compression to save memory
-    // Compress SDR
-    console.log('[Process] Starting SDR compression...');
     const sdr = await compress({
-        source: sdrImageData, // Use ORIGINAL SDR
+        source: sdrImageData,
         mimeType,
         quality
     });
-    console.log('[Process] SDR compression complete');
 
-    // Release SDR data
-    sdrImageData = null;
-    rgba = null;
-    imageData = null;
-    console.log('[Process] SDR data released');
-
-    // Compress GainMap
-    console.log('[Process] Starting GainMap compression...');
     const gainMap = await compress({
         source: gainMapImageData,
         mimeType,
         quality
     });
-    console.log('[Process] GainMap compression complete');
 
-    // Release GainMap data
-    gainMapImageData = null;
+    return { sdr, gainMap };
+}
 
-    // Get Metadata
+/**
+ * Embeds metadata and finalizes the UltraHDR JPEG.
+ * @param {Object} encodingResult 
+ * @param {Uint8Array} sdr 
+ * @param {Uint8Array} gainMap 
+ * @param {Object|null} exifObj 
+ * @param {boolean} stripExif 
+ * @returns {Promise<Blob>}
+ */
+async function finalizeUltraHDR(encodingResult, sdr, gainMap, exifObj, stripExif) {
     const metadata = encodingResult.getMetadata();
 
-    // Embed Metadata and Images
-    console.log('[Process] Embedding metadata...');
     const jpegUint8Array = await encodeJPEGMetadata({
         ...encodingResult,
         ...metadata,
         sdr,
         gainMap
     });
-    console.log('[Process] Metadata embedded');
 
-    // Re-insert EXIF if it existed and not stripping
     let finalJpeg = jpegUint8Array;
-    if (exifObj && !options.stripExif) {
+
+    if (exifObj && !stripExif) {
         try {
-            // Reset Orientation to 1 (Normal)
+            // Reset Orientation to 1
             if (exifObj["0th"] && exifObj["0th"][piexif.ImageIFD.Orientation]) {
                 exifObj["0th"][piexif.ImageIFD.Orientation] = 1;
             }
@@ -277,16 +291,19 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
             for (let i = 0; i < len; i++) {
                 finalJpeg[i] = newBinary.charCodeAt(i);
             }
-            console.log('[Process] EXIF re-inserted');
         } catch (e) {
             console.warn('Could not re-insert EXIF:', e);
         }
     }
 
-    console.log('[Process] Processing complete, returning Blob');
     return new Blob([finalJpeg], { type: 'image/jpeg' });
 }
 
+/**
+ * Reads a File as a Data URL.
+ * @param {File} file 
+ * @returns {Promise<string>}
+ */
 export function readFileAsDataURL(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
