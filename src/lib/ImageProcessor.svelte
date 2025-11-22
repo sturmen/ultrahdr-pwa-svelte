@@ -5,7 +5,7 @@
   export let files = [];
 
   let maxContentBoost = 2.3;
-  let highlightExponent = 3.0;
+  let shadowCutoff = 0.05;
   let rotation = 0;
   let quality = 0.95;
   let discardGainMap = false;
@@ -32,7 +32,7 @@
           quality,
           discardGainMap,
           stripExif,
-          highlightExponent,
+          shadowCutoff,
         });
         const url = URL.createObjectURL(blob);
 
@@ -235,7 +235,7 @@
     results = [];
     rotation = 0;
     maxContentBoost = 2.3;
-    highlightExponent = 3.0;
+    shadowCutoff = 0.05;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
@@ -321,23 +321,29 @@
     </div>
 
     <div class="control-group">
-      <label for="exponent">Highlight Exponent (Boost Curve)</label>
+      <label for="shadowCutoff">
+        Shadow Cutoff: {Math.round(shadowCutoff * 100)}%
+        <span
+          class="tooltip"
+          title="Pixels below this brightness (linear) will not be boosted."
+          >ⓘ</span
+        >
+      </label>
       <div class="range-wrapper">
         <input
           type="range"
-          id="exponent"
-          min="1.0"
-          max="5.0"
-          step="0.1"
-          bind:value={highlightExponent}
+          id="shadowCutoff"
+          min="0.0"
+          max="1.0"
+          step="0.01"
+          bind:value={shadowCutoff}
           on:input={handleSettingChange}
           disabled={processing}
         />
-        <span class="value">{highlightExponent.toFixed(1)}</span>
+        <span class="value">{Math.round(shadowCutoff * 100)}%</span>
       </div>
       <p class="help-text">
-        Controls how aggressively highlights are boosted vs shadows. Higher =
-        more separation.
+        Pixels below this threshold are ignored by the boost.
       </p>
     </div>
 

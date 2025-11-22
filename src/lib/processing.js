@@ -1,6 +1,5 @@
-import { compress, encode } from '@monogrid/gainmap-js/encode';
+import { compress } from '@monogrid/gainmap-js/encode';
 import { encodeJPEGMetadata } from '@monogrid/gainmap-js/libultrahdr';
-import { LinearSRGBColorSpace, HalfFloatType, DataTexture, RGBAFormat, NoToneMapping, DataUtils } from 'three';
 import piexif from 'piexifjs';
 
 import { processHeic } from './heic-processing.js';
@@ -16,9 +15,10 @@ import { processTiff } from './tiff-processing.js';
  * @param {boolean} options.discardGainMap - (Unused in current logic but kept for API compat).
  * @param {boolean} options.stripExif - Whether to strip EXIF data.
  * @param {number} options.highlightExponent - Exponent for highlight boost curve.
+ * @param {number} options.shadowCutoff - Cutoff for shadow boost (0-1).
  * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
  */
-export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false, highlightExponent: 3.0 }) {
+export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false, highlightExponent: 2.0, shadowCutoff: 0.05 }) {
     console.log('[Process] Starting processing for:', file.name);
 
     // 1. Preprocess (HEIC/TIFF conversion)
@@ -33,20 +33,17 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const { imageData } = await loadImageData(dataUrl, options.rotation);
     console.log('[Process] Image data retrieved');
 
-    // 4. Generate HDR Texture (ITM)
-    const { texture, maxContentBoost } = generateHdrTexture(imageData, options);
-    console.log('[Process] HDR DataTexture created');
+    // 4. Generate Gain Map Data (Manual Calculation)
+    // We calculate the gain map directly here, skipping the WebGL HDR texture generation step.
+    const { gainMapImageData, metadata } = generateGainMapData(imageData, options);
+    console.log('[Process] GainMap generated manually');
 
-    // 5. Generate Gain Map
-    const { gainMapImageData, encodingResult } = await generateGainMap(texture, maxContentBoost);
-    console.log('[Process] GainMap generated');
-
-    // 6. Compress Images
+    // 5. Compress Images
     const { sdr, gainMap } = await compressImages(imageData, gainMapImageData, options.quality);
     console.log('[Process] Compression complete');
 
-    // 7. Finalize UltraHDR
-    const blob = await finalizeUltraHDR(encodingResult, sdr, gainMap, exifObj, options.stripExif);
+    // 6. Finalize UltraHDR
+    const blob = await finalizeUltraHDR(metadata, sdr, gainMap, exifObj, options.stripExif);
     console.log('[Process] Processing complete, returning Blob');
 
     return blob;
@@ -152,17 +149,28 @@ async function loadImageData(dataUrl, rotation = 0) {
 }
 
 /**
- * Generates an HDR DataTexture from SDR ImageData using Inverse Tone Mapping.
- * @param {ImageData} imageData 
+ * Generates the Gain Map ImageData manually by calculating the boost for each pixel.
+ * @param {ImageData} imageData - The SDR image data.
  * @param {Object} options 
- * @returns {{texture: DataTexture, maxContentBoost: number}}
+ * @returns {{gainMapImageData: ImageData, metadata: Object}}
  */
-function generateHdrTexture(imageData, options) {
+function generateGainMapData(imageData, options) {
     const rgba = imageData.data;
     const length = rgba.length;
-    const uint16 = new Uint16Array(length);
+    const width = imageData.width;
+    const height = imageData.height;
+
+    // Create Gain Map ImageData (single channel usually, but we'll use RGB for compatibility)
+    // We can use a smaller resolution for gain map if we wanted, but let's keep it 1:1 for simplicity first.
+    // Actually, gain maps are often 1/4 resolution. But let's stick to 1:1 to avoid resizing logic complexity for now.
+    const gainMapData = new Uint8ClampedArray(length);
+
     const maxContentBoost = options.maxContentBoost || 4.0;
-    const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 3.0;
+    const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 2.0;
+    const shadowCutoff = options.shadowCutoff !== undefined ? options.shadowCutoff : 0.05;
+
+    // Pre-calculate log2 of max boost for normalization
+    const log2MaxBoost = Math.log2(maxContentBoost);
 
     // sRGB to Linear conversion helper
     const toLinear = (v) => {
@@ -170,63 +178,76 @@ function generateHdrTexture(imageData, options) {
         return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     };
 
+    // Helper to calculate boost
+    const calcBoost = (linearVal) => {
+        if (shadowCutoff >= 1.0) return 1.0;
+        const norm = Math.max(0, (linearVal - shadowCutoff) / (1 - shadowCutoff));
+        return 1 + (maxContentBoost - 1) * Math.pow(norm, highlightExponent);
+    };
+
     for (let i = 0; i < length; i += 4) {
         const rLin = toLinear(rgba[i]);
         const gLin = toLinear(rgba[i + 1]);
         const bLin = toLinear(rgba[i + 2]);
 
-        // Apply Per-Channel Boost
-        const rBoost = 1 + (maxContentBoost - 1) * Math.pow(rLin, highlightExponent);
-        const gBoost = 1 + (maxContentBoost - 1) * Math.pow(gLin, highlightExponent);
-        const bBoost = 1 + (maxContentBoost - 1) * Math.pow(bLin, highlightExponent);
+        // Calculate Boost
+        const rBoost = calcBoost(rLin);
+        const gBoost = calcBoost(gLin);
+        const bBoost = calcBoost(bLin);
 
-        uint16[i] = DataUtils.toHalfFloat(rLin * rBoost);     // R
-        uint16[i + 1] = DataUtils.toHalfFloat(gLin * gBoost); // G
-        uint16[i + 2] = DataUtils.toHalfFloat(bLin * bBoost); // B
-        uint16[i + 3] = DataUtils.toHalfFloat(rgba[i + 3] / 255); // Alpha
+        // Encode Gain:
+        // GainMap value = (log2(Boost) - log2(minBoost)) / (log2(maxBoost) - log2(minBoost))
+        // We assume minBoost = 1.0, so log2(minBoost) = 0.
+        // So Encoded = log2(Boost) / log2(maxContentBoost)
+
+        // We clamp to [0, 1] just in case
+        const rLog = Math.log2(rBoost);
+        const gLog = Math.log2(gBoost);
+        const bLog = Math.log2(bBoost);
+
+        const rEncoded = Math.max(0, Math.min(1, rLog / log2MaxBoost));
+        const gEncoded = Math.max(0, Math.min(1, gLog / log2MaxBoost));
+        const bEncoded = Math.max(0, Math.min(1, bLog / log2MaxBoost));
+
+        gainMapData[i] = Math.round(rEncoded * 255);     // R
+        gainMapData[i + 1] = Math.round(gEncoded * 255); // G
+        gainMapData[i + 2] = Math.round(bEncoded * 255); // B
+        gainMapData[i + 3] = 255;                        // Alpha
     }
 
-    const texture = new DataTexture(uint16, imageData.width, imageData.height, RGBAFormat, HalfFloatType);
-    texture.colorSpace = LinearSRGBColorSpace;
-    texture.needsUpdate = true;
+    const gainMapImageData = new ImageData(gainMapData, width, height);
 
-    return { texture, maxContentBoost };
-}
+    // Construct Metadata
+    // We are using a simple encoding where min = 1.0 (0 log2) and max = maxContentBoost.
+    // Gamma is 1.0 because we are encoding log2 values linearly into the 0-255 range (conceptually).
+    // Actually, UltraHDR spec usually expects the gain map image to be sRGB encoded if gamma is 1.0?
+    // Or is the stored image treated as linear values?
+    // gainmap-js usually encodes as:
+    // Value = ((log2(hdr) - log2(sdr)) - offsetHdr + offsetSdr) / (gainMapMax - gainMapMin)
+    // Here: hdr = sdr * boost => log2(hdr) - log2(sdr) = log2(boost)
+    // We assume offsetHdr = offsetSdr = 0 (or they cancel out for our simple case).
+    // So we are encoding log2(boost).
+    // gainMapMin = 0 (log2(1))
+    // gainMapMax = log2(maxContentBoost)
 
-/**
- * Generates the Gain Map using monogrid/gainmap-js.
- * @param {DataTexture} texture - The HDR texture.
- * @param {number} maxContentBoost 
- * @returns {Promise<{gainMapImageData: ImageData, encodingResult: Object}>}
- */
-async function generateGainMap(texture, maxContentBoost) {
-    const encodingResult = encode({
-        image: texture,
-        maxContentBoost: maxContentBoost,
-        toneMapping: NoToneMapping
-    });
+    const metadata = {
+        gainMapMin: [0, 0, 0],
+        gainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
+        gamma: [1.0, 1.0, 1.0], // We are writing linear log values directly
+        offsetSdr: [0, 0, 0],
+        offsetHdr: [0, 0, 0],
+        hdrCapacityMin: 0,
+        hdrCapacityMax: log2MaxBoost,
+        parsedGainMapMin: [0, 0, 0], // gainmap-js internal usage
+        parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost], // gainmap-js internal usage
+        parsedGamma: [1.0, 1.0, 1.0], // gainmap-js internal usage
+        parsedOffsetSdr: [0, 0, 0], // gainmap-js internal usage
+        parsedOffsetHdr: [0, 0, 0], // gainmap-js internal usage
+        parsedHdrCapacityMin: 0, // gainmap-js internal usage
+        parsedHdrCapacityMax: log2MaxBoost // gainmap-js internal usage
+    };
 
-    // Adjust SDR renderer exposure
-    encodingResult.sdr.material.exposure = 1.0 / maxContentBoost;
-    encodingResult.sdr.material.needsUpdate = true;
-
-    // Render SDR first (needed for correct gain map calculation context sometimes)
-    encodingResult.sdr.render();
-
-    // Get Gain Map data
-    const gainMapArray = encodingResult.gainMap.toArray();
-    const gainMapImageData = new ImageData(
-        new Uint8ClampedArray(gainMapArray),
-        encodingResult.gainMap.width,
-        encodingResult.gainMap.height
-    );
-
-    // Cleanup WebGL resources
-    encodingResult.gainMap.dispose();
-    encodingResult.sdr.dispose();
-    texture.dispose();
-
-    return { gainMapImageData, encodingResult };
+    return { gainMapImageData, metadata };
 }
 
 /**
@@ -256,18 +277,16 @@ async function compressImages(sdrImageData, gainMapImageData, quality) {
 
 /**
  * Embeds metadata and finalizes the UltraHDR JPEG.
- * @param {Object} encodingResult 
+ * @param {Object} metadata 
  * @param {Uint8Array} sdr 
  * @param {Uint8Array} gainMap 
  * @param {Object|null} exifObj 
  * @param {boolean} stripExif 
  * @returns {Promise<Blob>}
  */
-async function finalizeUltraHDR(encodingResult, sdr, gainMap, exifObj, stripExif) {
-    const metadata = encodingResult.getMetadata();
-
+async function finalizeUltraHDR(metadata, sdr, gainMap, exifObj, stripExif) {
+    // encodeJPEGMetadata expects the metadata object structure we created
     const jpegUint8Array = await encodeJPEGMetadata({
-        ...encodingResult,
         ...metadata,
         sdr,
         gainMap
