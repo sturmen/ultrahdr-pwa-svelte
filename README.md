@@ -33,17 +33,18 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 ## Drawbacks
 
 - Vibe-coded with [Antigravity](https://antigravity.google), so no one knows how it works
-- Naive enhancement algorithm
-
-## Roadmap
-
-- Improve preservation of HEIC input gain maps rather than generating a new one
+- Naïve enhancement algorithm
 
 ## How you can help
 
-- Improve iOS Safari (and other memory-constrained environments) support
+- Improve preservation of HEIC input gain maps, especially HEIC files captured on iOS devices
+- Improve iOS Safari (and other memory-constrained browser) support
+- Improve offline support
 - Create and implement a better gain map algorithm
 - Create and implement a way to up-map the color gamut from sRGB to P3
+- Implement persistent local storage for processed images so you can return to them later
+- Implement per-image controls during batch processing
+- Implement concurrent task scheduling for image processing
 - General improvements (testing, code organization, etc)
 - Update [libultrahdr-wasm](https://github.com/MONOGRID/libultrahdr-wasm) to support ISO 21496-1 (rebase on [libultrahdr v1.4.0](https://github.com/google/libultrahdr/releases/tag/v1.4.0))
 
@@ -51,4 +52,4 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 
 - @google for [libultrahdr](https://github.com/google/libultrahdr) and [Antigravity](https://antigravity.google)
 - @gregbenz for all his work [evangelizing HDR photography](https://gregbenzphotography.com/hdr/)
-- @monogrid for their [WASM ports](https://github.com/MONOGRID/libultrahdr-wasm)
+- @monogrid for [gainmap.js](https://github.com/MONOGRID/gainmap-js) and their [WASM port of libultrahdr](https://github.com/MONOGRID/libultrahdr-wasm)
