@@ -18,7 +18,7 @@ More information: https://gregbenzphotography.com/hdr/
 
 ## Scope
 
-This is an attempt at a cross-platform way to enhance SDR images into the widely-compatible JPEGR (aka UltraHDR JPEG, aka JPEG with a gain map) format. The goal is that users may have an SDR image that they enjoy, and they use this progressive web app to add an enhancement layer that does not alter the original nor introduce compatibility issues.
+This is an attempt at a cross-platform way to enhance SDR images into the widely-compatible JPEGR (aka UltraHDR JPEG, aka JPEG with a gain map) format. The goal is that users may have an SDR image that they enjoy, and they use this progressive web app to add an enhancement layer that improves the image but does not alter the original nor introduce compatibility issues.
 
 ## Features
 
@@ -37,13 +37,13 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 
 ## How you can help
 
-- Improve preservation of HEIC input gain maps, especially HEIC files captured on iOS devices
+- Improve preservation of HEIC input gain maps, especially HEIC files captured on iOS devices. In the end, one of the goals of this tool is to function as a transcoder from HEIC with gain map (Apple format) to JPEG with gain map (Google format). 
 - Improve iOS Safari (and other memory-constrained browser) support
 - Improve offline support
-- Create and implement a better gain map algorithm
+- Create and implement a better gain map algorithm, possibly using local adaptation
 - Create and implement a way to up-map the color gamut from sRGB to P3
-- Implement persistent local storage for processed images so you can return to them later
-- Implement per-image controls during batch processing
+- Implement persistent local storage for processed images so you can pause and resume processing
+- Implement per-image adjustments for batch processing
 - Implement concurrent task scheduling for image processing
 - General improvements (testing, code organization, etc)
 - Update [libultrahdr-wasm](https://github.com/MONOGRID/libultrahdr-wasm) to support ISO 21496-1 (rebase on [libultrahdr v1.4.0](https://github.com/google/libultrahdr/releases/tag/v1.4.0))
