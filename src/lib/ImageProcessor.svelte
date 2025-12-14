@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { processImage } from "./processing";
+  import JSZip from "jszip";
 
   export let files = [];
 
@@ -190,12 +191,35 @@
     a.click();
   }
 
-  function downloadSelected() {
-    results.forEach((result, i) => {
-      if (selectedIndices.has(i)) {
-        download(result);
+  async function downloadSelected() {
+    const selectedResults = results.filter((_, i) => selectedIndices.has(i));
+    if (selectedResults.length === 0) return;
+
+    if (selectedResults.length === 1) {
+      download(selectedResults[0]);
+    } else {
+      const zip = new JSZip();
+
+      // Add files to zip
+      for (const result of selectedResults) {
+        const blob = await fetch(result.url).then((r) => r.blob());
+        const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
+        zip.file(filename, blob);
       }
-    });
+
+      // Generate and save zip
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(content);
+
+      // Format timestamp: YYYY-MM-DD-HH-mm-ss
+      const now = new Date();
+      const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+
+      a.download = `ultrahdr-batch-${timestamp}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
   }
 
   async function shareSelected() {
@@ -437,7 +461,7 @@
               on:click={downloadSelected}
               disabled={selectedIndices.size === 0}
             >
-              Download ({selectedIndices.size})
+              {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
             </button>
             {#if typeof navigator !== "undefined" && navigator.canShare}
               <button
