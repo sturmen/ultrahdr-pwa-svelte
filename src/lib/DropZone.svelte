@@ -4,6 +4,152 @@
   const dispatch = createEventDispatcher();
   let isDragOver = false;
 
+  // Eligible image extensions (lowercase)
+  const ELIGIBLE_EXTENSIONS = [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".tif",
+    ".tiff",
+  ];
+
+  function isEligibleFile(fileName) {
+    const lowerName = fileName.toLowerCase();
+    return ELIGIBLE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+  }
+
+  // Convert an ephemeral File to a stable File by reading its contents into memory
+  async function stabilizeFile(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    return new File([arrayBuffer], file.name, {
+      type: file.type || getMimeType(file.name),
+    });
+  }
+
+  // Get MIME type from file extension
+  function getMimeType(fileName) {
+    const ext = fileName.toLowerCase().split(".").pop();
+    const mimeTypes = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
+      heic: "image/heic",
+      heif: "image/heif",
+      tif: "image/tiff",
+      tiff: "image/tiff",
+    };
+    return mimeTypes[ext] || "application/octet-stream";
+  }
+
+  // Recursively read all files from a FileSystemDirectoryEntry
+  async function readDirectoryRecursively(directoryEntry) {
+    const files = [];
+    const reader = directoryEntry.createReader();
+
+    // readEntries may not return all entries in one call, so we loop
+    const readAllEntries = () => {
+      return new Promise((resolve, reject) => {
+        const allEntries = [];
+        const readBatch = () => {
+          reader.readEntries((entries) => {
+            if (entries.length === 0) {
+              resolve(allEntries);
+            } else {
+              allEntries.push(...entries);
+              readBatch();
+            }
+          }, reject);
+        };
+        readBatch();
+      });
+    };
+
+    const entries = await readAllEntries();
+
+    for (const entry of entries) {
+      if (entry.isFile) {
+        try {
+          const file = await new Promise((resolve, reject) => {
+            entry.file(resolve, reject);
+          });
+          if (isEligibleFile(file.name)) {
+            // Immediately read and stabilize the file to prevent stale references
+            const stableFile = await stabilizeFile(file);
+            files.push(stableFile);
+          }
+        } catch (err) {
+          console.warn("Failed to read file:", entry.name, err);
+        }
+      } else if (entry.isDirectory) {
+        const subFiles = await readDirectoryRecursively(entry);
+        files.push(...subFiles);
+      }
+    }
+
+    return files;
+  }
+
+  // Extract files from DataTransferItemList, handling both files and directories
+  async function extractFilesFromDataTransfer(dataTransfer) {
+    const files = [];
+    const items = dataTransfer.items;
+
+    if (!items) {
+      // Fallback: no items API, just use files directly
+      return Array.from(dataTransfer.files).filter((f) =>
+        isEligibleFile(f.name),
+      );
+    }
+
+    const promises = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === "file") {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) {
+          if (entry.isDirectory) {
+            promises.push(readDirectoryRecursively(entry));
+          } else if (entry.isFile) {
+            promises.push(
+              (async () => {
+                try {
+                  const file = await new Promise((resolve, reject) => {
+                    entry.file(resolve, reject);
+                  });
+                  if (isEligibleFile(file.name)) {
+                    return [await stabilizeFile(file)];
+                  }
+                  return [];
+                } catch (err) {
+                  console.warn("Failed to read file:", entry.name, err);
+                  return [];
+                }
+              })(),
+            );
+          }
+        } else {
+          // Fallback if webkitGetAsEntry is not available
+          const file = item.getAsFile();
+          if (file && isEligibleFile(file.name)) {
+            files.push(file);
+          }
+        }
+      }
+    }
+
+    const results = await Promise.all(promises);
+    for (const result of results) {
+      files.push(...result);
+    }
+
+    return files;
+  }
+
   function handleDragOver(e) {
     e.preventDefault();
     isDragOver = true;
@@ -13,11 +159,13 @@
     isDragOver = false;
   }
 
-  function handleDrop(e) {
+  async function handleDrop(e) {
     e.preventDefault();
     isDragOver = false;
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      dispatch("files", e.dataTransfer.files);
+
+    const files = await extractFilesFromDataTransfer(e.dataTransfer);
+    if (files.length > 0) {
+      dispatch("files", files);
     }
   }
 
