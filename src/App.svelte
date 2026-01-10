@@ -29,8 +29,7 @@
     <ImageProcessor {files} on:reset={handleReset} />
   {/if}
   <p class="footer">
-    May not work well on memory-constrained devices (smartphones/tablets/etc).
-    Try on a desktop/laptop if you run into issues.<br />
+    <b>Try Google Chrome on Windows/macOS if you run into issues.</b><br />
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a><br
     />
     <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
