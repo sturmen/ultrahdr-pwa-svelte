@@ -1,9 +1,39 @@
-import { compress } from '@monogrid/gainmap-js/encode';
-import { encodeJPEGMetadata } from '@monogrid/gainmap-js/libultrahdr';
 import piexif from 'piexifjs';
 
 import { processHeic } from './heic-processing.js';
 import { processTiff } from './tiff-processing.js';
+import { UHDREncoder, isWasmLoaded, isAvailable, getStatus } from './ultrahdr-wasm.js';
+
+/**
+ * Check if WASM encoder is available
+ * @returns {Promise<boolean>}
+ */
+export async function isWasmAvailable() {
+    return await isAvailable();
+}
+
+/**
+ * Get WASM encoder status
+ * @returns {Object}
+ */
+export function getWasmStatus() {
+    return getStatus();
+}
+
+/**
+ * Ensure WASM encoder is loaded
+ * @returns {Promise<void>}
+ */
+async function ensureWasmLoaded() {
+    if (!isWasmLoaded()) {
+        console.log('[WASM] Loading libultrahdr WASM module...');
+        await isAvailable();
+    }
+    if (!isWasmLoaded()) {
+        throw new Error('libultrahdr WASM module failed to load');
+    }
+    console.log('[WASM] libultrahdr WASM module loaded');
+}
 
 /**
  * Processes an image file to create an UltraHDR JPEG.
@@ -20,6 +50,9 @@ import { processTiff } from './tiff-processing.js';
  */
 export async function processImage(file, options = { maxContentBoost: 4.0, rotation: 0, quality: 0.95, discardGainMap: false, stripExif: false, highlightExponent: 2.0, shadowCutoff: 0.05 }) {
     console.log('[Process] Starting processing for:', file.name);
+
+    // Ensure WASM encoder is loaded
+    await ensureWasmLoaded();
 
     // 1. Preprocess (HEIC/TIFF conversion)
     file = await preprocessFile(file, options);
@@ -38,8 +71,8 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     const { gainMapImageData, metadata } = generateGainMapData(imageData, options);
     console.log('[Process] GainMap generated manually');
 
-    // 5. Compress Images
-    const { sdr, gainMap } = await compressImages(imageData, gainMapImageData, options.quality);
+    // 5. Compress Images (using WASM encoder)
+    const { sdr, gainMap } = await compressImages(imageData, gainMapImageData, options);
     console.log('[Process] Compression complete');
 
     // 6. Finalize UltraHDR
@@ -231,13 +264,13 @@ function generateGainMapData(imageData, options) {
     // gainMapMax = log2(maxContentBoost)
 
     const metadata = {
-        gainMapMin: [0, 0, 0],
-        gainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
+        gainMapMin: [1.0, 1.0, 1.0],
+        gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
         gamma: [1.0, 1.0, 1.0], // We are writing linear log values directly
         offsetSdr: [0, 0, 0],
         offsetHdr: [0, 0, 0],
-        hdrCapacityMin: 0,
-        hdrCapacityMax: log2MaxBoost,
+        hdrCapacityMin: 1.0,
+        hdrCapacityMax: maxContentBoost,
         parsedGainMapMin: [0, 0, 0], // gainmap-js internal usage
         parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost], // gainmap-js internal usage
         parsedGamma: [1.0, 1.0, 1.0], // gainmap-js internal usage
@@ -251,48 +284,88 @@ function generateGainMapData(imageData, options) {
 }
 
 /**
- * Compresses the SDR and Gain Map images to JPEG.
- * @param {ImageData} sdrImageData 
- * @param {ImageData} gainMapImageData 
- * @param {number} quality 
+ * Compresses images using libultrahdr WASM encoder.
+ * @param {ImageData} sdrImageData
+ * @param {ImageData} gainMapImageData
+ * @param {ImageData} sdrImageData
+ * @param {ImageData} gainMapImageData
+ * @param {Object} options
  * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
  */
-async function compressImages(sdrImageData, gainMapImageData, quality) {
-    const mimeType = 'image/jpeg';
+async function compressImages(sdrImageData, gainMapImageData, options) {
+    // Convert quality 0-1 to 0-100
+    const quality = options.quality !== undefined ? options.quality : 0.95;
+    const maxContentBoost = options.maxContentBoost || 4.0;
+    const wasmQuality = Math.round(quality * 100);
 
-    const sdr = await compress({
-        source: sdrImageData,
-        mimeType,
-        quality
-    });
+    // Initialize WASM encoder
+    const encoder = new UHDREncoder();
+    await encoder.init();
 
-    const gainMap = await compress({
-        source: gainMapImageData,
-        mimeType,
-        quality
-    });
+    try {
+        // Compress SDR image to JPEG (base image)
+        const sdrJpeg = await compressToJpeg(sdrImageData, quality);
 
-    return { sdr, gainMap };
+        // Set compressed base image
+        encoder.setCompressedBaseImage(sdrJpeg);
+
+        // Compress Gain Map to JPEG
+        // libultrahdr expects the gain map to be a compressed JPEG image.
+        // We compress it here using the browser's native canvas encoder.
+        const gainMapJpeg = await compressToJpeg(gainMapImageData, 0.90);
+
+        // Set gain map image
+        // We pass the JPEG data as a flat buffer.
+        // The C++ wrapper calculates size as stride * height.
+        // We pass width=size, height=1, stride=size to ensure correct buffer allocation.
+        encoder.setGainMapImage(
+            gainMapJpeg,
+            {
+                gainMapMin: [1.0, 1.0, 1.0],
+                gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost], // Will be adjusted based on content
+                gamma: [1.0, 1.0, 1.0],
+                offsetSdr: [0, 0, 0],
+                offsetHdr: [0, 0, 0],
+                hdrCapacityMin: 1.0,
+                hdrCapacityMax: maxContentBoost
+            },
+            gainMapJpeg.length, // width (used for size calc)
+            1 // height
+        );
+
+        // Encode to UltraHDR JPEG
+        encoder.encode(wasmQuality);
+
+        // Get the encoded data
+        const jpegData = encoder.getEncodedData();
+        if (!jpegData) {
+            throw new Error('Encoding failed: no output data');
+        }
+
+        // The WASM encoder produces a complete UltraHDR JPEG, so we return
+        // the JPEG data as both sdr and gainMap for compatibility
+        // (the metadata is embedded in the JPEG)
+        return { sdr: jpegData, gainMap: new Uint8Array(0) };
+    } finally {
+        encoder.destroy();
+    }
 }
 
 /**
  * Embeds metadata and finalizes the UltraHDR JPEG.
- * @param {Object} metadata 
- * @param {Uint8Array} sdr 
- * @param {Uint8Array} gainMap 
- * @param {Object|null} exifObj 
- * @param {boolean} stripExif 
+ * With WASM encoder, the metadata is already embedded in the JPEG.
+ * This function now handles EXIF preservation only.
+ * @param {Object} metadata
+ * @param {Uint8Array} sdr - The UltraHDR JPEG from WASM encoder
+ * @param {Uint8Array} gainMap - Unused (kept for API compatibility)
+ * @param {Object|null} exifObj
+ * @param {boolean} stripExif
  * @returns {Promise<Blob>}
  */
 async function finalizeUltraHDR(metadata, sdr, gainMap, exifObj, stripExif) {
-    // encodeJPEGMetadata expects the metadata object structure we created
-    const jpegUint8Array = await encodeJPEGMetadata({
-        ...metadata,
-        sdr,
-        gainMap
-    });
-
-    let finalJpeg = jpegUint8Array;
+    // The WASM encoder embeds metadata directly in the JPEG
+    // We just need to handle EXIF preservation
+    let finalJpeg = sdr;
 
     if (exifObj && !stripExif) {
         try {
@@ -329,5 +402,34 @@ export function readFileAsDataURL(file) {
         reader.onload = () => resolve(reader.result);
         reader.onerror = reject;
         reader.readAsDataURL(file);
+    });
+}
+
+/**
+ * Compresses ImageData to a JPEG Uint8Array using canvas.
+ * @param {ImageData} imageData 
+ * @param {number} quality 
+ * @returns {Promise<Uint8Array>}
+ */
+function compressToJpeg(imageData, quality) {
+    return new Promise((resolve, reject) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = imageData.width;
+        canvas.height = imageData.height;
+        const ctx = canvas.getContext('2d');
+        ctx.putImageData(imageData, 0, 0);
+
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                reject(new Error('Canvas toBlob failed'));
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                resolve(new Uint8Array(reader.result));
+            };
+            reader.onerror = reject;
+            reader.readAsArrayBuffer(blob);
+        }, 'image/jpeg', quality);
     });
 }

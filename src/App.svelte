@@ -2,6 +2,8 @@
   import DropZone from "./lib/DropZone.svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
 
+  const version = import.meta.env.VITE_APP_VERSION || 'dev';
+
   let files = [];
 
   function handleFiles(event) {
@@ -32,7 +34,8 @@
     <b>Try Google Chrome on Windows/macOS if you run into issues.</b><br />
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a><br
     />
-    <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
+    <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a><br />
+    Version {version}
   </p>
 </main>
 

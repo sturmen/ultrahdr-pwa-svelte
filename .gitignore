@@ -1,2 +1,20 @@
 .DS_Store
 node_modules/
+.vscode/
+build/
+
+# Build artifacts
+libultrahdr/build/
+ultrahdr-wasm/build/
+*.o
+*.a
+*.so
+*.dylib
+
+# Dependencies - development tools
+emsdk/
+*.tar.gz
+*.zip
+
+# Dist/cleanup
+dist/

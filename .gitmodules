@@ -1,0 +1,6 @@
+[submodule "libultrahdr"]
+	path = libultrahdr
+	url = https://github.com/google/libultrahdr
+[submodule "emsdk"]
+	path = emsdk
+	url = https://github.com/emscripten-core/emsdk.git

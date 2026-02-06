@@ -2,9 +2,13 @@ import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { VitePWA } from 'vite-plugin-pwa'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
+import packageJson from './package.json' with { type: 'json' }
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version),
+  },
   base: process.env.NODE_ENV === 'production' ? '/ultrahdr-pwa-svelte/' : '/',
   plugins: [
     svelte(),

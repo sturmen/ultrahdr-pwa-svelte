@@ -1,0 +1,65 @@
+#
+# CMakeLists.txt for ultrahdr WASM wrapper
+#
+# This builds the WASM wrapper that links against libultrahdr.
+# It uses only the public API from ultrahdr_api.h.
+#
+
+cmake_minimum_required(VERSION 3.15)
+project(ultrahdr_wasm LANGUAGES CXX)
+
+# The wrapper requires Emscripten
+if(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
+    message(FATAL_ERROR "This project requires Emscripten. Use emcmake cmake ...")
+endif()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# libultrahdr source directory (sibling submodule)
+set(LIBULTRAHDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../libultrahdr)
+
+# Add libultrahdr as a subdirectory
+# This will build it with Emscripten toolchain
+add_subdirectory(${LIBULTRAHDR_DIR} ${CMAKE_BINARY_DIR}/libultrahdr_build EXCLUDE_FROM_ALL)
+
+# WASM wrapper sources
+set(WASM_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/ultrahdr_wasm.cpp
+)
+
+# Create the WASM executable
+add_executable(ultrahdr_wasm ${WASM_SOURCES})
+
+# Include directories - only public API
+target_include_directories(ultrahdr_wasm PRIVATE
+    ${LIBULTRAHDR_DIR}  # For ultrahdr_api.h
+    ${CMAKE_CURRENT_SOURCE_DIR}  # For ultrahdr_wasm.h
+)
+
+# Link against libultrahdr core library
+# The target name is 'core' as defined in libultrahdr's CMakeLists.txt
+target_link_libraries(ultrahdr_wasm PRIVATE core)
+
+# Set output properties
+set_target_properties(ultrahdr_wasm
+    PROPERTIES
+        OUTPUT_NAME "ultrahdr_wasm"
+        SUFFIX ".js"
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# Emscripten-specific link options
+target_link_options(ultrahdr_wasm PRIVATE
+    "-sEXPORTED_FUNCTIONS=['_wasm_create_encoder','_wasm_release_encoder','_wasm_enc_set_sdr_image','_wasm_enc_set_hdr_image','_wasm_enc_set_gainmap','_wasm_encode','_wasm_get_encoded_data','_wasm_free_encoded_data','_wasm_get_error_message','_wasm_reset_encoder','_malloc','_free']"
+    "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','getValue','setValue','UTF8ToString','HEAPU8','HEAP32','HEAPF32']"
+    -sALLOW_MEMORY_GROWTH=1
+    -sMODULARIZE=1
+    -sEXPORT_NAME="UHDREncoderModule"
+    -sWASM_ASYNC_COMPILATION=0
+    -sSINGLE_FILE=0
+    -sWASM=1
+)
+
+message(STATUS "WASM wrapper configured")
+message(STATUS "Output will be: ultrahdr_wasm.js and ultrahdr_wasm.wasm")

@@ -24,11 +24,12 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 
 - Free and open source (MIT license)
 - Completely local processing. No cloud costs, or any costs at all
-- Cross-platform support across web browsers. Tested with Chrome 142, Safari 26.1, and Firefox 145 (no HDR preview in Firefox)
+- Cross-platform support across web browsers. Tested with Chrome 144.
 - Batch support
 - Rotation support
 - EXIF preservation
 - Configurable HDR headroom
+- ISO 21496-1 Metadata Encoding
 
 ## Drawbacks
 
@@ -46,10 +47,8 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 - Implement per-image adjustments for batch processing
 - Implement concurrent task scheduling for image processing
 - General improvements (testing, code organization, etc)
-- Update [libultrahdr-wasm](https://github.com/MONOGRID/libultrahdr-wasm) to support ISO 21496-1 (rebase on [libultrahdr v1.4.0](https://github.com/google/libultrahdr/releases/tag/v1.4.0))
 
 ## Special thanks
 
 - @google for [libultrahdr](https://github.com/google/libultrahdr) and [Antigravity](https://antigravity.google)
 - @gregbenz for all his work [evangelizing HDR photography](https://gregbenzphotography.com/hdr/)
-- @monogrid for [gainmap.js](https://github.com/MONOGRID/gainmap-js) and their [WASM port of libultrahdr](https://github.com/MONOGRID/libultrahdr-wasm)

@@ -1,6 +1,4 @@
 import libheifFactory from 'libheif-js/libheif-wasm/libheif.js';
-import { encodeJPEGMetadata } from '@monogrid/gainmap-js/libultrahdr';
-import { compress } from '@monogrid/gainmap-js/encode';
 import { readFileAsDataURL } from './processing.js';
 import piexif from 'piexifjs';
 
