@@ -70,6 +70,7 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
     }
 
     let gainMapHandle = null;
+    let gainMapImageData = null;
 
     // ... (Gain map extraction logic would go here)
     // ... (Gain map extraction logic)

@@ -187,7 +187,7 @@ async function loadImageData(dataUrl, rotation = 0) {
  * @param {Object} options 
  * @returns {{gainMapImageData: ImageData, metadata: Object}}
  */
-function generateGainMapData(imageData, options) {
+export function generateGainMapData(imageData, options) {
     const rgba = imageData.data;
     const length = rgba.length;
     const width = imageData.width;
