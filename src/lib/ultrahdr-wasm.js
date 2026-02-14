@@ -341,6 +341,86 @@ export class UHDREncoder {
     }
 
     /**
+     * Set pre-compressed gain map image (JPEG bytes) with metadata.
+     * Use this instead of setGainMapImage when you already have compressed JPEG bytes
+     * (e.g., extracted from an existing UltraHDR image).
+     * @param {Uint8Array} data - Compressed JPEG gain map data
+     * @param {Object} metadata - Gain map metadata
+     * @returns {void}
+     */
+    setCompressedGainMapImage(data, metadata) {
+        if (!this._initialized) {
+            throw new Error('Encoder not initialized. Call init() first.');
+        }
+        if (!metadata) {
+            throw new Error('Gain map metadata is required');
+        }
+
+        const Module = getWasmModule();
+
+        // Allocate memory for compressed JPEG data
+        const size = data.length;
+        const ptr = Module._malloc(size);
+        if (!ptr) {
+            throw new Error(`Failed to allocate ${size} bytes for compressed gain map image`);
+        }
+
+        const heap = new Uint8Array(Module.HEAPU8.buffer);
+        heap.set(data, ptr);
+
+        // Allocate metadata in WASM memory (23 float values)
+        const metaPtr = Module._malloc(23 * 4);
+        if (!metaPtr) {
+            Module._free(ptr);
+            throw new Error('Failed to allocate metadata memory');
+        }
+
+        try {
+            const metaArray = new Float32Array(Module.HEAPU8.buffer, metaPtr, 23);
+
+            // Per-channel metadata (matches wasm_enc_set_gainmap layout)
+            for (let i = 0; i < 3; i++) {
+                metaArray[i * 7 + 0] = metadata.gainMapMax ? metadata.gainMapMax[i] : 1.0;
+                metaArray[i * 7 + 3] = metadata.gainMapMin ? metadata.gainMapMin[i] : 1.0;
+                metaArray[i * 7 + 6] = metadata.gamma ? metadata.gamma[i] : 1.0;
+                metaArray[i * 7 + 4] = metadata.offsetSdr ? metadata.offsetSdr[i] : 0.0;
+                metaArray[i * 7 + 5] = metadata.offsetHdr ? metadata.offsetHdr[i] : 0.0;
+            }
+            metaArray[21] = metadata.hdrCapacityMin !== undefined ? metadata.hdrCapacityMin : 1.0;
+            metaArray[22] = metadata.hdrCapacityMax !== undefined ? metadata.hdrCapacityMax : 1.0;
+
+            // Call C function: wasm_enc_set_gainmap(encoder, data, width, height, stride, metadata)
+            // For compressed data: width = data length, height = 1, stride = data length
+            // The C side computes capacity = stride * height = data.length, which is the exact JPEG size
+            const result = Module._wasm_enc_set_gainmap(
+                this._encoder,
+                ptr,
+                size,  // width = byte count
+                1,     // height = 1
+                size,  // stride = byte count (so capacity = size * 1 = size)
+                metaPtr
+            );
+            this._checkResult(result, 'Failed to set compressed gain map image');
+        } finally {
+            Module._free(ptr);
+            Module._free(metaPtr);
+        }
+    }
+
+    /**
+     * Add rotation effect to the encoder.
+     * @param {number} degrees - Rotation in degrees (90, 180, 270)
+     */
+    addEffectRotate(degrees) {
+        if (!this._initialized) {
+            throw new Error('Encoder not initialized. Call init() first.');
+        }
+        const Module = getWasmModule();
+        const result = Module._wasm_enc_add_effect_rotate(this._encoder, degrees);
+        this._checkResult(result, 'Failed to add rotate effect');
+    }
+
+    /**
      * Encode images to UltraHDR JPEG
      * @param {number} [quality=90] - JPEG quality (0-100)
      * @returns {void}
@@ -734,6 +814,96 @@ export class UHDRDecoder {
         } finally {
             Module._free(metaPtr);
         }
+    }
+
+    /**
+     * Get the compressed gain map image (JPEG bytes) from a probed UltraHDR image.
+     * @returns {Uint8Array} - Copy of the compressed gain map JPEG
+     */
+    getGainMapImage() {
+        if (!this._initialized) throw new Error('Decoder not initialized');
+        const Module = getWasmModule();
+
+        const sizePtr = Module._malloc(4);
+        if (!sizePtr) throw new Error('Failed to allocate memory for size');
+
+        try {
+            const dataPtr = Module._wasm_dec_get_gainmap_image(this._decoder, sizePtr);
+            const size = Module.getValue(sizePtr, 'i32');
+
+            if (!dataPtr || size <= 0) {
+                throw new Error('No gain map image available');
+            }
+
+            // Copy the data out of WASM memory (the decoder owns the original)
+            return new Uint8Array(Module.HEAPU8.buffer.slice(dataPtr, dataPtr + size));
+        } finally {
+            Module._free(sizePtr);
+        }
+    }
+
+    /**
+     * Get the compressed base (SDR) image (JPEG bytes) from a probed UltraHDR image.
+     * @returns {Uint8Array} - Copy of the compressed base JPEG
+     */
+    getBaseImage() {
+        if (!this._initialized) throw new Error('Decoder not initialized');
+        const Module = getWasmModule();
+
+        const sizePtr = Module._malloc(4);
+        if (!sizePtr) throw new Error('Failed to allocate memory for size');
+
+        try {
+            const dataPtr = Module._wasm_dec_get_base_image(this._decoder, sizePtr);
+            const size = Module.getValue(sizePtr, 'i32');
+
+            if (!dataPtr || size <= 0) {
+                throw new Error('No base image available');
+            }
+
+            return new Uint8Array(Module.HEAPU8.buffer.slice(dataPtr, dataPtr + size));
+        } finally {
+            Module._free(sizePtr);
+        }
+    }
+
+    /**
+     * Get the gain map dimensions from a probed UltraHDR image.
+     * @returns {{ width: number, height: number }}
+     */
+    getGainMapDimensions() {
+        if (!this._initialized) throw new Error('Decoder not initialized');
+        const Module = getWasmModule();
+
+        const wPtr = Module._malloc(4);
+        const hPtr = Module._malloc(4);
+        if (!wPtr || !hPtr) throw new Error('Failed to allocate memory for dimensions');
+
+        try {
+            const result = Module._wasm_dec_get_gainmap_dimensions(this._decoder, wPtr, hPtr);
+            this._checkResult(result, 'Failed to get gainmap dimensions');
+
+            return {
+                width: Module.getValue(wPtr, 'i32'),
+                height: Module.getValue(hPtr, 'i32')
+            };
+        } finally {
+            Module._free(wPtr);
+            Module._free(hPtr);
+        }
+    }
+
+    /**
+     * Add rotation effect to the decoder.
+     * @param {number} degrees - Rotation in degrees (90, 180, 270)
+     */
+    addEffectRotate(degrees) {
+        if (!this._initialized) {
+            throw new Error('Decoder not initialized. Call init() first.');
+        }
+        const Module = getWasmModule();
+        const result = Module._wasm_dec_add_effect_rotate(this._decoder, degrees);
+        this._checkResult(result, 'Failed to add rotate effect');
     }
 
     /**

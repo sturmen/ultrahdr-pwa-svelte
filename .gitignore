@@ -16,5 +16,4 @@ emsdk/
 *.tar.gz
 *.zip
 
-# Dist/cleanup
-dist/
+.last-run.json

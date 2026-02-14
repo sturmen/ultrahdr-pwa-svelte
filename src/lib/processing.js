@@ -2,7 +2,7 @@ import piexif from 'piexifjs';
 
 import { processHeic } from './heic-processing.js';
 import { processTiff } from './tiff-processing.js';
-import { UHDREncoder, isWasmLoaded, isAvailable, getStatus } from './ultrahdr-wasm.js';
+import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, getStatus, isUhdrImage } from './ultrahdr-wasm.js';
 
 /**
  * Check if WASM encoder is available
@@ -42,7 +42,7 @@ async function ensureWasmLoaded() {
  * @param {number} options.maxContentBoost - Max content boost for gain map.
  * @param {number} options.rotation - Rotation in degrees.
  * @param {number} options.quality - JPEG quality (0-1).
- * @param {boolean} options.discardGainMap - (Unused in current logic but kept for API compat).
+ * @param {boolean} options.discardGainMap - Whether to discard existing gain map and regenerate.
  * @param {boolean} options.stripExif - Whether to strip EXIF data.
  * @param {number} options.highlightExponent - Exponent for highlight boost curve.
  * @param {number} options.shadowCutoff - Cutoff for shadow boost (0-1).
@@ -57,6 +57,59 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     // 1. Preprocess (HEIC/TIFF conversion)
     file = await preprocessFile(file, options);
 
+    // 1b. Check if JPEG already has a gain map (UltraHDR)
+    // When discardGainMap is false, preserve the original gain map
+    if (!options.discardGainMap && file instanceof File) {
+        try {
+            const fileBuffer = new Uint8Array(await file.arrayBuffer());
+            const isUhdr = await isUhdrImage(fileBuffer);
+            if (isUhdr) {
+                if (options.rotation === 0) {
+                    // No rotation — return original file as-is (just handle EXIF)
+                    console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
+                    const dataUrl = await readFileAsDataURL(file);
+                    const exifObj = extractExif(file, dataUrl);
+                    return await finalizeUltraHDR({}, fileBuffer, new Uint8Array(0), exifObj, options.stripExif);
+                } else {
+                    // Rotation requested — extract gain map, rotate both SDR and gain map, re-encode
+                    console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
+                    return await processUhdrWithRotation(file, fileBuffer, options);
+                }
+            }
+        } catch (e) {
+            console.warn('[Process] UltraHDR detection/preservation failed, proceeding with normal processing:', e);
+        }
+    }
+
+    // 1c. If file is an object with raw data from HEIC preservation, handle it
+    if (!(file instanceof File) && !(file instanceof Blob) && file.sdr) {
+        console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
+        const imageData = file.sdr;
+        const gainMapImageData = file.gainMap;
+
+        const maxContentBoost = options.maxContentBoost || 4.0;
+        const log2MaxBoost = Math.log2(maxContentBoost);
+        const metadata = {
+            gainMapMin: [1.0, 1.0, 1.0],
+            gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
+            gamma: [1.0, 1.0, 1.0],
+            offsetSdr: [0, 0, 0],
+            offsetHdr: [0, 0, 0],
+            hdrCapacityMin: 1.0,
+            hdrCapacityMax: maxContentBoost,
+            parsedGainMapMin: [0, 0, 0],
+            parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
+            parsedGamma: [1.0, 1.0, 1.0],
+            parsedOffsetSdr: [0, 0, 0],
+            parsedOffsetHdr: [0, 0, 0],
+            parsedHdrCapacityMin: 0,
+            parsedHdrCapacityMax: log2MaxBoost
+        };
+
+        const { sdr, gainMap } = await compressImages(imageData, gainMapImageData, options);
+        return await finalizeUltraHDR(metadata, sdr, gainMap, null, options.stripExif);
+    }
+
     // 2. Load Data & EXIF
     const dataUrl = await readFileAsDataURL(file);
     const exifObj = extractExif(file, dataUrl);
@@ -67,7 +120,6 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     console.log('[Process] Image data retrieved');
 
     // 4. Generate Gain Map Data (Manual Calculation)
-    // We calculate the gain map directly here, skipping the WebGL HDR texture generation step.
     const { gainMapImageData, metadata } = generateGainMapData(imageData, options);
     console.log('[Process] GainMap generated manually');
 
@@ -80,6 +132,135 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     console.log('[Process] Processing complete, returning Blob');
 
     return blob;
+}
+
+/**
+ * Process an UltraHDR JPEG with rotation, preserving the original gain map.
+ * Extracts the gain map and metadata from the input, rotates both the SDR and
+ * gain map images, and re-encodes with the original gain map metadata.
+ * @param {File} file - The input file
+ * @param {Uint8Array} fileBuffer - The raw file bytes
+ * @param {Object} options - Processing options (rotation, quality, stripExif)
+ * @returns {Promise<Blob>} - The rotated UltraHDR JPEG
+ */
+async function processUhdrWithRotation(file, fileBuffer, options) {
+    const decoder = new UHDRDecoder();
+    await decoder.init();
+
+    try {
+        // 1. Decode the UltraHDR JPEG to extract gain map + metadata
+        decoder.setImage(fileBuffer);
+        decoder.probe();
+
+        const gainMapJpegBytes = decoder.getGainMapImage();
+        const gainMapMetadata = decoder.getGainMapMetadata();
+        console.log('[Process] Extracted components. GainMap:', gainMapJpegBytes.length);
+
+        const dataUrl = await readFileAsDataURL(file);
+        const exifObj = extractExif(file, dataUrl);
+
+        // 2. Rotate SDR image (using canvas/loadImageData)
+        const { imageData: rotatedSdr } = await loadImageData(dataUrl, options.rotation);
+        console.log('[Process] SDR rotated:', rotatedSdr.width, 'x', rotatedSdr.height);
+
+        // 3. Decode gain map JPEG to ImageData, then rotate
+        const gainMapImageData = await decodeJpegToImageData(gainMapJpegBytes);
+        const rotatedGainMap = rotateImageData(gainMapImageData, options.rotation);
+        console.log('[Process] Gain map rotated:', rotatedGainMap.width, 'x', rotatedGainMap.height);
+
+        // 4. Compress both rotated images to JPEG
+        const quality = options.quality !== undefined ? options.quality : 0.95;
+        const sdrJpeg = await compressToJpeg(rotatedSdr, quality);
+        const gainMapJpeg = await compressToJpeg(rotatedGainMap, 0.90);
+
+        // 5. Re-encode as UltraHDR using original metadata
+        const encoder = new UHDREncoder();
+        await encoder.init();
+
+        try {
+            encoder.setCompressedBaseImage(sdrJpeg);
+            encoder.setCompressedGainMapImage(gainMapJpeg, gainMapMetadata);
+
+            const wasmQuality = Math.round(quality * 100);
+            encoder.encode(wasmQuality);
+
+            const jpegData = encoder.getEncodedData();
+            if (!jpegData) {
+                throw new Error('Encoding failed: no output data');
+            }
+
+            // 6. Finalize (handle EXIF)
+            return await finalizeUltraHDR({}, jpegData, new Uint8Array(0), exifObj, options.stripExif);
+        } finally {
+            encoder.destroy();
+        }
+    } finally {
+        decoder.destroy();
+    }
+}
+
+/**
+ * Decode a JPEG byte array to ImageData using an off-screen canvas.
+ * @param {Uint8Array} jpegBytes
+ * @returns {Promise<ImageData>}
+ */
+async function decodeJpegToImageData(jpegBytes) {
+    const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+
+    try {
+        const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = reject;
+            i.src = url;
+        });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        return ctx.getImageData(0, 0, canvas.width, canvas.height);
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+/**
+ * Rotate ImageData by the given degrees (90, 180, 270).
+ * @param {ImageData} imageData
+ * @param {number} rotation - Degrees (0, 90, 180, 270)
+ * @returns {ImageData}
+ */
+function rotateImageData(imageData, rotation) {
+    rotation = (rotation % 360 + 360) % 360;
+    if (rotation === 0) return imageData;
+
+    const { width, height, data } = imageData;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    if (rotation === 90 || rotation === 270) {
+        canvas.width = height;
+        canvas.height = width;
+    } else {
+        canvas.width = width;
+        canvas.height = height;
+    }
+
+    // Put source data onto a temp canvas, then draw rotated
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = width;
+    srcCanvas.height = height;
+    const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.putImageData(imageData, 0, 0);
+
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(rotation * Math.PI / 180);
+    ctx.drawImage(srcCanvas, -width / 2, -height / 2);
+
+    return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
 /**
@@ -598,7 +779,13 @@ async function finalizeUltraHDR(metadata, sdr, gainMap, exifObj, stripExif) {
                 exifObj["0th"][piexif.ImageIFD.Orientation] = 1;
             }
 
-            const binary = Array.from(finalJpeg).map(b => String.fromCharCode(b)).join('');
+            // Convert Uint8Array to binary string in chunks for performance
+            let binary = "";
+            const CHUNK_SIZE = 8192;
+            for (let i = 0; i < finalJpeg.length; i += CHUNK_SIZE) {
+                binary += String.fromCharCode.apply(null, finalJpeg.subarray(i, i + CHUNK_SIZE));
+            }
+
             const exifBytes = piexif.dump(exifObj);
             const newBinary = piexif.insert(exifBytes, binary);
 

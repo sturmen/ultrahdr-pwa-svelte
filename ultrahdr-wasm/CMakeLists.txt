@@ -21,6 +21,7 @@ set(LIBULTRAHDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../libultrahdr)
 
 # Add libultrahdr as a subdirectory
 # This will build it with Emscripten toolchain
+set(UHDR_WRITE_XMP TRUE CACHE BOOL "Write gainmap metadata in XMP packet" FORCE)
 add_subdirectory(${LIBULTRAHDR_DIR} ${CMAKE_BINARY_DIR}/libultrahdr_build EXCLUDE_FROM_ALL)
 
 # WASM wrapper sources
@@ -51,7 +52,7 @@ set_target_properties(ultrahdr_wasm
 
 # Emscripten-specific link options
 target_link_options(ultrahdr_wasm PRIVATE
-    "-sEXPORTED_FUNCTIONS=['_wasm_create_encoder','_wasm_release_encoder','_wasm_enc_set_sdr_image','_wasm_enc_set_hdr_image','_wasm_enc_set_gainmap','_wasm_encode','_wasm_get_encoded_data','_wasm_free_encoded_data','_wasm_get_error_message','_wasm_reset_encoder','_wasm_create_decoder','_wasm_release_decoder','_wasm_dec_set_image','_wasm_dec_probe','_wasm_dec_get_gainmap_metadata','_wasm_dec_get_error_message','_wasm_is_uhdr_image','_malloc','_free']"
+    "-sEXPORTED_FUNCTIONS=['_wasm_create_encoder','_wasm_release_encoder','_wasm_enc_set_sdr_image','_wasm_enc_set_hdr_image','_wasm_enc_set_gainmap','_wasm_encode','_wasm_get_encoded_data','_wasm_free_encoded_data','_wasm_get_error_message','_wasm_reset_encoder','_wasm_enc_set_compressed_base_image','_wasm_create_decoder','_wasm_release_decoder','_wasm_dec_set_image','_wasm_dec_probe','_wasm_dec_get_gainmap_metadata','_wasm_dec_get_error_message','_wasm_is_uhdr_image','_wasm_dec_get_gainmap_image','_wasm_dec_get_base_image','_wasm_dec_get_gainmap_dimensions','_wasm_enc_add_effect_rotate','_wasm_dec_add_effect_rotate','_malloc','_free']"
     "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','getValue','setValue','UTF8ToString','HEAPU8','HEAP32','HEAPF32']"
     -sALLOW_MEMORY_GROWTH=1
     -sMODULARIZE=1

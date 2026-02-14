@@ -43,6 +43,8 @@ async function waitForProcessing(page) {
  * processAll() clears results first, so we wait for results to disappear then reappear.
  */
 async function waitForReprocessing(page) {
+    // Wait for debounce (500ms) + processing start
+    await page.waitForTimeout(600);
     // First wait for any existing results to clear (processAll sets results = [])
     await page.waitForFunction(() => {
         const results = document.querySelectorAll('.result-card');
@@ -100,7 +102,8 @@ function hasExifData(buffer) {
  */
 function hasGainMapXMP(buffer) {
     const str = buffer.toString('latin1');
-    return str.includes('hdrgm:') || str.includes('HDRGainMap') || str.includes('GainMap');
+    // Adobe XMP namespaces/tags OR ISO 21496-1 standard namespace
+    return str.includes('hdrgm:') || str.includes('HDRGainMap') || str.includes('GainMap') || str.includes('21496');
 }
 
 // ============================================================
@@ -296,6 +299,36 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // The results should differ byte-by-byte (regenerated vs preserved gain map)
             expect(Buffer.compare(preservedResult, discardedResult)).not.toBe(0);
+        });
+
+        test('should preserve existing gain map when rotation is applied', async ({ page }) => {
+            test.setTimeout(120_000); // Re-processing takes time
+            await page.goto('/');
+
+            // Upload JPEG with existing gain map (default: no rotation, preserves gain map)
+            await uploadFiles(page, [GAIN_MAP_JPEG]);
+            await waitForProcessing(page);
+            const unrotatedResult = await downloadFirstResult(page);
+
+            // Now apply 90° rotation via the "Rotate Right" button
+            await page.click('button[title="Rotate Right"]');
+
+            // Wait for re-processing to start (results clear) and finish
+            await waitForReprocessing(page);
+
+            // Download the rotated result
+            const rotatedResult = await downloadFirstResult(page);
+
+            // Both should be valid JPEGs
+            expect(unrotatedResult[0]).toBe(0xFF);
+            expect(rotatedResult[0]).toBe(0xFF);
+
+            // The rotated result should still have UltraHDR gain map metadata
+            // (gain map was preserved from the original, not regenerated)
+            expect(hasGainMapXMP(rotatedResult)).toBe(true);
+
+            // The results should differ (rotation changes pixel layout)
+            expect(Buffer.compare(unrotatedResult, rotatedResult)).not.toBe(0);
         });
     });
 

@@ -387,6 +387,25 @@ EMSCRIPTEN_KEEPALIVE int wasm_encode(uhdr_wasm_encoder_t enc, int quality) {
   return ERR_OK;
 }
 
+EMSCRIPTEN_KEEPALIVE int wasm_enc_add_effect_rotate(uhdr_wasm_encoder_t enc,
+                                                    int degrees) {
+  if (enc == nullptr) {
+    return ERR_NULL_PTR;
+  }
+
+  WasmEncoderState *state = static_cast<WasmEncoderState *>(enc);
+  uhdr_error_info_t status = uhdr_add_effect_rotate(state->enc, degrees);
+
+  if (status.error_code != UHDR_CODEC_OK) {
+    std::snprintf(state->error_message, sizeof(state->error_message),
+                  "failed to add rotate effect: %s",
+                  status.has_detail ? status.detail : "unknown error");
+    return ERR_INVALID_FORMAT;
+  }
+
+  return ERR_OK;
+}
+
 /**
  * Get encoded JPEG data
  */
@@ -579,6 +598,25 @@ EMSCRIPTEN_KEEPALIVE int wasm_dec_probe(uhdr_wasm_decoder_t dec) {
   return ERR_OK;
 }
 
+EMSCRIPTEN_KEEPALIVE int wasm_dec_add_effect_rotate(uhdr_wasm_decoder_t dec,
+                                                    int degrees) {
+  if (dec == nullptr) {
+    return ERR_NULL_PTR;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  uhdr_error_info_t status = uhdr_add_effect_rotate(state->dec, degrees);
+
+  if (status.error_code != UHDR_CODEC_OK) {
+    std::snprintf(state->error_message, sizeof(state->error_message),
+                  "failed to add rotate effect: %s",
+                  status.has_detail ? status.detail : "unknown error");
+    return ERR_INVALID_FORMAT;
+  }
+
+  return ERR_OK;
+}
+
 // Helper struct to return metadata values to JS
 struct WasmGainMapMetadata {
   float max_content_boost[3];
@@ -629,6 +667,78 @@ wasm_dec_get_error_message(uhdr_wasm_decoder_t dec) {
   }
   WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
   return state->error_message;
+}
+
+/**
+ * Get the compressed gain map image from a probed UltraHDR JPEG.
+ * Returns a pointer to the gain map JPEG bytes owned by the decoder.
+ * The caller must copy the data before releasing the decoder.
+ */
+EMSCRIPTEN_KEEPALIVE const uint8_t *
+wasm_dec_get_gainmap_image(uhdr_wasm_decoder_t dec, int *out_size) {
+  if (dec == nullptr || out_size == nullptr) {
+    return nullptr;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  uhdr_mem_block_t *block = uhdr_dec_get_gainmap_image(state->dec);
+
+  if (block == nullptr || block->data == nullptr || block->data_sz == 0) {
+    std::strncpy(state->error_message, "no gainmap image available",
+                 sizeof(state->error_message));
+    *out_size = 0;
+    return nullptr;
+  }
+
+  *out_size = static_cast<int>(block->data_sz);
+  return static_cast<const uint8_t *>(block->data);
+}
+
+/**
+ * Get the compressed base (SDR) image from a probed UltraHDR JPEG.
+ * Returns a pointer to the base JPEG bytes owned by the decoder.
+ */
+EMSCRIPTEN_KEEPALIVE const uint8_t *
+wasm_dec_get_base_image(uhdr_wasm_decoder_t dec, int *out_size) {
+  if (dec == nullptr || out_size == nullptr) {
+    return nullptr;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  uhdr_mem_block_t *block = uhdr_dec_get_base_image(state->dec);
+
+  if (block == nullptr || block->data == nullptr || block->data_sz == 0) {
+    std::strncpy(state->error_message, "no base image available",
+                 sizeof(state->error_message));
+    *out_size = 0;
+    return nullptr;
+  }
+
+  *out_size = static_cast<int>(block->data_sz);
+  return static_cast<const uint8_t *>(block->data);
+}
+
+/**
+ * Get the gain map dimensions from a probed UltraHDR JPEG.
+ */
+EMSCRIPTEN_KEEPALIVE int
+wasm_dec_get_gainmap_dimensions(uhdr_wasm_decoder_t dec, int *out_w,
+                                int *out_h) {
+  if (dec == nullptr || out_w == nullptr || out_h == nullptr) {
+    return ERR_NULL_PTR;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  *out_w = uhdr_dec_get_gainmap_width(state->dec);
+  *out_h = uhdr_dec_get_gainmap_height(state->dec);
+
+  if (*out_w <= 0 || *out_h <= 0) {
+    std::strncpy(state->error_message, "invalid gainmap dimensions",
+                 sizeof(state->error_message));
+    return ERR_INVALID_FORMAT;
+  }
+
+  return ERR_OK;
 }
 
 } // extern "C"
