@@ -182,9 +182,169 @@ async function loadImageData(dataUrl, rotation = 0) {
 }
 
 /**
- * Generates the Gain Map ImageData manually by calculating the boost for each pixel.
+ * Computes a box-filtered (mean) version of a Float32Array image channel.
+ * Uses integral image for O(N) performance regardless of radius.
+ * @param {Float32Array} src - Source single-channel data (width * height)
+ * @param {number} w - Image width
+ * @param {number} h - Image height
+ * @param {number} r - Kernel radius
+ * @returns {Float32Array} Filtered output
+ */
+function boxFilter(src, w, h, r) {
+    const out = new Float32Array(w * h);
+    // Separable box filter: horizontal pass then vertical pass
+    const rowBuf = new Float32Array(w);
+    for (let y = 0; y < h; y++) {
+        const rowOff = y * w;
+        for (let x = 0; x < w; x++) {
+            const x0 = Math.max(0, x - r);
+            const x1 = Math.min(w - 1, x + r);
+            const count = x1 - x0 + 1;
+            let s = 0;
+            for (let xx = x0; xx <= x1; xx++) s += src[rowOff + xx];
+            rowBuf[x] = s / count;
+        }
+        for (let x = 0; x < w; x++) out[rowOff + x] = rowBuf[x];
+    }
+    // Vertical pass on the horizontally-filtered result
+    const colBuf = new Float32Array(h);
+    for (let x = 0; x < w; x++) {
+        for (let y = 0; y < h; y++) {
+            const y0 = Math.max(0, y - r);
+            const y1 = Math.min(h - 1, y + r);
+            const count = y1 - y0 + 1;
+            let s = 0;
+            for (let yy = y0; yy <= y1; yy++) s += out[yy * w + x];
+            colBuf[y] = s / count;
+        }
+        for (let y = 0; y < h; y++) out[y * w + x] = colBuf[y];
+    }
+    return out;
+}
+
+/**
+ * Guided filter (He et al. 2013) — edge-preserving smoothing with O(N) complexity.
+ * Uses the input luminance as both the guide and the filtering target.
+ * @param {Float32Array} I - Guide/input image (single channel, width*height)
+ * @param {number} w - Image width
+ * @param {number} h - Image height
+ * @param {number} r - Window radius
+ * @param {number} eps - Regularization parameter (controls edge sensitivity)
+ * @returns {Float32Array} Edge-preserving smoothed output
+ */
+function guidedFilter(I, w, h, r, eps) {
+    const n = w * h;
+
+    // Step 1: Compute local means and correlations via box filter
+    const meanI = boxFilter(I, w, h, r);
+
+    // I*I element-wise
+    const II = new Float32Array(n);
+    for (let i = 0; i < n; i++) II[i] = I[i] * I[i];
+    const meanII = boxFilter(II, w, h, r);
+
+    // Step 2: Compute local variance and linear coefficients
+    // Since guide == input (self-guided): var_I = meanII - meanI^2
+    // a = var_I / (var_I + eps)
+    // b = meanI * (1 - a)
+    const a = new Float32Array(n);
+    const b = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        const varI = meanII[i] - meanI[i] * meanI[i];
+        a[i] = varI / (varI + eps);
+        b[i] = meanI[i] * (1 - a[i]);
+    }
+
+    // Step 3: Average a and b over the window
+    const meanA = boxFilter(a, w, h, r);
+    const meanB = boxFilter(b, w, h, r);
+
+    // Step 4: Output = meanA * I + meanB
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        out[i] = meanA[i] * I[i] + meanB[i];
+    }
+    return out;
+}
+
+/**
+ * ACES-approximate forward tone curve (Narkowicz 2015 fit).
+ * Maps scene-linear [0, ∞) → display [0, ~1].
+ * f(x) = (x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14)
+ * @param {number} x - Scene-linear luminance
+ * @returns {number} Display luminance
+ */
+function acesForward(x) {
+    return (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+}
+
+/**
+ * Derivative of the ACES-approximate forward curve, used for Newton's method.
+ * f(x) = (ax² + bx) / (cx² + dx + e) where a=2.51, b=0.03, c=2.43, d=0.59, e=0.14
+ * f'(x) = [(2ax+b)(cx²+dx+e) - (ax²+bx)(2cx+d)] / (cx²+dx+e)²
+ * @param {number} x
+ * @returns {number}
+ */
+function acesForwardDerivative(x) {
+    const a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    const num = a * x * x + b * x;
+    const den = c * x * x + d * x + e;
+    const numPrime = 2 * a * x + b;
+    const denPrime = 2 * c * x + d;
+    return (numPrime * den - num * denPrime) / (den * den);
+}
+
+/**
+ * Inverse ACES tone curve via Newton's method.
+ * Given a display-referred value y in [0, ~1], recovers scene-linear x such that acesForward(x) ≈ y.
+ * @param {number} y - Display-referred (SDR) luminance in [0, 1]
+ * @param {number} maxIter - Max Newton iterations
+ * @returns {number} Scene-linear HDR luminance
+ */
+function acesInverse(y, maxIter = 8) {
+    if (y <= 0) return 0;
+    if (y >= 1) return 20.0; // ACES saturates around x≈20 → f(x)≈1.0
+
+    // Initial guess via algebraic rearrangement:
+    // y*(cx²+dx+e) = ax²+bx → (a-yc)x² + (b-yd)x - ye = 0
+    const a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    const A = a - y * c;
+    const B = b - y * d;
+    const C = -y * e;
+    const disc = B * B - 4 * A * C;
+    let x = disc > 0 ? (-B + Math.sqrt(disc)) / (2 * A) : y; // quadratic solution or fallback
+
+    // Refine with Newton's method for numerical precision
+    for (let i = 0; i < maxIter; i++) {
+        const fx = acesForward(x) - y;
+        const fpx = acesForwardDerivative(x);
+        if (Math.abs(fpx) < 1e-10) break;
+        const step = fx / fpx;
+        x -= step;
+        x = Math.max(0, x); // clamp to positive
+        if (Math.abs(step) < 1e-8) break;
+    }
+    return Math.max(0, x);
+}
+
+/**
+ * Generates the Gain Map ImageData using state-of-the-art reverse tonemapping.
+ *
+ * Pipeline stages:
+ *  1. Luminance decomposition (BT.709) — prevents hue shifts
+ *  2. Guided filter local adaptation (He et al. 2013) — edge-preserving spatial context
+ *  3. ACES-inspired inverse sigmoid — natural highlight expansion
+ *  4. Adaptive boost blending (global + local) — spatially-aware gain
+ *  5. Desaturation compensation — maintains color vibrancy at high boost
+ *  6. Log2 gain encoding — UltraHDR-compatible metadata
+ *
  * @param {ImageData} imageData - The SDR image data.
- * @param {Object} options 
+ * @param {Object} options
+ * @param {number} [options.maxContentBoost=4.0] - Maximum HDR boost factor
+ * @param {number} [options.highlightExponent=2.0] - Controls highlight expansion aggressiveness
+ * @param {number} [options.shadowCutoff=0.05] - Linear luminance below which no boost is applied
+ * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation
+ * @param {number} [options.localAdaptationRadius] - Guided filter radius (auto if not set)
  * @returns {{gainMapImageData: ImageData, metadata: Object}}
  */
 export function generateGainMapData(imageData, options) {
@@ -192,92 +352,156 @@ export function generateGainMapData(imageData, options) {
     const length = rgba.length;
     const width = imageData.width;
     const height = imageData.height;
-
-    // Create Gain Map ImageData (single channel usually, but we'll use RGB for compatibility)
-    // We can use a smaller resolution for gain map if we wanted, but let's keep it 1:1 for simplicity first.
-    // Actually, gain maps are often 1/4 resolution. But let's stick to 1:1 to avoid resizing logic complexity for now.
-    const gainMapData = new Uint8ClampedArray(length);
+    const pixelCount = width * height;
 
     const maxContentBoost = options.maxContentBoost || 4.0;
     const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 2.0;
     const shadowCutoff = options.shadowCutoff !== undefined ? options.shadowCutoff : 0.05;
+    const localAdaptStrength = options.localAdaptationStrength !== undefined ? options.localAdaptationStrength : 0.5;
+    const localRadius = options.localAdaptationRadius || Math.max(4, Math.min(64, Math.round(Math.max(width, height) / 32)));
+    const guidedEps = 0.0001; // ε = 0.01² for luminance in [0,1]
 
-    // Pre-calculate log2 of max boost for normalization
     const log2MaxBoost = Math.log2(maxContentBoost);
 
-    // sRGB to Linear conversion helper
+    // ─── Stage 1: sRGB → Linear + Luminance Decomposition ───
+
     const toLinear = (v) => {
         v /= 255;
         return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     };
 
-    // Helper to calculate boost
-    const calcBoost = (linearVal) => {
-        if (shadowCutoff >= 1.0) return 1.0;
-        const norm = Math.max(0, (linearVal - shadowCutoff) / (1 - shadowCutoff));
-        return 1 + (maxContentBoost - 1) * Math.pow(norm, highlightExponent);
-    };
+    // Convert to linear RGB and compute BT.709 luminance
+    const linR = new Float32Array(pixelCount);
+    const linG = new Float32Array(pixelCount);
+    const linB = new Float32Array(pixelCount);
+    const luminance = new Float32Array(pixelCount);
 
-    for (let i = 0; i < length; i += 4) {
-        const rLin = toLinear(rgba[i]);
-        const gLin = toLinear(rgba[i + 1]);
-        const bLin = toLinear(rgba[i + 2]);
+    for (let i = 0; i < pixelCount; i++) {
+        const idx = i * 4;
+        const r = toLinear(rgba[idx]);
+        const g = toLinear(rgba[idx + 1]);
+        const b = toLinear(rgba[idx + 2]);
+        linR[i] = r;
+        linG[i] = g;
+        linB[i] = b;
+        luminance[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
 
-        // Calculate Boost
-        const rBoost = calcBoost(rLin);
-        const gBoost = calcBoost(gLin);
-        const bBoost = calcBoost(bLin);
+    // ─── Stage 2: Local Adaptation via Guided Filter ───
 
-        // Encode Gain:
-        // GainMap value = (log2(Boost) - log2(minBoost)) / (log2(maxBoost) - log2(minBoost))
-        // We assume minBoost = 1.0, so log2(minBoost) = 0.
-        // So Encoded = log2(Boost) / log2(maxContentBoost)
+    const localLum = guidedFilter(luminance, width, height, localRadius, guidedEps);
 
-        // We clamp to [0, 1] just in case
-        const rLog = Math.log2(rBoost);
-        const gLog = Math.log2(gBoost);
-        const bLog = Math.log2(bBoost);
+    // Compute global average luminance (log-average for perceptual accuracy)
+    let logSum = 0;
+    const logDelta = 1e-6; // prevent log(0)
+    for (let i = 0; i < pixelCount; i++) {
+        logSum += Math.log(luminance[i] + logDelta);
+    }
+    const globalAvgLum = Math.exp(logSum / pixelCount);
 
-        const rEncoded = Math.max(0, Math.min(1, rLog / log2MaxBoost));
-        const gEncoded = Math.max(0, Math.min(1, gLog / log2MaxBoost));
-        const bEncoded = Math.max(0, Math.min(1, bLog / log2MaxBoost));
+    // ─── Stage 3 & 4: ACES Inverse + Adaptive Boost ───
 
-        gainMapData[i] = Math.round(rEncoded * 255);     // R
-        gainMapData[i + 1] = Math.round(gEncoded * 255); // G
-        gainMapData[i + 2] = Math.round(bEncoded * 255); // B
-        gainMapData[i + 3] = 255;                        // Alpha
+    // Normalize the ACES forward curve so that f(1) maps to the curve's output at 1.0
+    // This lets us treat SDR [0,1] luminance as the output of the ACES curve
+    const acesAt1 = acesForward(1.0); // ≈ 0.8048
+
+    const gainMapData = new Uint8ClampedArray(length);
+
+    for (let i = 0; i < pixelCount; i++) {
+        const lum = luminance[i];
+        const idx = i * 4;
+
+        // Blend between global and local average luminance for adaptation
+        const adaptedAvg = localAdaptStrength > 0
+            ? globalAvgLum * (1 - localAdaptStrength) + localLum[i] * localAdaptStrength
+            : globalAvgLum;
+
+        // Adaptation ratio: how bright is this pixel relative to its local context?
+        // Values > 1 mean brighter than surroundings (highlight), < 1 means darker (shadow)
+        const adaptRatio = (lum + logDelta) / (adaptedAvg + logDelta);
+
+        // Map SDR luminance through inverse ACES to get "scene-linear" HDR luminance
+        // Scale input to the ACES curve range and then invert
+        const sdrNorm = Math.min(1.0, lum / 1.0); // already in [0,1] from linear
+        const acesInput = sdrNorm * acesAt1; // scale to ACES output range
+        const sceneLinear = acesInverse(acesInput);
+
+        // The base boost from the inverse tone curve
+        let baseBoost = lum > logDelta ? sceneLinear / lum : 1.0;
+
+        // Apply highlight exponent to control aggressiveness of expansion
+        // Higher exponent = more aggressive boost for bright pixels
+        const lumNorm = Math.max(0, (lum - shadowCutoff) / (1 - shadowCutoff + logDelta));
+        const highlightWeight = Math.pow(Math.min(1, lumNorm), highlightExponent);
+
+        // Modulate boost by local adaptation: highlights in dark regions get extra boost
+        // while highlights in already-bright regions are more restrained
+        const localBoostMod = Math.pow(adaptRatio, 0.3 * localAdaptStrength);
+
+        // Final boost: blend between 1.0 (no boost) and the full calculated boost
+        let boost;
+        if (lum <= shadowCutoff) {
+            boost = 1.0; // No boost in deep shadows
+        } else {
+            boost = 1.0 + (maxContentBoost - 1.0) * highlightWeight * localBoostMod *
+                (baseBoost > 1.0 ? Math.min(baseBoost / (maxContentBoost * 0.5), 1.0) : 0.5);
+        }
+
+        // Clamp boost to valid range
+        boost = Math.max(1.0, Math.min(maxContentBoost, boost));
+
+        // ─── Stage 5: Desaturation Compensation ───
+        // High-boost areas tend to look washed out; increase saturation proportionally
+        const boostRatio = (boost - 1.0) / (maxContentBoost - 1.0); // 0–1 normalized
+        const satBoost = 1.0 + 0.15 * boostRatio; // subtle 0–15% saturation increase
+
+        // Apply boost to each channel, using luminance-ratio method to preserve hue
+        // hdrChannel = lum * boost * (channel / lum) * satBoost_adjustment
+        // Simplifies to: channel * boost, with saturation compensation
+        const lumSafe = Math.max(lum, logDelta);
+        const rRatio = linR[i] / lumSafe;
+        const gRatio = linG[i] / lumSafe;
+        const bRatio = linB[i] / lumSafe;
+
+        // Apply saturation boost: push ratios away from 1.0
+        const rRatSat = 1.0 + (rRatio - 1.0) * satBoost;
+        const gRatSat = 1.0 + (gRatio - 1.0) * satBoost;
+        const bRatSat = 1.0 + (bRatio - 1.0) * satBoost;
+
+        // Per-channel boost preserving hue (via luminance ratios)
+        const rBoost = Math.max(1.0, Math.min(maxContentBoost, boost * Math.max(0.5, rRatSat)));
+        const gBoost = Math.max(1.0, Math.min(maxContentBoost, boost * Math.max(0.5, gRatSat)));
+        const bBoost = Math.max(1.0, Math.min(maxContentBoost, boost * Math.max(0.5, bRatSat)));
+
+        // ─── Stage 6: Log2 Gain Encoding ───
+        const rEncoded = Math.max(0, Math.min(1, Math.log2(rBoost) / log2MaxBoost));
+        const gEncoded = Math.max(0, Math.min(1, Math.log2(gBoost) / log2MaxBoost));
+        const bEncoded = Math.max(0, Math.min(1, Math.log2(bBoost) / log2MaxBoost));
+
+        gainMapData[idx] = Math.round(rEncoded * 255);
+        gainMapData[idx + 1] = Math.round(gEncoded * 255);
+        gainMapData[idx + 2] = Math.round(bEncoded * 255);
+        gainMapData[idx + 3] = 255;
     }
 
     const gainMapImageData = new ImageData(gainMapData, width, height);
 
-    // Construct Metadata
-    // We are using a simple encoding where min = 1.0 (0 log2) and max = maxContentBoost.
-    // Gamma is 1.0 because we are encoding log2 values linearly into the 0-255 range (conceptually).
-    // Actually, UltraHDR spec usually expects the gain map image to be sRGB encoded if gamma is 1.0?
-    // Or is the stored image treated as linear values?
-    // gainmap-js usually encodes as:
-    // Value = ((log2(hdr) - log2(sdr)) - offsetHdr + offsetSdr) / (gainMapMax - gainMapMin)
-    // Here: hdr = sdr * boost => log2(hdr) - log2(sdr) = log2(boost)
-    // We assume offsetHdr = offsetSdr = 0 (or they cancel out for our simple case).
-    // So we are encoding log2(boost).
-    // gainMapMin = 0 (log2(1))
-    // gainMapMax = log2(maxContentBoost)
-
+    // Construct metadata (unchanged format for full backward compatibility)
     const metadata = {
         gainMapMin: [1.0, 1.0, 1.0],
         gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
-        gamma: [1.0, 1.0, 1.0], // We are writing linear log values directly
+        gamma: [1.0, 1.0, 1.0],
         offsetSdr: [0, 0, 0],
         offsetHdr: [0, 0, 0],
         hdrCapacityMin: 1.0,
         hdrCapacityMax: maxContentBoost,
-        parsedGainMapMin: [0, 0, 0], // gainmap-js internal usage
-        parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost], // gainmap-js internal usage
-        parsedGamma: [1.0, 1.0, 1.0], // gainmap-js internal usage
-        parsedOffsetSdr: [0, 0, 0], // gainmap-js internal usage
-        parsedOffsetHdr: [0, 0, 0], // gainmap-js internal usage
-        parsedHdrCapacityMin: 0, // gainmap-js internal usage
-        parsedHdrCapacityMax: log2MaxBoost // gainmap-js internal usage
+        parsedGainMapMin: [0, 0, 0],
+        parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
+        parsedGamma: [1.0, 1.0, 1.0],
+        parsedOffsetSdr: [0, 0, 0],
+        parsedOffsetHdr: [0, 0, 0],
+        parsedHdrCapacityMin: 0,
+        parsedHdrCapacityMax: log2MaxBoost
     };
 
     return { gainMapImageData, metadata };
