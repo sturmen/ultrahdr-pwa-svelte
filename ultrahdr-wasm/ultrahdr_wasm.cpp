@@ -44,6 +44,9 @@ static const int ERR_MEMORY_ALLOC = -4;
 static const int ERR_ENCODE_FAILED = -5;
 static const int ERR_BUFFER_TOO_SMALL = -6;
 
+typedef void *uhdr_wasm_encoder_t;
+typedef void *uhdr_wasm_decoder_t;
+
 // Internal encoder state
 struct WasmEncoderState {
   uhdr_codec_private_t *enc;
@@ -480,6 +483,152 @@ EMSCRIPTEN_KEEPALIVE void wasm_reset_encoder(uhdr_wasm_encoder_t enc) {
   }
 
   std::strncpy(state->error_message, "OK", sizeof(state->error_message));
+}
+
+} // extern "C"
+
+// Decoder implementation
+struct WasmDecoderState {
+  uhdr_codec_private_t *dec;
+  char error_message[256];
+};
+
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE int wasm_is_uhdr_image(const uint8_t *data, int size) {
+  if (data == nullptr || size <= 0) {
+    return 0;
+  }
+  // Cast away constness because the API expects void*, but it treats it as
+  // const.
+  return is_uhdr_image(const_cast<uint8_t *>(data), size);
+}
+
+EMSCRIPTEN_KEEPALIVE uhdr_wasm_decoder_t wasm_create_decoder(void) {
+  WasmDecoderState *state = new WasmDecoderState();
+  if (state == nullptr) {
+    return nullptr;
+  }
+
+  state->dec = uhdr_create_decoder();
+  if (state->dec == nullptr) {
+    delete state;
+    return nullptr;
+  }
+
+  std::strncpy(state->error_message, "OK", sizeof(state->error_message));
+  return state;
+}
+
+EMSCRIPTEN_KEEPALIVE void wasm_release_decoder(uhdr_wasm_decoder_t dec) {
+  if (dec == nullptr) {
+    return;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  if (state->dec != nullptr) {
+    uhdr_release_decoder(state->dec);
+    state->dec = nullptr;
+  }
+  delete state;
+}
+
+EMSCRIPTEN_KEEPALIVE int wasm_dec_set_image(uhdr_wasm_decoder_t dec,
+                                            const uint8_t *data, int size) {
+  if (dec == nullptr || data == nullptr) {
+    return ERR_NULL_PTR;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+
+  uhdr_compressed_image_t img = {};
+  img.data = const_cast<uint8_t *>(data);
+  img.data_sz = (size_t)size;
+  img.capacity = (size_t)size;
+  img.cg = UHDR_CG_UNSPECIFIED;
+  img.ct = UHDR_CT_UNSPECIFIED;
+  img.range = UHDR_CR_UNSPECIFIED;
+
+  uhdr_error_info_t status = uhdr_dec_set_image(state->dec, &img);
+
+  if (status.error_code != UHDR_CODEC_OK) {
+    std::snprintf(state->error_message, sizeof(state->error_message),
+                  "failed to set decoder image: %s",
+                  status.has_detail ? status.detail : "unknown error");
+    return ERR_INVALID_FORMAT;
+  }
+
+  return ERR_OK;
+}
+
+EMSCRIPTEN_KEEPALIVE int wasm_dec_probe(uhdr_wasm_decoder_t dec) {
+  if (dec == nullptr) {
+    return ERR_NULL_PTR;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  uhdr_error_info_t status = uhdr_dec_probe(state->dec);
+
+  if (status.error_code != UHDR_CODEC_OK) {
+    std::snprintf(state->error_message, sizeof(state->error_message),
+                  "probe failed: %s",
+                  status.has_detail ? status.detail : "unknown error");
+    return ERR_INVALID_FORMAT; // Using generic error code
+  }
+
+  return ERR_OK;
+}
+
+// Helper struct to return metadata values to JS
+struct WasmGainMapMetadata {
+  float max_content_boost[3];
+  float min_content_boost[3];
+  float gamma[3];
+  float offset_sdr[3];
+  float offset_hdr[3];
+  float hdr_capacity_min;
+  float hdr_capacity_max;
+  int use_base_cg;
+};
+
+EMSCRIPTEN_KEEPALIVE int
+wasm_dec_get_gainmap_metadata(uhdr_wasm_decoder_t dec,
+                              WasmGainMapMetadata *out_metadata) {
+  if (dec == nullptr || out_metadata == nullptr) {
+    return ERR_NULL_PTR;
+  }
+
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  uhdr_gainmap_metadata_t *meta = uhdr_dec_get_gainmap_metadata(state->dec);
+
+  if (meta == nullptr) {
+    std::strncpy(state->error_message, "failed to get gainmap metadata",
+                 sizeof(state->error_message));
+    return ERR_INVALID_FORMAT;
+  }
+
+  // Copy to output struct
+  for (int i = 0; i < 3; i++) {
+    out_metadata->max_content_boost[i] = meta->max_content_boost[i];
+    out_metadata->min_content_boost[i] = meta->min_content_boost[i];
+    out_metadata->gamma[i] = meta->gamma[i];
+    out_metadata->offset_sdr[i] = meta->offset_sdr[i];
+    out_metadata->offset_hdr[i] = meta->offset_hdr[i];
+  }
+  out_metadata->hdr_capacity_min = meta->hdr_capacity_min;
+  out_metadata->hdr_capacity_max = meta->hdr_capacity_max;
+  out_metadata->use_base_cg = meta->use_base_cg;
+
+  return ERR_OK;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *
+wasm_dec_get_error_message(uhdr_wasm_decoder_t dec) {
+  if (dec == nullptr) {
+    return "invalid decoder handle";
+  }
+  WasmDecoderState *state = static_cast<WasmDecoderState *>(dec);
+  return state->error_message;
 }
 
 } // extern "C"

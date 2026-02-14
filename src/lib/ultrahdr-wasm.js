@@ -601,6 +601,171 @@ export function getStatus() {
 }
 
 /**
+ * Check if the image is a valid UltraHDR image
+ * @param {Uint8Array} data - Image data
+ * @returns {Promise<boolean>}
+ */
+export async function isUhdrImage(data) {
+    await loadWasmModule();
+    const Module = getWasmModule();
+
+    const size = data.length;
+    const ptr = Module._malloc(size);
+    if (!ptr) return false;
+
+    try {
+        const heap = new Uint8Array(Module.HEAPU8.buffer);
+        heap.set(data, ptr);
+        return Module._wasm_is_uhdr_image(ptr, size) === 1;
+    } finally {
+        Module._free(ptr);
+    }
+}
+
+/**
+ * Decoder class for UltraHDR images using libultrahdr WASM
+ */
+export class UHDRDecoder {
+    constructor() {
+        this._decoder = null;
+        this._initialized = false;
+    }
+
+    /**
+     * Initialize the decoder
+     * @returns {Promise<void>}
+     */
+    async init() {
+        await loadWasmModule();
+        const Module = getWasmModule();
+
+        this._decoder = Module._wasm_create_decoder();
+        if (!this._decoder) {
+            throw new Error('Failed to create WASM decoder');
+        }
+        this._initialized = true;
+    }
+
+    /**
+     * Set compressed image for decoding/probing.
+     * Keeps the WASM memory alive until the next setImage call or destroy(),
+     * because libultrahdr stores the pointer rather than copying the data.
+     * @param {Uint8Array} data - JPEG data
+     */
+    setImage(data) {
+        if (!this._initialized) throw new Error('Decoder not initialized');
+
+        const Module = getWasmModule();
+
+        // Free previous image
+        if (this._currentImagePtr) {
+            Module._free(this._currentImagePtr);
+            this._currentImagePtr = null;
+        }
+
+        const size = data.length;
+        const ptr = Module._malloc(size);
+        if (!ptr) throw new Error('Failed to allocate memory for image');
+
+        const heap = new Uint8Array(Module.HEAPU8.buffer);
+        heap.set(data, ptr);
+
+        this._currentImagePtr = ptr; // Keep alive
+
+        const result = Module._wasm_dec_set_image(this._decoder, ptr, size);
+        try {
+            this._checkResult(result, 'Failed to set decoder image');
+        } catch (e) {
+            // If set failed, free immediately
+            Module._free(ptr);
+            this._currentImagePtr = null;
+            throw e;
+        }
+    }
+
+    /**
+     * Parse the bitstream to make image info available
+     */
+    probe() {
+        if (!this._initialized) throw new Error('Decoder not initialized');
+        const Module = getWasmModule();
+        const result = Module._wasm_dec_probe(this._decoder);
+        this._checkResult(result, 'Probe failed');
+    }
+
+    /**
+     * Get gain map metadata
+     * @returns {Object}
+     */
+    getGainMapMetadata() {
+        if (!this._initialized) throw new Error('Decoder not initialized');
+        const Module = getWasmModule();
+
+        // Allocate struct for output (23 floats = 92 bytes, + int = 96 bytes)
+        // struct WasmGainMapMetadata is:
+        // float max[3], min[3], gamma[3], offSdr[3], offHdr[3] (15 floats)
+        // float capMin, capMax (2 floats)
+        // int useBaseCg (1 int)
+        // Total: 17 floats + 1 int = 18 * 4 = 72 bytes.
+
+        const metaPtr = Module._malloc(128); // Safe margin
+        if (!metaPtr) throw new Error('Failed to allocate memory for metadata');
+
+        try {
+            const result = Module._wasm_dec_get_gainmap_metadata(this._decoder, metaPtr);
+            this._checkResult(result, 'Failed to get gainmap metadata');
+
+            // Read values
+            // Layout matches struct WasmGainMapMetadata
+            // float arrays are contiguous
+            const floatData = new Float32Array(Module.HEAPU8.buffer, metaPtr, 17);
+            const intData = new Int32Array(Module.HEAPU8.buffer, metaPtr + 17 * 4, 1);
+
+            return {
+                gainMapMax: [floatData[0], floatData[1], floatData[2]],
+                gainMapMin: [floatData[3], floatData[4], floatData[5]],
+                gamma: [floatData[6], floatData[7], floatData[8]],
+                offsetSdr: [floatData[9], floatData[10], floatData[11]],
+                offsetHdr: [floatData[12], floatData[13], floatData[14]],
+                hdrCapacityMin: floatData[15],
+                hdrCapacityMax: floatData[16],
+                useBaseCg: intData[0] !== 0
+            };
+        } finally {
+            Module._free(metaPtr);
+        }
+    }
+
+    /**
+     * Check result code
+     */
+    _checkResult(result, message) {
+        if (result === 0) return;
+
+        const Module = getWasmModule();
+        const msgPtr = Module._wasm_dec_get_error_message(this._decoder);
+        const errorMsg = msgPtr ? Module.UTF8ToString(msgPtr) : 'Unknown error';
+        throw new Error(`${message}: ${errorMsg} (code ${result})`);
+    }
+
+    /**
+     * Destroy decoder
+     */
+    destroy() {
+        const Module = getWasmModule();
+        if (this._currentImagePtr) {
+            Module._free(this._currentImagePtr);
+            this._currentImagePtr = null;
+        }
+        if (this._decoder) {
+            Module._wasm_release_decoder(this._decoder);
+            this._decoder = null;
+        }
+        this._initialized = false;
+    }
+}
+
+/**
  * Clean up WASM module (for testing)
  * @returns {void}
  */

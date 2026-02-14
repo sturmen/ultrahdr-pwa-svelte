@@ -1,0 +1,74 @@
+# Page snapshot
+
+```yaml
+- main [ref=e3]:
+  - heading "UltraHDR Image Enhancer" [level=1] [ref=e4]
+  - paragraph [ref=e5]:
+    - text: Convert your images to UltraHDR.
+    - text: No cost, no cloud, no server, no registration, no ads.
+    - text: Completely private, completely offline.
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - heading "Settings" [level=2] [ref=e8]
+      - generic [ref=e9]:
+        - generic [ref=e10]: Rotation
+        - generic [ref=e11]:
+          - button "Left" [ref=e12] [cursor=pointer]:
+            - img [ref=e13]
+            - text: Left
+          - button "Right" [ref=e15] [cursor=pointer]:
+            - text: Right
+            - img [ref=e16]
+          - generic [ref=e18]: 0°
+      - generic [ref=e19]:
+        - generic [ref=e20]: Max Content Boost (HDR Intensity)
+        - generic [ref=e21]:
+          - slider "Max Content Boost (HDR Intensity)" [ref=e22]: "2.3"
+          - generic [ref=e23]: 2.3x
+        - paragraph [ref=e24]: Higher values create brighter highlights.
+      - generic [ref=e25]:
+        - generic [ref=e26]: "Minimum Brightness Threshold for Enhancement: 5%"
+        - generic [ref=e27]:
+          - 'slider "Minimum Brightness Threshold for Enhancement: 5%" [ref=e28]': "0.05"
+          - generic [ref=e29]: 5%
+        - paragraph [ref=e30]: Brightness values below this threshold are not enhanced.
+      - generic [ref=e31]:
+        - generic [ref=e32]: JPEG Quality
+        - combobox "JPEG Quality" [ref=e34] [cursor=pointer]:
+          - option "High" [selected]
+          - option "Medium"
+          - option "Low"
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - checkbox
+        - generic [ref=e38] [cursor=pointer]: Discard existing gain map(s)
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - checkbox
+        - generic [ref=e42] [cursor=pointer]: Strip EXIF data
+      - generic [ref=e43]:
+        - button "Add Images" [ref=e44] [cursor=pointer]
+        - button "Start Over" [ref=e45] [cursor=pointer]
+    - generic [ref=e47]:
+      - generic [ref=e48]:
+        - heading "Preview" [level=3] [ref=e49]
+        - generic [ref=e50]:
+          - button "Select All" [ref=e51] [cursor=pointer]
+          - button "Deselect All" [ref=e52] [cursor=pointer]
+          - button "Download (1)" [active] [ref=e53] [cursor=pointer]
+      - button "Processed result sdr_demo_image.jpg 0.75 MB" [ref=e55] [cursor=pointer]:
+        - img [ref=e57]
+        - button "Remove image" [ref=e59]:
+          - img [ref=e60]
+        - img "Processed result" [ref=e63]
+        - generic [ref=e64]:
+          - paragraph [ref=e65]: sdr_demo_image.jpg
+          - paragraph [ref=e66]: 0.75 MB
+  - paragraph [ref=e67]:
+    - text: Try Google Chrome on Windows/macOS if you run into issues.
+    - link "What is HDR?" [ref=e68] [cursor=pointer]:
+      - /url: https://gregbenzphotography.com/hdr/#whatishdr
+    - link "Source code" [ref=e69] [cursor=pointer]:
+      - /url: https://github.com/sturmen/ultrahdr-pwa-svelte
+    - text: Version 1.2.0
+```

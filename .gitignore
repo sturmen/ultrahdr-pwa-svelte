@@ -2,7 +2,7 @@
 node_modules/
 .vscode/
 build/
-
+playwright-report/
 # Build artifacts
 libultrahdr/build/
 ultrahdr-wasm/build/

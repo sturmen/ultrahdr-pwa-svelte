@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "deploy": "gh-pages -d dist",
     "test": "vitest --config vite.config.test.js",
+    "test:e2e": "npx playwright test",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"
   },
@@ -29,6 +30,7 @@
     "vite-plugin-static-copy": "^3.1.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
