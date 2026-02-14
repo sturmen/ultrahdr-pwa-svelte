@@ -46,117 +46,125 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
 
     console.log('[HEIC] Found', data.length, 'top-level images');
 
-    // Log all images to see if gain map is exposed as top-level
-    for (let i = 0; i < data.length; i++) {
-        console.log(`[HEIC] Image ${i}:`, data[i].get_width(), 'x', data[i].get_height());
-    }
-
     // Assume first image is primary
     const primaryImage = data[0];
-    const handle = primaryImage.handle;
 
     // Check for auxiliary images (Gain Map)
-    // 0 = all auxiliary images
-    let auxCount = 0;
-    if (heif.heif_image_handle_get_number_of_auxiliary_images) {
-        try {
-            auxCount = heif.heif_image_handle_get_number_of_auxiliary_images(handle, 0);
-            console.log('[HEIC] Auxiliary images count:', auxCount);
-        } catch (e) {
-            console.warn('[HEIC] Could not get auxiliary image count:', e);
-        }
-    } else {
-        console.warn('[HEIC] heif_image_handle_get_number_of_auxiliary_images not available');
-    }
-
-    let gainMapHandle = null;
+    // Inspect ALL top-level images for one attached as an auxiliary image
     let gainMapImageData = null;
 
-    // ... (Gain map extraction logic would go here)
-    // ... (Gain map extraction logic)
-    if (auxCount > 0 && !options.discardGainMap) {
-        try {
-            // Get list of auxiliary image IDs
-            const idsSize = auxCount * 4; // 4 bytes per ID (int)
-            const idsPtr = heif._malloc(idsSize);
+    if (!options.discardGainMap) {
+        console.log('[HEIC] Searching for Gain Map across', data.length, 'top-level images...');
 
-            const count = heif.heif_image_handle_get_list_of_auxiliary_image_IDs(handle, 0, idsPtr, auxCount);
-            console.log('[HEIC] Got', count, 'auxiliary IDs');
+        for (let imgIdx = 0; imgIdx < data.length; imgIdx++) {
+            const currentImg = data[imgIdx];
+            const currentHandle = currentImg.handle;
 
-            const ids = new Int32Array(heif.HEAP32.buffer, idsPtr, count);
-
-            for (let i = 0; i < count; i++) {
-                const id = ids[i];
-                // Get handle for this aux image
-                let auxHandle = null;
-                const auxHandlePtr = heif._malloc(4); // Pointer to pointer
-
-                const err = heif.heif_image_handle_get_auxiliary_image_handle(handle, id, auxHandlePtr);
-
-                if (err && err.code !== 0) {
-                    console.warn('[HEIC] Failed to get aux handle for ID', id, err);
-                    heif._free(auxHandlePtr);
-                    continue;
+            // Check for auxiliary images on this handle
+            let currentAuxCount = 0;
+            if (heif.heif_image_handle_get_number_of_auxiliary_images) {
+                try {
+                    currentAuxCount = heif.heif_image_handle_get_number_of_auxiliary_images(currentHandle, 0);
+                } catch (e) {
+                    console.warn(`[HEIC] Could not get auxiliary image count for image ${imgIdx}:`, e);
                 }
+            }
 
-                // Get the handle value from the pointer
-                const auxHandleVal = heif.getValue(auxHandlePtr, '*'); // Pointer type
+            if (currentAuxCount > 0) {
+                try {
+                    const idsSize = currentAuxCount * 4;
+                    const idsPtr = heif._malloc(idsSize);
+                    const count = heif.heif_image_handle_get_list_of_auxiliary_image_IDs(currentHandle, 0, idsPtr, currentAuxCount);
+                    const ids = new Int32Array(heif.HEAP32.buffer, idsPtr, count);
 
-                // Now check type
-                const typePtr = heif.heif_image_handle_get_auxiliary_type(auxHandleVal);
-                const type = heif.UTF8ToString(typePtr);
-                console.log('[HEIC] Aux Image Type:', type);
+                    for (let i = 0; i < count; i++) {
+                        const id = ids[i];
+                        let auxHandle = null;
+                        const auxHandlePtr = heif._malloc(4);
+                        const err = heif.heif_image_handle_get_auxiliary_image_handle(currentHandle, id, auxHandlePtr);
 
-                if (type === 'urn:apple:gainmap' || type === 'urn:google:gainmap') {
-                    console.log('[HEIC] Found Gain Map!');
+                        if (err && err.code !== 0) {
+                            heif._free(auxHandlePtr);
+                            continue;
+                        }
+                        const auxHandleVal = heif.getValue(auxHandlePtr, '*');
+                        const typePtr = heif.heif_image_handle_get_auxiliary_type(auxHandleVal);
+                        const type = heif.UTF8ToString(typePtr);
+                        console.log(`[HEIC] Image ${imgIdx} Aux Type:`, type);
 
-                    // Decode this aux image
-                    const auxImage = new heif.HeifImage(auxHandleVal);
+                        if (type === 'urn:apple:gainmap' || type === 'urn:google:gainmap' || type === 'urn:com:apple:photo:2020:aux:hdrgainmap') {
+                            console.log('[HEIC] Found Gain Map on Image', imgIdx);
+                            const auxImage = new heif.HeifImage(auxHandleVal);
+                            const w = auxImage.get_width();
+                            const h = auxImage.get_height();
 
-                    const w = auxImage.get_width();
-                    const h = auxImage.get_height();
-                    console.log('[HEIC] Gain Map Size:', w, 'x', h);
+                            const canvas = document.createElement('canvas'); // Only works if document/canvas exists (JSDOM/Browser)
+                            canvas.width = w;
+                            canvas.height = h;
+                            const ctx = canvas.getContext('2d');
+                            const imageData = ctx.createImageData(w, h);
+
+                            await new Promise((resolve, reject) => {
+                                auxImage.display(imageData, (displayData) => {
+                                    if (!displayData) reject(new Error('Gain map decoding error'));
+                                    else resolve(displayData);
+                                });
+                            });
+                            gainMapImageData = imageData;
+                            heif._free(auxHandlePtr);
+                            break;
+                        }
+                        heif.heif_image_handle_release(auxHandleVal);
+                        heif._free(auxHandlePtr);
+                    }
+                    heif._free(idsPtr);
+                    if (gainMapImageData) break;
+
+                } catch (e) {
+                    console.warn(`[HEIC] Error iterating auxiliary images for image ${imgIdx}:`, e);
+                }
+            }
+        }
+
+        // Fallback: If no gain map found as auxiliary, check if secondary image exists and looks like a gain map
+        if (!gainMapImageData && data.length > 1) {
+            console.warn('[HEIC] No auxiliary gain map found. Attempting to use secondary image as gain map.');
+            const potentialGainMap = data[1]; // Use second image
+
+            // Simple heuristic: If smaller than primary, assume it's gain map (or thumbnail/preview used as gain map)
+            if (potentialGainMap.get_width() < primaryImage.get_width()) {
+                console.log('[HEIC] Using secondary image (Image 1) as Gain Map candidate.');
+                try {
+                    const w = potentialGainMap.get_width();
+                    const h = potentialGainMap.get_height();
 
                     const canvas = document.createElement('canvas');
                     canvas.width = w;
                     canvas.height = h;
                     const ctx = canvas.getContext('2d');
-                    const imageData = ctx.createImageData(w, h);
+                    const d = ctx.createImageData(w, h);
 
                     await new Promise((resolve, reject) => {
-                        auxImage.display(imageData, (displayData) => {
-                            if (!displayData) {
-                                reject(new Error('Gain map decoding error'));
-                            } else {
-                                resolve(displayData);
-                            }
+                        potentialGainMap.display(d, (res) => {
+                            if (!res) reject(new Error('Failed to decode secondary image'));
+                            else resolve(res);
                         });
                     });
 
-                    gainMapImageData = imageData;
+                    gainMapImageData = d;
+                    console.log(`[HEIC] Extracted gain map from secondary image: ${w}x${h}`);
 
-                    heif._free(auxHandlePtr);
-                    break;
+                } catch (err) {
+                    console.warn('[HEIC] Failed to decode secondary image as gain map:', err);
                 }
-
-                // Release aux handle if not used
-                heif.heif_image_handle_release(auxHandleVal);
-                heif._free(auxHandlePtr);
             }
-
-            heif._free(idsPtr);
-
-        } catch (e) {
-            console.warn('[HEIC] Error iterating auxiliary images:', e);
         }
+
     } else if (options.discardGainMap) {
         console.log('[HEIC] Gain map extraction skipped (discardGainMap=true)');
     }
 
-    // Standard Decoding (Fallback / Default)
-    // Decode HEIC -> ImageData -> PNG File -> processImage (ITM)
-
-    // To decode to ImageData:
+    // Standard SDR Decoding
     const w = primaryImage.get_width();
     const h = primaryImage.get_height();
 
@@ -176,31 +184,6 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
         });
     });
 
-    // Now we have ImageData.
-    // If we want to preserve the gain map, we need to extract it.
-    // If we can't, we'll just use this ImageData as input to the standard processImage function.
-    // But processImage expects a File object.
-    // I can create a synthetic File or modify processImage to accept ImageData/Blob.
-    // Or I can just convert this ImageData to a PNG/JPEG Blob and pass it to processImage.
-    // Converting to PNG is lossless but slow.
-
-    // Better: Modify processImage to accept 'imageSource' which can be File or ImageData/Image.
-    // But processImage does a lot of setup (EXIF, loading).
-
-    // Let's try to extract the gain map.
-    // If I can't, I'll just return the decoded image as a standard JPEG (SDR) and let the user know?
-    // No, the user wants UltraHDR.
-    // So if I can't extract the gain map, I should generate one (ITM).
-
-    // So the plan:
-    // 1. Decode HEIC to ImageData.
-    // 2. Pass to standard pipeline (which generates gain map).
-    // 3. (Future/Advanced) Extract existing gain map if possible.
-
-    // Given the complexity of Emscripten C API without docs, I'll start with the fallback (ITM) to ensure basic HEIC support.
-    // I'll add a TODO/Log for gain map extraction.
-
-    // If we found a gain map, return structured data
     if (gainMapImageData) {
         console.log('[HEIC] Returning SDR + Gain Map');
         return {
@@ -210,20 +193,10 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
         };
     }
 
-    // Fallback: Return PNG File (ITM)
     console.log('[HEIC] No gain map found (or discarded), falling back to ITM');
     ctx.putImageData(imageData, 0, 0);
     const pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
     const pngFile = new File([pngBlob], file.name.replace(/\.(heic|heif)$/i, '.png'), { type: 'image/png' });
-
-    // Call standard processImage with the converted PNG
-    // This will use ITM to generate a NEW gain map.
-    // This satisfies "Support HEIC input" but misses "Reuse input gain map".
-    // I will notify the user about this limitation if I can't implement it now.
-
-    // However, I should try to get the ICC profile at least.
-    // heif_image_handle_get_raw_color_profile(handle, profile_type)
-    // profile_type: heif_color_profile_type_prof = 1 (ICC)
 
     return pngFile;
 }
