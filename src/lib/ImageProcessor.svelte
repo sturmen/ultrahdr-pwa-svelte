@@ -363,7 +363,11 @@
         />
         <span class="value">{maxContentBoost.toFixed(1)}x</span>
       </div>
-      <p class="help-text">Higher values create brighter highlights.</p>
+      <p class="help-text">
+        Higher values create brighter highlights when generating a new gain map.
+        Existing input gain maps are preserved as-is unless
+        &ldquo;Discard existing gain map(s)&rdquo; is enabled.
+      </p>
     </div>
 
     <div class="control-group">

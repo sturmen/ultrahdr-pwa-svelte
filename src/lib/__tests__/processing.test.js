@@ -46,6 +46,19 @@ describe('generateGainMapData function', () => {
     expect(result.gainMapImageData.data[0]).toBeGreaterThan(100);
   });
 
+  it('should use 2.3 as the default max content boost when omitted', () => {
+    const imageData = new ImageData(
+      new Uint8ClampedArray([200, 200, 200, 255]),
+      1,
+      1
+    );
+
+    const result = generateGainMapData(imageData, {});
+
+    expect(result.metadata.gainMapMax).toEqual([2.3, 2.3, 2.3]);
+    expect(result.metadata.hdrCapacityMax).toBe(2.3);
+  });
+
   it('should apply max content boost correctly', () => {
     // Create bright pixel (should get boost)
     const imageData = new ImageData(

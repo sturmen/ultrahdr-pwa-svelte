@@ -30,14 +30,15 @@ const inputUhdrBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff,
 const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBAVFhUVFRUVFRUVFRUVFRUVFRUWFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGxAQGy0mICYtLS8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAgMBIgACEQEDEQH/xAAXAAEAAwAAAAAAAAAAAAAAAAAAAQID/8QAFhABAQEAAAAAAAAAAAAAAAAAABES/9oADAMBAAIQAxAAAAG0AH//xAAXEAEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEBAAEFAtNv/8QAFhEAAwAAAAAAAAAAAAAAAAAAARAR/9oACAEDAQE/AYf/xAAVEQEBAAAAAAAAAAAAAAAAAAABEP/aAAgBAgEBPwGH/8QAGhABAAMAAwAAAAAAAAAAAAAAAAERITFBUf/aAAgBAQAGPwKjNf/EABsQAQEAAwEBAQAAAAAAAAAAAAERACExQVGh/9oACAEBAAE/IdXQjFzWq9KQ2rgo8sfr/9oADAMBAAIAAwAAABAf/wD/xAAXEQEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEDAQE/EFjP/8QAFxEBAQEBAAAAAAAAAAAAAAAAAREhQf/aAAgBAgEBPxBfM//EAB0QAQACAgIDAAAAAAAAAAAAAAEAESExQVFhcZH/2gAIAQEAAT8QObXbJ0UuE1ULhBrxwC4j5V0F3l0JgS3f/2Q==';
 const baseUhdrBytes = new Uint8Array(Buffer.from(tinyJpegBase64, 'base64'));
 const gainMapUhdrBytes = new Uint8Array(Buffer.from(tinyJpegBase64, 'base64'));
+const defaultMaxContentBoost = 2.3;
 const gainMapMetadata = {
     gainMapMin: [1.0, 1.0, 1.0],
-    gainMapMax: [4.0, 4.0, 4.0],
+    gainMapMax: [defaultMaxContentBoost, defaultMaxContentBoost, defaultMaxContentBoost],
     gamma: [1.0, 1.0, 1.0],
     offsetSdr: [0, 0, 0],
     offsetHdr: [0, 0, 0],
     hdrCapacityMin: 1.0,
-    hdrCapacityMax: 4.0
+    hdrCapacityMax: defaultMaxContentBoost
 };
 
 const decoderInstance = {
@@ -66,6 +67,7 @@ vi.mock('../heic-processing.js', () => ({
     processHeic: vi.fn(async () => ({
         sdr: sdrImageData,
         gainMap: gainMapImageData,
+        gainMapMetadata,
         name: 'input.heic'
     }))
 }));
@@ -117,7 +119,7 @@ describe('processImage UltraHDR preservation path', () => {
             expect.any(Uint8Array),
             expect.objectContaining({
                 gainMapMin: [1.0, 1.0, 1.0],
-                gainMapMax: [4.0, 4.0, 4.0]
+                gainMapMax: [defaultMaxContentBoost, defaultMaxContentBoost, defaultMaxContentBoost]
             })
         );
 
@@ -128,6 +130,26 @@ describe('processImage UltraHDR preservation path', () => {
 
         expect(result).toBeInstanceOf(Blob);
         expect(result.type).toBe('image/jpeg');
+    });
+
+    it('preserves HEIC gain-map metadata even when maxContentBoost is changed', async () => {
+        const { processImage } = await import('../processing.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            maxContentBoost: 4.0,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.objectContaining(gainMapMetadata)
+        );
     });
 
     it('emits progress events through onProgress callback across the pipeline', async () => {

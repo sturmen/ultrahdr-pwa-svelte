@@ -514,12 +514,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Verify all controls are present
             await expect(page.locator('#boost')).toBeVisible();
+            await expect(page.locator('#boost')).toHaveValue('2.3');
             await expect(page.locator('#shadowCutoff')).toBeVisible();
             await expect(page.locator('#quality')).toBeVisible();
+            await expect(page.locator('text=Existing input gain maps are preserved as-is')).toBeVisible();
 
             // Verify toggle switches
-            await expect(page.locator('text=Discard existing gain map')).toBeVisible();
-            await expect(page.locator('text=Strip EXIF data')).toBeVisible();
+            await expect(page.locator('.switch-label').filter({ hasText: 'Discard existing gain map(s)' })).toBeVisible();
+            await expect(page.locator('.switch-label').filter({ hasText: 'Strip EXIF data' })).toBeVisible();
 
             // Verify rotation buttons
             await expect(page.locator('button:has-text("Left")')).toBeVisible();

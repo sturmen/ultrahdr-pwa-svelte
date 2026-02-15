@@ -18,6 +18,6 @@ Preview instructions:
 Deploy instructions:
 `npm run deploy`
 
-To test every change, you must successfully run *all* build steps and *all* tests, even the ones not affected by your changes.
+To test every task completion, you must successfully run *all* build steps and unit tests, even the ones not affected by your changes.
 
 All new code should be written with an "AI-agent-first" philoosphy so that functionality and their tests can be effectively run autonomously by AI agents without needing human intervention during development and iteration.

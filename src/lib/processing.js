@@ -5,8 +5,10 @@ import { createPipelineTelemetry } from './pipeline-telemetry.js';
 import { processTiff } from './tiff-processing.js';
 import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, getStatus, isUhdrImage } from './ultrahdr-wasm.js';
 
+const DEFAULT_MAX_CONTENT_BOOST = 2.3;
+
 const DEFAULT_PROCESS_OPTIONS = {
-    maxContentBoost: 4.0,
+    maxContentBoost: DEFAULT_MAX_CONTENT_BOOST,
     rotation: 0,
     quality: 0.95,
     discardGainMap: false,
@@ -143,7 +145,9 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
             const imageData = file.sdr;
             const gainMapImageData = file.gainMap;
-            const metadata = buildGainMapMetadata(mergedOptions.maxContentBoost || 4.0);
+            // Preserve source gain-map metadata when provided by the preprocessor.
+            // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
+            const metadata = file.gainMapMetadata || buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST);
 
             const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
                 compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry)
@@ -517,7 +521,7 @@ function acesInverse(y, maxIter = 8) {
  *
  * @param {ImageData} imageData - The SDR image data.
  * @param {Object} options
- * @param {number} [options.maxContentBoost=4.0] - Maximum HDR boost factor
+ * @param {number} [options.maxContentBoost=2.3] - Maximum HDR boost factor
  * @param {number} [options.highlightExponent=2.0] - Controls highlight expansion aggressiveness
  * @param {number} [options.shadowCutoff=0.05] - Linear luminance below which no boost is applied
  * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation
@@ -531,7 +535,7 @@ export function generateGainMapData(imageData, options) {
     const height = imageData.height;
     const pixelCount = width * height;
 
-    const maxContentBoost = options.maxContentBoost || 4.0;
+    const maxContentBoost = options.maxContentBoost ?? DEFAULT_MAX_CONTENT_BOOST;
     const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 2.0;
     const shadowCutoff = options.shadowCutoff !== undefined ? options.shadowCutoff : 0.05;
     const localAdaptStrength = options.localAdaptationStrength !== undefined ? options.localAdaptationStrength : 0.5;
@@ -698,7 +702,7 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
     const quality = options.quality !== undefined ? options.quality : 0.95;
     const wasmQuality = Math.round(quality * 100);
     const rotation = ((options.rotation || 0) % 360 + 360) % 360;
-    const maxContentBoost = options.maxContentBoost || 4.0;
+    const maxContentBoost = options.maxContentBoost ?? DEFAULT_MAX_CONTENT_BOOST;
     const gainMapMetadata = metadata || buildGainMapMetadata(maxContentBoost);
     const compressedMetadata = {
         gainMapMin: gainMapMetadata.gainMapMin,
