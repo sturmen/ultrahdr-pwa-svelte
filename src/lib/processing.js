@@ -116,7 +116,7 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
     console.log('[Process] File loaded and EXIF extracted');
 
     // 3. Load Image Data (Canvas/Rotation)
-    const { imageData } = await loadImageData(dataUrl, options.rotation);
+    const { imageData } = await loadImageData(dataUrl);
     console.log('[Process] Image data retrieved');
 
     // 4. Generate Gain Map Data (Manual Calculation)
@@ -136,8 +136,8 @@ export async function processImage(file, options = { maxContentBoost: 4.0, rotat
 
 /**
  * Process an UltraHDR JPEG with rotation, preserving the original gain map.
- * Extracts the gain map and metadata from the input, rotates both the SDR and
- * gain map images, and re-encodes with the original gain map metadata.
+ * Extracts compressed base/gain-map components and re-encodes once with the
+ * encoder's built-in rotation effect and original gain-map metadata.
  * @param {File} file - The input file
  * @param {Uint8Array} fileBuffer - The raw file bytes
  * @param {Object} options - Processing options (rotation, quality, stripExif)
@@ -148,38 +148,30 @@ async function processUhdrWithRotation(file, fileBuffer, options) {
     await decoder.init();
 
     try {
-        // 1. Decode the UltraHDR JPEG to extract gain map + metadata
+        // 1. Probe the UltraHDR JPEG and extract original compressed components.
+        // This preserves source quality by avoiding decode/re-encode before final output.
         decoder.setImage(fileBuffer);
         decoder.probe();
 
+        const baseJpegBytes = decoder.getBaseImage();
         const gainMapJpegBytes = decoder.getGainMapImage();
         const gainMapMetadata = decoder.getGainMapMetadata();
-        console.log('[Process] Extracted components. GainMap:', gainMapJpegBytes.length);
+        console.log('[Process] Extracted compressed components. Base:', baseJpegBytes.length, 'GainMap:', gainMapJpegBytes.length);
 
-        const dataUrl = await readFileAsDataURL(file);
-        const exifObj = extractExif(file, dataUrl);
-
-        // 2. Rotate SDR image (using canvas/loadImageData)
-        const { imageData: rotatedSdr } = await loadImageData(dataUrl, options.rotation);
-        console.log('[Process] SDR rotated:', rotatedSdr.width, 'x', rotatedSdr.height);
-
-        // 3. Decode gain map JPEG to ImageData, then rotate
-        const gainMapImageData = await decodeJpegToImageData(gainMapJpegBytes);
-        const rotatedGainMap = rotateImageData(gainMapImageData, options.rotation);
-        console.log('[Process] Gain map rotated:', rotatedGainMap.width, 'x', rotatedGainMap.height);
-
-        // 4. Compress both rotated images to JPEG
         const quality = options.quality !== undefined ? options.quality : 0.95;
-        const sdrJpeg = await compressToJpeg(rotatedSdr, quality);
-        const gainMapJpeg = await compressToJpeg(rotatedGainMap, 0.90);
+        const rotation = ((options.rotation || 0) % 360 + 360) % 360;
+        const exifObj = options.stripExif ? null : extractExif(file, await readFileAsDataURL(file));
 
-        // 5. Re-encode as UltraHDR using original metadata
+        // 2. Re-encode once with rotation effect applied in the encoder.
         const encoder = new UHDREncoder();
         await encoder.init();
 
         try {
-            encoder.setCompressedBaseImage(sdrJpeg);
-            encoder.setCompressedGainMapImage(gainMapJpeg, gainMapMetadata);
+            encoder.setCompressedBaseImage(baseJpegBytes);
+            encoder.setCompressedGainMapImage(gainMapJpegBytes, gainMapMetadata);
+            if (rotation !== 0) {
+                encoder.addEffectRotate(rotation);
+            }
 
             const wasmQuality = Math.round(quality * 100);
             encoder.encode(wasmQuality);
@@ -189,7 +181,7 @@ async function processUhdrWithRotation(file, fileBuffer, options) {
                 throw new Error('Encoding failed: no output data');
             }
 
-            // 6. Finalize (handle EXIF)
+            // 3. Finalize (handle EXIF)
             return await finalizeUltraHDR({}, jpegData, new Uint8Array(0), exifObj, options.stripExif);
         } finally {
             encoder.destroy();
@@ -197,70 +189,6 @@ async function processUhdrWithRotation(file, fileBuffer, options) {
     } finally {
         decoder.destroy();
     }
-}
-
-/**
- * Decode a JPEG byte array to ImageData using an off-screen canvas.
- * @param {Uint8Array} jpegBytes
- * @returns {Promise<ImageData>}
- */
-async function decodeJpegToImageData(jpegBytes) {
-    const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
-    const url = URL.createObjectURL(blob);
-
-    try {
-        const img = await new Promise((resolve, reject) => {
-            const i = new Image();
-            i.onload = () => resolve(i);
-            i.onerror = reject;
-            i.src = url;
-        });
-
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        return ctx.getImageData(0, 0, canvas.width, canvas.height);
-    } finally {
-        URL.revokeObjectURL(url);
-    }
-}
-
-/**
- * Rotate ImageData by the given degrees (90, 180, 270).
- * @param {ImageData} imageData
- * @param {number} rotation - Degrees (0, 90, 180, 270)
- * @returns {ImageData}
- */
-function rotateImageData(imageData, rotation) {
-    rotation = (rotation % 360 + 360) % 360;
-    if (rotation === 0) return imageData;
-
-    const { width, height, data } = imageData;
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-
-    if (rotation === 90 || rotation === 270) {
-        canvas.width = height;
-        canvas.height = width;
-    } else {
-        canvas.width = width;
-        canvas.height = height;
-    }
-
-    // Put source data onto a temp canvas, then draw rotated
-    const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = width;
-    srcCanvas.height = height;
-    const srcCtx = srcCanvas.getContext('2d');
-    srcCtx.putImageData(imageData, 0, 0);
-
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(rotation * Math.PI / 180);
-    ctx.drawImage(srcCanvas, -width / 2, -height / 2);
-
-    return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
 /**
@@ -317,12 +245,11 @@ function extractExif(file, dataUrl) {
 }
 
 /**
- * Loads the image data from a Data URL, applying rotation if needed.
+ * Loads image data from a Data URL.
  * @param {string} dataUrl 
- * @param {number} rotation 
  * @returns {Promise<{imageData: ImageData, width: number, height: number}>}
  */
-async function loadImageData(dataUrl, rotation = 0) {
+async function loadImageData(dataUrl) {
     const img = await new Promise((resolve, reject) => {
         const i = new Image();
         i.onload = () => resolve(i);
@@ -336,20 +263,9 @@ async function loadImageData(dataUrl, rotation = 0) {
     let width = img.width;
     let height = img.height;
 
-    // Normalize rotation
-    rotation = (rotation % 360 + 360) % 360;
-
-    if (rotation === 90 || rotation === 270) {
-        canvas.width = height;
-        canvas.height = width;
-    } else {
-        canvas.width = width;
-        canvas.height = height;
-    }
-
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(rotation * Math.PI / 180);
-    ctx.drawImage(img, -width / 2, -height / 2);
+    canvas.width = width;
+    canvas.height = height;
+    ctx.drawImage(img, 0, 0);
 
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
@@ -702,41 +618,34 @@ async function compressImages(sdrImageData, gainMapImageData, options) {
     const quality = options.quality !== undefined ? options.quality : 0.95;
     const maxContentBoost = options.maxContentBoost || 4.0;
     const wasmQuality = Math.round(quality * 100);
+    const rotation = ((options.rotation || 0) % 360 + 360) % 360;
 
     // Initialize WASM encoder
     const encoder = new UHDREncoder();
     await encoder.init();
 
     try {
-        // Compress SDR image to JPEG (base image)
-        const sdrJpeg = await compressToJpeg(sdrImageData, quality);
+        // Set raw SDR and gain-map image data to avoid intermediate lossy re-encoding.
+        encoder.setSDRImage(sdrImageData, sdrImageData.width, sdrImageData.height);
 
-        // Set compressed base image
-        encoder.setCompressedBaseImage(sdrJpeg);
-
-        // Compress Gain Map to JPEG
-        // libultrahdr expects the gain map to be a compressed JPEG image.
-        // We compress it here using the browser's native canvas encoder.
-        const gainMapJpeg = await compressToJpeg(gainMapImageData, 0.90);
-
-        // Set gain map image
-        // We pass the JPEG data as a flat buffer.
-        // The C++ wrapper calculates size as stride * height.
-        // We pass width=size, height=1, stride=size to ensure correct buffer allocation.
         encoder.setGainMapImage(
-            gainMapJpeg,
+            gainMapImageData,
             {
                 gainMapMin: [1.0, 1.0, 1.0],
-                gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost], // Will be adjusted based on content
+                gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
                 gamma: [1.0, 1.0, 1.0],
                 offsetSdr: [0, 0, 0],
                 offsetHdr: [0, 0, 0],
                 hdrCapacityMin: 1.0,
                 hdrCapacityMax: maxContentBoost
             },
-            gainMapJpeg.length, // width (used for size calc)
-            1 // height
+            gainMapImageData.width,
+            gainMapImageData.height
         );
+
+        if (rotation !== 0) {
+            encoder.addEffectRotate(rotation);
+        }
 
         // Encode to UltraHDR JPEG
         encoder.encode(wasmQuality);
@@ -813,34 +722,5 @@ export function readFileAsDataURL(file) {
         reader.onload = () => resolve(reader.result);
         reader.onerror = reject;
         reader.readAsDataURL(file);
-    });
-}
-
-/**
- * Compresses ImageData to a JPEG Uint8Array using canvas.
- * @param {ImageData} imageData 
- * @param {number} quality 
- * @returns {Promise<Uint8Array>}
- */
-function compressToJpeg(imageData, quality) {
-    return new Promise((resolve, reject) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = imageData.width;
-        canvas.height = imageData.height;
-        const ctx = canvas.getContext('2d');
-        ctx.putImageData(imageData, 0, 0);
-
-        canvas.toBlob((blob) => {
-            if (!blob) {
-                reject(new Error('Canvas toBlob failed'));
-                return;
-            }
-            const reader = new FileReader();
-            reader.onload = () => {
-                resolve(new Uint8Array(reader.result));
-            };
-            reader.onerror = reject;
-            reader.readAsArrayBuffer(blob);
-        }, 'image/jpeg', quality);
     });
 }
