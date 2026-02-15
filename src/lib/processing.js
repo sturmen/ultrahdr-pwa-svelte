@@ -1,5 +1,3 @@
-import piexif from 'piexifjs';
-
 import { processHeic } from './heic-processing.js';
 import { createPipelineTelemetry } from './pipeline-telemetry.js';
 import { processTiff } from './tiff-processing.js';
@@ -177,10 +175,9 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                 if (isUhdr) {
                     if (mergedOptions.rotation === 0) {
                         console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
-                        const dataUrl = await telemetry.runStage('read-exif-source', async () => readFileAsDataURL(file));
-                        const exifObj = extractExif(file, dataUrl);
+                        const exifBytes = extractExifFromJpeg(fileBuffer);
                         const blob = await telemetry.runStage('finalize-preserved', async () =>
-                            finalizeUltraHDR({}, fileBuffer, new Uint8Array(0), exifObj, mergedOptions.stripExif)
+                            finalizeUltraHDR({}, fileBuffer, new Uint8Array(0), exifBytes, mergedOptions.stripExif)
                         );
                         telemetry.complete({ outputBytes: blob.size, mode: 'preserve' });
                         return blob;
@@ -254,7 +251,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         // Load Data & EXIF
         const dataUrl = await telemetry.runStage('read-input-data-url', async () => readFileAsDataURL(file));
-        const exifObj = extractExif(file, dataUrl);
+        const exifBytes = await telemetry.runStage('extract-exif', async () => extractExif(file));
         console.log('[Process] File loaded and EXIF extracted');
         throwIfAborted(mergedOptions.abortSignal);
 
@@ -314,7 +311,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         // Finalize UltraHDR
         const blob = await telemetry.runStage('finalize-output', async () =>
-            finalizeUltraHDR(metadata, sdr, gainMap, exifObj, mergedOptions.stripExif)
+            finalizeUltraHDR(metadata, sdr, gainMap, exifBytes, mergedOptions.stripExif)
         );
         console.log('[Process] Processing complete, returning Blob');
 
@@ -369,7 +366,7 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
 
         const quality = options.quality !== undefined ? options.quality : 0.95;
         const rotation = ((options.rotation || 0) % 360 + 360) % 360;
-        const exifObj = options.stripExif ? null : extractExif(file, await readFileAsDataURL(file));
+        const exifBytes = options.stripExif ? null : await extractExif(file);
 
         // Effects on compressed inputs are not supported by libultrahdr. Decode both
         // compressed components to ImageData, rotate in JS, then re-encode with the
@@ -400,7 +397,7 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
             );
 
         // 3. Finalize (handle EXIF)
-        return await finalizeUltraHDR({}, sdr, gainMap, exifObj, options.stripExif);
+        return await finalizeUltraHDR({}, sdr, gainMap, exifBytes, options.stripExif);
     } finally {
         decoder.destroy();
     }
@@ -443,19 +440,70 @@ async function preprocessFile(file, options) {
 }
 
 /**
- * Extracts EXIF data from the file if it's a JPEG.
+ * Extracts EXIF APP1 payload bytes from a JPEG source file.
  * @param {File} file 
- * @param {string} dataUrl 
- * @returns {Object|null}
+ * @returns {Promise<Uint8Array|null>}
  */
-function extractExif(file, dataUrl) {
+async function extractExif(file) {
     try {
-        if (file.type === 'image/jpeg' || file.type === 'image/jpg') {
-            return piexif.load(dataUrl);
+        if (file && (file.type === 'image/jpeg' || file.type === 'image/jpg')) {
+            return extractExifFromJpeg(new Uint8Array(await file.arrayBuffer()));
         }
     } catch (e) {
         console.warn('Could not extract EXIF:', e);
     }
+    return null;
+}
+
+function extractExifFromJpeg(jpegBytes) {
+    if (!(jpegBytes instanceof Uint8Array) || jpegBytes.length < 4) {
+        return null;
+    }
+
+    if (jpegBytes[0] !== 0xff || jpegBytes[1] !== 0xd8) {
+        return null;
+    }
+
+    let offset = 2;
+    while (offset + 4 <= jpegBytes.length) {
+        if (jpegBytes[offset] !== 0xff) {
+            offset++;
+            continue;
+        }
+
+        const marker = jpegBytes[offset + 1];
+        if (marker === 0xda || marker === 0xd9) {
+            break;
+        }
+
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+            offset += 2;
+            continue;
+        }
+
+        const segmentLength = (jpegBytes[offset + 2] << 8) | jpegBytes[offset + 3];
+        if (segmentLength < 2 || offset + 2 + segmentLength > jpegBytes.length) {
+            break;
+        }
+
+        const segmentEnd = offset + 2 + segmentLength;
+        const isExifApp1 =
+            marker === 0xe1 &&
+            offset + 10 <= jpegBytes.length &&
+            jpegBytes[offset + 4] === 0x45 &&
+            jpegBytes[offset + 5] === 0x78 &&
+            jpegBytes[offset + 6] === 0x69 &&
+            jpegBytes[offset + 7] === 0x66 &&
+            jpegBytes[offset + 8] === 0x00 &&
+            jpegBytes[offset + 9] === 0x00;
+
+        if (isExifApp1) {
+            return jpegBytes.slice(offset + 4, segmentEnd);
+        }
+
+        offset = segmentEnd;
+    }
+
     return null;
 }
 
@@ -1086,39 +1134,21 @@ function readBlobAsDataURL(blob) {
  * @param {Object} metadata
  * @param {Uint8Array} sdr - The UltraHDR JPEG from WASM encoder
  * @param {Uint8Array} gainMap - Unused (kept for API compatibility)
- * @param {Object|null} exifObj
+ * @param {Uint8Array|null} exifBytes
  * @param {boolean} stripExif
  * @returns {Promise<Blob>}
  */
-async function finalizeUltraHDR(metadata, sdr, gainMap, exifObj, stripExif) {
+async function finalizeUltraHDR(metadata, sdr, gainMap, exifBytes, stripExif) {
     // The WASM encoder embeds metadata directly in the JPEG
     // We just need to handle EXIF preservation
     let finalJpeg = sdr;
 
     if (stripExif) {
         finalJpeg = stripExifSegments(finalJpeg);
-    } else if (exifObj) {
+    } else if (exifBytes) {
         try {
-            // Reset Orientation to 1
-            if (exifObj["0th"] && exifObj["0th"][piexif.ImageIFD.Orientation]) {
-                exifObj["0th"][piexif.ImageIFD.Orientation] = 1;
-            }
-
-            // Convert Uint8Array to binary string in chunks for performance
-            let binary = "";
-            const CHUNK_SIZE = 8192;
-            for (let i = 0; i < finalJpeg.length; i += CHUNK_SIZE) {
-                binary += String.fromCharCode.apply(null, finalJpeg.subarray(i, i + CHUNK_SIZE));
-            }
-
-            const exifBytes = piexif.dump(exifObj);
-            const newBinary = piexif.insert(exifBytes, binary);
-
-            const len = newBinary.length;
-            finalJpeg = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                finalJpeg[i] = newBinary.charCodeAt(i);
-            }
+            const normalizedExif = normalizeExifOrientation(exifBytes);
+            finalJpeg = insertExifSegment(finalJpeg, normalizedExif);
         } catch (e) {
             console.warn('Could not re-insert EXIF:', e);
         }
@@ -1193,6 +1223,146 @@ function stripExifSegments(jpegBytes) {
         cursor += chunk.length;
     }
     return merged;
+}
+
+function insertExifSegment(jpegBytes, exifPayload) {
+    if (!(exifPayload instanceof Uint8Array) || exifPayload.length === 0) {
+        return jpegBytes;
+    }
+
+    const segmentLength = exifPayload.length + 2;
+    if (segmentLength > 0xffff) {
+        console.warn('Skipping EXIF insertion: payload exceeds JPEG APP1 segment size limit');
+        return jpegBytes;
+    }
+
+    const base = stripExifSegments(jpegBytes);
+    if (!(base instanceof Uint8Array) || base.length < 2 || base[0] !== 0xff || base[1] !== 0xd8) {
+        return jpegBytes;
+    }
+
+    const rest = base.subarray(2);
+    const output = new Uint8Array(2 + 4 + exifPayload.length + rest.length);
+    output[0] = 0xff;
+    output[1] = 0xd8;
+    output[2] = 0xff;
+    output[3] = 0xe1;
+    output[4] = (segmentLength >> 8) & 0xff;
+    output[5] = segmentLength & 0xff;
+    output.set(exifPayload, 6);
+    output.set(rest, 6 + exifPayload.length);
+    return output;
+}
+
+function normalizeExifOrientation(exifPayload) {
+    if (!(exifPayload instanceof Uint8Array) || exifPayload.length < 14) {
+        return exifPayload;
+    }
+
+    if (
+        exifPayload[0] !== 0x45 ||
+        exifPayload[1] !== 0x78 ||
+        exifPayload[2] !== 0x69 ||
+        exifPayload[3] !== 0x66 ||
+        exifPayload[4] !== 0x00 ||
+        exifPayload[5] !== 0x00
+    ) {
+        return exifPayload;
+    }
+
+    const tiffOffset = 6;
+    const byteOrderA = exifPayload[tiffOffset];
+    const byteOrderB = exifPayload[tiffOffset + 1];
+    const littleEndian = byteOrderA === 0x49 && byteOrderB === 0x49;
+    const bigEndian = byteOrderA === 0x4d && byteOrderB === 0x4d;
+    if (!littleEndian && !bigEndian) {
+        return exifPayload;
+    }
+
+    const tiffMarker = readExifUint16(exifPayload, tiffOffset + 2, littleEndian);
+    if (tiffMarker !== 0x002a) {
+        return exifPayload;
+    }
+
+    const ifd0RelativeOffset = readExifUint32(exifPayload, tiffOffset + 4, littleEndian);
+    if (ifd0RelativeOffset === null) {
+        return exifPayload;
+    }
+
+    const ifd0Offset = tiffOffset + ifd0RelativeOffset;
+    const entryCount = readExifUint16(exifPayload, ifd0Offset, littleEndian);
+    if (entryCount === null) {
+        return exifPayload;
+    }
+
+    for (let i = 0; i < entryCount; i++) {
+        const entryOffset = ifd0Offset + 2 + (i * 12);
+        const tag = readExifUint16(exifPayload, entryOffset, littleEndian);
+        if (tag !== 0x0112) {
+            continue;
+        }
+
+        const type = readExifUint16(exifPayload, entryOffset + 2, littleEndian);
+        const count = readExifUint32(exifPayload, entryOffset + 4, littleEndian);
+        if (type !== 3 || count === null || count < 1) {
+            return exifPayload;
+        }
+
+        const valueOffset = entryOffset + 8;
+        const currentOrientation = readExifUint16(exifPayload, valueOffset, littleEndian);
+        if (currentOrientation === null || currentOrientation === 1) {
+            return exifPayload;
+        }
+
+        const patched = exifPayload.slice();
+        writeExifUint16(patched, valueOffset, 1, littleEndian);
+        return patched;
+    }
+
+    return exifPayload;
+}
+
+function readExifUint16(buffer, offset, littleEndian) {
+    if (offset < 0 || offset + 2 > buffer.length) {
+        return null;
+    }
+    if (littleEndian) {
+        return buffer[offset] | (buffer[offset + 1] << 8);
+    }
+    return (buffer[offset] << 8) | buffer[offset + 1];
+}
+
+function readExifUint32(buffer, offset, littleEndian) {
+    if (offset < 0 || offset + 4 > buffer.length) {
+        return null;
+    }
+    if (littleEndian) {
+        return (
+            buffer[offset] |
+            (buffer[offset + 1] << 8) |
+            (buffer[offset + 2] << 16) |
+            (buffer[offset + 3] << 24)
+        ) >>> 0;
+    }
+    return (
+        (buffer[offset] << 24) |
+        (buffer[offset + 1] << 16) |
+        (buffer[offset + 2] << 8) |
+        buffer[offset + 3]
+    ) >>> 0;
+}
+
+function writeExifUint16(buffer, offset, value, littleEndian) {
+    if (offset < 0 || offset + 2 > buffer.length) {
+        return;
+    }
+    if (littleEndian) {
+        buffer[offset] = value & 0xff;
+        buffer[offset + 1] = (value >> 8) & 0xff;
+        return;
+    }
+    buffer[offset] = (value >> 8) & 0xff;
+    buffer[offset + 1] = value & 0xff;
 }
 
 /**

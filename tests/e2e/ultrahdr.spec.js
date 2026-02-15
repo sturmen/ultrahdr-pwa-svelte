@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 
 const SDR_IMAGE = path.resolve(__dirname, '../../media/test_sdr.jpg');
 const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/test_sdr2.jpg');
+const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
 
@@ -181,6 +182,102 @@ function hasExifData(buffer) {
     }
 
     return false;
+}
+
+/**
+ * Helper: extract EXIF APP1 payload bytes (starts with "Exif\\0\\0") from JPEG.
+ * Returns null when EXIF is not present or data is invalid.
+ */
+function extractExifSegmentBytes(buffer) {
+    if (!buffer || buffer.length < 4) {
+        return null;
+    }
+
+    if (buffer[0] !== 0xFF || buffer[1] !== 0xD8) {
+        return null;
+    }
+
+    let offset = 2;
+    while (offset + 4 <= buffer.length) {
+        if (buffer[offset] !== 0xFF) {
+            offset++;
+            continue;
+        }
+
+        const marker = buffer[offset + 1];
+        if (marker === 0xDA || marker === 0xD9) {
+            break;
+        }
+
+        if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+            offset += 2;
+            continue;
+        }
+
+        const segmentLength = (buffer[offset + 2] << 8) | buffer[offset + 3];
+        if (segmentLength < 2 || offset + 2 + segmentLength > buffer.length) {
+            break;
+        }
+
+        const segmentEnd = offset + 2 + segmentLength;
+        if (
+            marker === 0xE1 &&
+            offset + 10 <= buffer.length &&
+            buffer[offset + 4] === 0x45 &&
+            buffer[offset + 5] === 0x78 &&
+            buffer[offset + 6] === 0x69 &&
+            buffer[offset + 7] === 0x66 &&
+            buffer[offset + 8] === 0x00 &&
+            buffer[offset + 9] === 0x00
+        ) {
+            return buffer.subarray(offset + 4, segmentEnd);
+        }
+
+        offset = segmentEnd;
+    }
+
+    return null;
+}
+
+function writeTempJpeg(buffer, tempDir, name) {
+    const outputPath = path.join(tempDir, name);
+    fs.writeFileSync(outputPath, buffer);
+    return outputPath;
+}
+
+function readExifTags(filePath) {
+    const output = execFileSync(
+        'exiftool',
+        ['-G1', '-a', '-s', '-n', '-json', '-EXIF:all', filePath],
+        { stdio: 'pipe' }
+    ).toString('utf8');
+    const parsed = JSON.parse(output);
+    const tags = parsed[0] || {};
+    delete tags.SourceFile;
+    return tags;
+}
+
+function normalizeExifForComparison(tags) {
+    const normalized = { ...tags };
+    for (const key of Object.keys(normalized)) {
+        if (key.endsWith(':Orientation')) {
+            delete normalized[key];
+        }
+    }
+    return normalized;
+}
+
+function readExifOrientation(filePath) {
+    const output = execFileSync(
+        'exiftool',
+        ['-n', '-s3', '-Orientation', filePath],
+        { stdio: 'pipe' }
+    ).toString('utf8').trim();
+    const orientation = Number.parseInt(output, 10);
+    if (!Number.isFinite(orientation)) {
+        throw new Error(`Unable to parse Orientation value for ${filePath}: "${output}"`);
+    }
+    return orientation;
 }
 
 /**
@@ -593,31 +690,32 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         test('should preserve EXIF data by default', async ({ page }) => {
             await page.goto('/');
 
-            // Upload image (sdr_demo_image likely has EXIF)
-            await uploadFiles(page, [SDR_IMAGE]);
+            // Upload EXIF-rich image
+            await uploadFiles(page, [EXIF_RICH_IMAGE]);
             await waitForProcessing(page);
 
             const result = await downloadFirstResult(page);
 
-            // Check source image has EXIF
-            const sourceData = fs.readFileSync(SDR_IMAGE);
-            const sourceHasExif = hasExifData(sourceData);
+            const sourceData = fs.readFileSync(EXIF_RICH_IMAGE);
+            const sourceExif = extractExifSegmentBytes(sourceData);
+            expect(sourceExif, 'EXIF fixture is missing APP1 EXIF data').not.toBeNull();
 
-            if (sourceHasExif) {
-                // If source has EXIF, output should too (preserving it)
-                expect(hasExifData(result)).toBe(true);
-            }
-            // If source has no EXIF, we can't test preservation.
-            // This test is still valuable as it confirms no crash.
+            const outputExif = extractExifSegmentBytes(result);
+            expect(outputExif, 'Output is missing APP1 EXIF data').not.toBeNull();
+
+            expect(Buffer.compare(outputExif, sourceExif)).toBe(0);
         });
 
         test('should strip EXIF data when "Strip EXIF data" is enabled', async ({ page }) => {
             test.setTimeout(120_000); // Re-processing takes time
             await page.goto('/');
 
-            // Upload a smaller image for faster re-processing
-            await uploadFiles(page, [SDR_IMAGE_2]);
+            // Upload EXIF-rich image
+            await uploadFiles(page, [EXIF_RICH_IMAGE]);
             await waitForProcessing(page);
+
+            const sourceData = fs.readFileSync(EXIF_RICH_IMAGE);
+            expect(extractExifSegmentBytes(sourceData), 'EXIF fixture is missing APP1 EXIF data').not.toBeNull();
 
             // Enable "Strip EXIF data" toggle (visible alongside results)
             // Use evaluate because the hidden checkbox (opacity:0, width:0) can't be clicked directly
@@ -637,7 +735,59 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             const result = await downloadFirstResult(page);
 
             // EXIF should be stripped
+            expect(extractExifSegmentBytes(result)).toBeNull();
             expect(hasExifData(result)).toBe(false);
+        });
+
+        test('should normalize EXIF Orientation to 1 when user rotation is applied', async ({ page, browserName }) => {
+            test.setTimeout(120_000); // Re-processing takes time
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-exif-rotation-${browserName}-`));
+
+            try {
+                await page.goto('/');
+                await uploadFiles(page, [EXIF_RICH_IMAGE]);
+                await waitForProcessing(page);
+
+                // Apply 90 degree clockwise rotation
+                await page.click('button[title="Rotate Right"]');
+                await waitForReprocessing(page);
+
+                const rotatedResult = await downloadFirstResult(page);
+                const rotatedPath = writeTempJpeg(rotatedResult, tempDir, 'rotated-output.jpg');
+                expect(readExifOrientation(rotatedPath)).toBe(1);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        test('should preserve all EXIF tags except orientation for a source with Orientation=6', async ({ page, browserName }) => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-exif-orientation6-${browserName}-`));
+
+            try {
+                const orientedInput = path.join(tempDir, 'input-orientation-6.jpg');
+                fs.copyFileSync(EXIF_RICH_IMAGE, orientedInput);
+                execFileSync(
+                    'exiftool',
+                    ['-overwrite_original', '-n', '-Orientation=6', orientedInput],
+                    { stdio: 'pipe' }
+                );
+                expect(readExifOrientation(orientedInput)).toBe(6);
+
+                await page.goto('/');
+                await uploadFiles(page, [orientedInput]);
+                await waitForProcessing(page);
+
+                const result = await downloadFirstResult(page);
+                const outputPath = writeTempJpeg(result, tempDir, 'output-orientation-normalized.jpg');
+
+                expect(readExifOrientation(outputPath)).toBe(1);
+
+                const sourceTags = normalizeExifForComparison(readExifTags(orientedInput));
+                const outputTags = normalizeExifForComparison(readExifTags(outputPath));
+                expect(outputTags).toEqual(sourceTags);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
         });
     });
 
