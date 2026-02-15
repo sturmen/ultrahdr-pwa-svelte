@@ -899,6 +899,8 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .grid {
@@ -1003,5 +1005,19 @@
   .error {
     border-left: 4px solid #ff453a;
     color: #ff453a;
+  }
+
+  @media (max-width: 640px) {
+    .button-group {
+      flex-wrap: wrap;
+    }
+
+    .actions {
+      flex-wrap: wrap;
+    }
+
+    .selection-controls {
+      justify-content: flex-start;
+    }
   }
 </style>

@@ -20,6 +20,11 @@ More information: https://gregbenzphotography.com/hdr/
 
 This is an attempt at a cross-platform way to enhance SDR images into the widely-compatible JPEGR (aka UltraHDR JPEG, aka JPEG with a gain map) format. The goal is that users may have an SDR image that they enjoy, and they use this progressive web app to add an enhancement layer that improves the image but does not alter the original nor introduce compatibility issues.
 
+## Testing
+
+- Desktop regression: `npm run test:e2e`
+- Mobile emulation (iOS + Android): `npm run test:e2e:mobile`
+
 ## Features
 
 - Free and open source (MIT license)
