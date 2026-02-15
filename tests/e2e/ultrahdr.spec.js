@@ -2,7 +2,10 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { createCanvas, loadImage } from 'canvas';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,6 +193,126 @@ function hasGainMapXMP(buffer) {
     return str.includes('hdrgm:') || str.includes('HDRGainMap') || str.includes('GainMap') || str.includes('21496');
 }
 
+function extractHeicGainMapJpeg(heicPath, tempDir) {
+    const primaryOut = path.join(tempDir, 'heic-primary.jpg');
+    execFileSync('heif-convert', ['--quiet', '--with-aux', heicPath, primaryOut], { stdio: 'pipe' });
+
+    const auxFile = fs.readdirSync(tempDir).find((name) =>
+        name.toLowerCase().includes('hdrgainmap') && name.toLowerCase().endsWith('.jpg')
+    );
+
+    if (!auxFile) {
+        throw new Error('Failed to extract HEIC auxiliary gain map JPEG');
+    }
+
+    return path.join(tempDir, auxFile);
+}
+
+function extractUltraHdrGainMapJpeg(ultraHdrPath, tempDir) {
+    const gainMapOut = path.join(tempDir, 'output-gainmap.jpg');
+    const bytes = execFileSync('exiftool', ['-b', '-MPImage2', ultraHdrPath], { stdio: 'pipe' });
+    if (!bytes || bytes.length === 0) {
+        throw new Error('Failed to extract MPImage2 gain map from output UltraHDR JPEG');
+    }
+    fs.writeFileSync(gainMapOut, bytes);
+    return gainMapOut;
+}
+
+async function loadBitmap(imagePath) {
+    const image = await loadImage(imagePath);
+    const canvas = createCanvas(image.width, image.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, image.width, image.height);
+
+    return {
+        width,
+        height,
+        data
+    };
+}
+
+function compareBitmapLuma(inputBitmap, outputBitmap) {
+    if (inputBitmap.width !== outputBitmap.width || inputBitmap.height !== outputBitmap.height) {
+        throw new Error(`Bitmap size mismatch: input=${inputBitmap.width}x${inputBitmap.height} output=${outputBitmap.width}x${outputBitmap.height}`);
+    }
+
+    const pixelCount = inputBitmap.width * inputBitmap.height;
+    const diffHistogram = new Uint32Array(256);
+    let sumAbs = 0;
+    let sumSq = 0;
+
+    for (let i = 0; i < pixelCount; i++) {
+        const idx = i * 4;
+        const inputLuma =
+            (0.2126 * inputBitmap.data[idx]) +
+            (0.7152 * inputBitmap.data[idx + 1]) +
+            (0.0722 * inputBitmap.data[idx + 2]);
+        const outputLuma =
+            (0.2126 * outputBitmap.data[idx]) +
+            (0.7152 * outputBitmap.data[idx + 1]) +
+            (0.0722 * outputBitmap.data[idx + 2]);
+        const absDiff = Math.abs(outputLuma - inputLuma);
+        sumAbs += absDiff;
+        sumSq += absDiff * absDiff;
+        const bucket = Math.min(255, Math.round(absDiff));
+        diffHistogram[bucket]++;
+    }
+
+    const mae = sumAbs / pixelCount;
+    const rmse = Math.sqrt(sumSq / pixelCount);
+
+    const p99Target = Math.ceil(pixelCount * 0.99);
+    let cumulative = 0;
+    let p99Abs = 0;
+    for (let i = 0; i < diffHistogram.length; i++) {
+        cumulative += diffHistogram[i];
+        if (cumulative >= p99Target) {
+            p99Abs = i;
+            break;
+        }
+    }
+
+    return {
+        mae,
+        rmse,
+        p99Abs
+    };
+}
+
+function relativeDelta(a, b) {
+    const denom = Math.max(1e-6, Math.abs(b));
+    return Math.abs(a - b) / denom;
+}
+
+function extractHeicHeadroom(heicPath) {
+    const xmpXml = execFileSync('exiftool', ['-a', '-b', '-XMP', heicPath], { stdio: 'pipe' }).toString('utf8');
+    const match = xmpXml.match(/<HDRGainMap:HDRGainMapHeadroom>\s*([0-9.+\-eE]+)\s*<\/HDRGainMap:HDRGainMapHeadroom>/i)
+        || xmpXml.match(/HDRGainMapHeadroom="([0-9.+\-eE]+)"/i);
+    if (!match) {
+        throw new Error('Failed to find HDRGainMapHeadroom in HEIC XMP metadata');
+    }
+    const headroom = Number.parseFloat(match[1]);
+    if (!Number.isFinite(headroom) || headroom <= 0) {
+        throw new Error(`Invalid HEIC HDRGainMapHeadroom value: ${match[1]}`);
+    }
+    return headroom;
+}
+
+function extractOutputHeadroom(ultraHdrPath, tempDir) {
+    const gainMapPath = extractUltraHdrGainMapJpeg(ultraHdrPath, tempDir);
+    const xmpXml = execFileSync('exiftool', ['-b', '-XMP', gainMapPath], { stdio: 'pipe' }).toString('utf8');
+    const match = xmpXml.match(/hdrgm:HDRCapacityMax="([0-9.+\-eE]+)"/i);
+    if (!match) {
+        throw new Error('Failed to find hdrgm:HDRCapacityMax in output gain map XMP');
+    }
+    const hdrCapacityMaxLog2 = Number.parseFloat(match[1]);
+    if (!Number.isFinite(hdrCapacityMaxLog2)) {
+        throw new Error(`Invalid output hdrgm:HDRCapacityMax value: ${match[1]}`);
+    }
+    return Math.pow(2, hdrCapacityMaxLog2);
+}
+
 // ============================================================
 // TEST SUITE
 // ============================================================
@@ -342,6 +465,61 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(result[0]).toBe(0xFF);
             expect(result[1]).toBe(0xD8);
             expect(hasGainMapXMP(result)).toBe(true);
+        });
+
+        test('should keep HEIC gain map bitmap close to source after processing', async ({ page, browserName }) => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-compare-${browserName}-`));
+
+            try {
+                await page.goto('/');
+                await uploadFiles(page, [GAIN_MAP_HEIC]);
+                await waitForProcessing(page);
+
+                const outputJpegData = await downloadFirstResult(page);
+                const outputJpegPath = path.join(tempDir, 'output-ultrahdr.jpg');
+                fs.writeFileSync(outputJpegPath, outputJpegData);
+
+                const inputGainMapPath = extractHeicGainMapJpeg(GAIN_MAP_HEIC, tempDir);
+                const outputGainMapPath = extractUltraHdrGainMapJpeg(outputJpegPath, tempDir);
+
+                const inputBitmap = await loadBitmap(inputGainMapPath);
+                const outputBitmap = await loadBitmap(outputGainMapPath);
+
+                const comparison = compareBitmapLuma(inputBitmap, outputBitmap);
+                console.log(
+                    `[GainMapCompare:${browserName}] mae=${comparison.mae.toFixed(6)} rmse=${comparison.rmse.toFixed(6)} p99Abs=${comparison.p99Abs}`
+                );
+
+                expect(comparison.mae).toBeLessThan(1.0);
+                expect(comparison.rmse).toBeLessThan(2.0);
+                expect(comparison.p99Abs).toBeLessThanOrEqual(8);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        test('should preserve HEIC gain map headroom metadata in output', async ({ page, browserName }) => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-headroom-${browserName}-`));
+
+            try {
+                await page.goto('/');
+                await uploadFiles(page, [GAIN_MAP_HEIC]);
+                await waitForProcessing(page);
+
+                const outputJpegData = await downloadFirstResult(page);
+                const outputJpegPath = path.join(tempDir, 'output-ultrahdr.jpg');
+                fs.writeFileSync(outputJpegPath, outputJpegData);
+
+                const inputHeadroom = extractHeicHeadroom(GAIN_MAP_HEIC);
+                const outputHeadroom = extractOutputHeadroom(outputJpegPath, tempDir);
+                const headroomDelta = relativeDelta(outputHeadroom, inputHeadroom);
+
+                console.log(`[GainMapHeadroom:${browserName}] input=${inputHeadroom.toFixed(6)} output=${outputHeadroom.toFixed(6)} delta=${headroomDelta.toFixed(6)}`);
+
+                expect(headroomDelta).toBeLessThan(0.03);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
         });
 
         test('should regenerate gain map when "Discard existing gain map(s)" is enabled', async ({ page }) => {

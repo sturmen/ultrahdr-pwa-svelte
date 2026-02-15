@@ -152,6 +152,36 @@ describe('processImage UltraHDR preservation path', () => {
         );
     });
 
+    it('uses HEIC gainMapHeadroom when explicit gain-map metadata is unavailable', async () => {
+        const { processImage } = await import('../processing.js');
+        const { processHeic } = await import('../heic-processing.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        processHeic.mockResolvedValueOnce({
+            sdr: sdrImageData,
+            gainMap: gainMapImageData,
+            gainMapHeadroom: 2.859227,
+            name: 'input.heic'
+        });
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.objectContaining({
+                gainMapMax: [2.859227, 2.859227, 2.859227],
+                hdrCapacityMax: 2.859227
+            })
+        );
+    });
+
     it('emits progress events through onProgress callback across the pipeline', async () => {
         const { processImage } = await import('../processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');

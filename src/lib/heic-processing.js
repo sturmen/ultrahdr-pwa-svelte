@@ -36,6 +36,10 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
     console.log('[HEIC] Processing HEIC file:', file.name);
     const heif = await initLibHeif();
     const arrayBuffer = await file.arrayBuffer();
+    const gainMapHeadroom = _extractHdrGainMapHeadroomFromArrayBuffer(arrayBuffer);
+    if (gainMapHeadroom !== null) {
+        console.log(`[HEIC] Detected HDR gain-map headroom from source metadata: ${gainMapHeadroom}`);
+    }
 
     const decoder = new heif.HeifDecoder();
     const data = decoder.decode(arrayBuffer);
@@ -117,6 +121,7 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
         return {
             sdr: imageData,
             gainMap: gainMapImageData,
+            gainMapHeadroom,
             name: file.name
         };
     }
@@ -127,6 +132,27 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
     const pngFile = new File([pngBlob], file.name.replace(/\.(heic|heif)$/i, '.png'), { type: 'image/png' });
 
     return pngFile;
+}
+
+function _extractHdrGainMapHeadroomFromArrayBuffer(arrayBuffer) {
+    try {
+        const text = new TextDecoder('latin1').decode(arrayBuffer);
+        const match = text.match(/<HDRGainMap:HDRGainMapHeadroom>\s*([0-9.+\-eE]+)\s*<\/HDRGainMap:HDRGainMapHeadroom>/i)
+            || text.match(/HDRGainMapHeadroom="([0-9.+\-eE]+)"/i);
+
+        if (!match) {
+            return null;
+        }
+
+        const headroom = Number.parseFloat(match[1]);
+        if (!Number.isFinite(headroom) || headroom <= 0) {
+            return null;
+        }
+
+        return headroom;
+    } catch {
+        return null;
+    }
 }
 
 /**

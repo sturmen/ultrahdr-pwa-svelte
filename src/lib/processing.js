@@ -147,7 +147,10 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             const gainMapImageData = file.gainMap;
             // Preserve source gain-map metadata when provided by the preprocessor.
             // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
-            const metadata = file.gainMapMetadata || buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST);
+            const metadata = file.gainMapMetadata
+                || (Number.isFinite(file.gainMapHeadroom) && file.gainMapHeadroom > 0
+                    ? buildGainMapMetadata(file.gainMapHeadroom)
+                    : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST));
 
             const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
                 compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry)
