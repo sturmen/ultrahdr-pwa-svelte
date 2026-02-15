@@ -43,12 +43,23 @@ test.describe('Mobile smoke tests', () => {
   test('processes one image, keeps mobile UI usable, and avoids horizontal overflow', async ({ page }) => {
     await page.goto('/');
     await uploadSingleFile(page, SDR_IMAGE);
+    await page.getByTestId('tab-results').click();
     await waitForProcessing(page, 1);
 
-    await expect(page.locator('.result-card')).toHaveCount(1);
+    await expect(page.getByTestId('tab-convert')).toBeVisible();
+    await expect(page.getByTestId('tab-results')).toBeVisible();
+    await expect(page.getByTestId('tab-settings')).toBeVisible();
+
+    await page.getByTestId('tab-convert').click();
     await expect(page.getByRole('button', { name: 'Add Images' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Start Over' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Download/ })).toBeVisible();
+
+    await page.getByTestId('tab-results').click();
+    await expect(page.locator('.result-card')).toHaveCount(1);
+    await expect(page.getByTestId('mobile-action-bar')).toBeVisible();
+    await expect(
+      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Download/ }),
+    ).toBeVisible();
 
     const viewportFits = await page.evaluate(() => {
       const root = document.documentElement;
@@ -71,9 +82,12 @@ test.describe('Mobile smoke tests', () => {
 
     await page.goto('/');
     await uploadSingleFile(page, SDR_IMAGE);
+    await page.getByTestId('tab-results').click();
     await waitForProcessing(page, 1);
 
     await expect(page.locator('.share-btn')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Download/ })).toBeVisible();
+    await expect(
+      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Download/ }),
+    ).toBeVisible();
   });
 });

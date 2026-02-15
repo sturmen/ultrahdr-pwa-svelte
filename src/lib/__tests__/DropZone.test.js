@@ -1,9 +1,12 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import DropZone from '../DropZone.svelte';
+import DropZoneHost from './fixtures/DropZoneHost.svelte';
 
-describe('DropZone - isEligibleFile', () => {
+describe('DropZone - file eligibility helpers', () => {
   const ELIGIBLE_EXTENSIONS = [
     '.jpg',
     '.jpeg',
@@ -20,36 +23,6 @@ describe('DropZone - isEligibleFile', () => {
     return ELIGIBLE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
   }
 
-  it('should return true for eligible extensions', () => {
-    expect(isEligibleFile('test.jpg')).toBe(true);
-    expect(isEligibleFile('test.jpeg')).toBe(true);
-    expect(isEligibleFile('test.png')).toBe(true);
-    expect(isEligibleFile('test.webp')).toBe(true);
-    expect(isEligibleFile('test.heic')).toBe(true);
-    expect(isEligibleFile('test.heif')).toBe(true);
-    expect(isEligibleFile('test.tif')).toBe(true);
-    expect(isEligibleFile('test.tiff')).toBe(true);
-  });
-
-  it('should return true for uppercase extensions', () => {
-    expect(isEligibleFile('test.JPG')).toBe(true);
-    expect(isEligibleFile('test.PNG')).toBe(true);
-    expect(isEligibleFile('test.JPEG')).toBe(true);
-  });
-
-  it('should return false for ineligible extensions', () => {
-    expect(isEligibleFile('test.gif')).toBe(false);
-    expect(isEligibleFile('test.bmp')).toBe(false);
-    expect(isEligibleFile('test.pdf')).toBe(false);
-    expect(isEligibleFile('test.txt')).toBe(false);
-  });
-
-  it('should return false for files without extensions', () => {
-    expect(isEligibleFile('test')).toBe(false);
-  });
-});
-
-describe('DropZone - getMimeType', () => {
   function getMimeType(fileName) {
     const ext = fileName.toLowerCase().split('.').pop();
     const mimeTypes = {
@@ -65,82 +38,70 @@ describe('DropZone - getMimeType', () => {
     return mimeTypes[ext] || 'application/octet-stream';
   }
 
-  it('should return correct MIME types', () => {
+  it('accepts supported extensions, including uppercase names', () => {
+    expect(isEligibleFile('test.jpg')).toBe(true);
+    expect(isEligibleFile('test.PNG')).toBe(true);
+    expect(isEligibleFile('test.HEIC')).toBe(true);
+    expect(isEligibleFile('test.pdf')).toBe(false);
+  });
+
+  it('maps known MIME types and falls back for unknown types', () => {
     expect(getMimeType('test.jpg')).toBe('image/jpeg');
-    expect(getMimeType('test.jpeg')).toBe('image/jpeg');
-    expect(getMimeType('test.png')).toBe('image/png');
-    expect(getMimeType('test.webp')).toBe('image/webp');
-    expect(getMimeType('test.heic')).toBe('image/heic');
     expect(getMimeType('test.heif')).toBe('image/heif');
-    expect(getMimeType('test.tif')).toBe('image/tiff');
-    expect(getMimeType('test.tiff')).toBe('image/tiff');
-  });
-
-  it('should return application/octet-stream for unknown extensions', () => {
-    expect(getMimeType('test.gif')).toBe('application/octet-stream');
-    expect(getMimeType('test.pdf')).toBe('application/octet-stream');
+    expect(getMimeType('test.unknown')).toBe('application/octet-stream');
   });
 });
 
-describe('DropZone - File stabilization', () => {
-  it('should convert File to stable File with arrayBuffer', async () => {
-    const originalFile = new File(['test content'], 'test.jpg', { type: 'image/jpeg' });
+describe('DropZone - touch-first UI and fallbacks', () => {
+  it('renders touch-first upload affordances', () => {
+    render(DropZone);
 
-    // Add arrayBuffer method if not present
-    if (!originalFile.arrayBuffer) {
-      Object.defineProperty(originalFile, 'arrayBuffer', {
-        value: () => Promise.resolve(new ArrayBuffer(12)),
-        writable: false,
-      });
-    }
-
-    async function stabilizeFile(file) {
-      const arrayBuffer = await file.arrayBuffer();
-      return new File([arrayBuffer], file.name, {
-        type: file.type || 'application/octet-stream',
-      });
-    }
-
-    const stableFile = await stabilizeFile(originalFile);
-
-    expect(stableFile).toBeInstanceOf(File);
-    expect(stableFile.name).toBe('test.jpg');
-    expect(stableFile.type).toBe('image/jpeg');
+    expect(screen.getByTestId('upload-drop-zone')).toBeTruthy();
+    expect(screen.getByText(/pick images/i)).toBeTruthy();
+    expect(screen.getByText(/drag and drop is also supported/i)).toBeTruthy();
   });
-});
 
-describe('DropZone - extractFilesFromDataTransfer', () => {
-  function isEligibleFile(fileName) {
-    const ELIGIBLE_EXTENSIONS = [
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.webp',
-      '.heic',
-      '.heif',
-      '.tif',
-      '.tiff',
-    ];
-    const lowerName = fileName.toLowerCase();
-    return ELIGIBLE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
-  }
+  it('filters unsupported files when DataTransfer.items API is unavailable', async () => {
+    const received = vi.fn();
+    render(DropZoneHost, { props: { onFiles: received } });
 
-  it('should filter eligible files from DataTransfer', async () => {
-    const dataTransfer = {
-      items: null, // Fallback mode
-      files: [
-        new File(['test1'], 'test1.jpg', { type: 'image/jpeg' }),
-        new File(['test2'], 'test2.png', { type: 'image/png' }),
-        new File(['test3'], 'test3.gif', { type: 'image/gif' }), // Ineligible
-      ],
-    };
+    const dropZone = screen.getByTestId('upload-drop-zone');
+    const eligible = new File(['ok'], 'photo.jpg', { type: 'image/jpeg' });
+    const ineligible = new File(['bad'], 'notes.txt', { type: 'text/plain' });
 
-    const files = Array.from(dataTransfer.files).filter((f) =>
-      isEligibleFile(f.name)
-    );
+    await fireEvent.drop(dropZone, {
+      dataTransfer: {
+        items: null,
+        files: [eligible, ineligible],
+      },
+    });
 
-    expect(files).toHaveLength(2);
-    expect(files[0].name).toBe('test1.jpg');
-    expect(files[1].name).toBe('test2.png');
+    await waitFor(() => {
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    const [[filteredFiles]] = received.mock.calls;
+    expect(filteredFiles).toHaveLength(1);
+    expect(filteredFiles[0].name).toBe('photo.jpg');
+  });
+
+  it('dispatches selected files from file input changes', async () => {
+    const received = vi.fn();
+    render(DropZoneHost, { props: { onFiles: received } });
+
+    const input = document.getElementById('file-upload');
+    const file = new File(['ok'], 'picked.jpg', { type: 'image/jpeg' });
+
+    await fireEvent.change(input, {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    const [[files]] = received.mock.calls;
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe('picked.jpg');
   });
 });

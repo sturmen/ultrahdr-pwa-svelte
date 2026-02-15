@@ -881,14 +881,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await page.goto('/');
 
             // Verify the drop zone is visible
-            await expect(page.locator('.drop-zone')).toBeVisible();
-            await expect(page.locator('text=Drag & drop images here')).toBeVisible();
+            await expect(page.getByTestId('upload-drop-zone')).toBeVisible();
+            await expect(page.getByText('Pick Images')).toBeVisible();
         });
 
         test('should show supported formats', async ({ page }) => {
             await page.goto('/');
 
-            await expect(page.locator('text=JPG, PNG, WebP, HEIC, TIFF')).toBeVisible();
+            await expect(page.getByText('Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF')).toBeVisible();
         });
     });
 });

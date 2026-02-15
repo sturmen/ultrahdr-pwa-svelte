@@ -1,70 +1,62 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/svelte';
+import App from '../../App.svelte';
+import { consumeSharedFilesFromLaunch } from '../share-target-launch.js';
 
-describe('App - Header content', () => {
-  it('should have UltraHDR Image Enhancer title', () => {
-    const title = 'UltraHDR Image Enhancer';
-    expect(title).toBe('UltraHDR Image Enhancer');
+vi.mock('../share-target-launch.js', () => ({
+  consumeSharedFilesFromLaunch: vi.fn(),
+}));
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('App shell and navigation frame', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consumeSharedFilesFromLaunch.mockResolvedValue([]);
   });
 
-  it('should have subtitle about converting images', () => {
-    const subtitle = 'Convert your images to UltraHDR.';
-    expect(subtitle).toContain('UltraHDR');
+  it('renders the mobile-native shell and trust indicators', async () => {
+    render(App);
+
+    await screen.findByRole('heading', { name: /UltraHDR Image Enhancer/i });
+
+    expect(screen.getByTestId('app-shell')).toBeInTheDocument();
+    expect(screen.getByText(/private processing/i)).toBeInTheDocument();
+    expect(screen.getByText(/works offline/i)).toBeInTheDocument();
+    expect(screen.getByText(/no cloud upload/i)).toBeInTheDocument();
   });
 
-  it('should have footer with version info', () => {
-    const version = '1.0.0';
-    expect(version).toBeDefined();
-  });
-});
+  it('shows loading state while share-target launch files are being checked', async () => {
+    const launchProbe = deferred();
+    consumeSharedFilesFromLaunch.mockReturnValue(launchProbe.promise);
 
-describe('App - Links', () => {
-  it('should have What is HDR link', () => {
-    const linkText = 'What is HDR?';
-    expect(linkText).toBeDefined();
-  });
+    render(App);
 
-  it('should have Source code link', () => {
-    const linkText = 'Source code';
-    expect(linkText).toBeDefined();
-  });
-});
+    expect(screen.getByText(/loading shared images/i)).toBeInTheDocument();
 
-describe('App - Processing modes', () => {
-  it('should show drop zone when no files', () => {
-    const files = [];
-    expect(files.length).toBe(0);
+    launchProbe.resolve([]);
+    await waitFor(() => {
+      expect(screen.queryByText(/loading shared images/i)).not.toBeInTheDocument();
+    });
   });
 
-  it('should show image processor when files are present', () => {
-    const files = ['test1.jpg', 'test2.jpg'];
-    expect(files.length).toBeGreaterThan(0);
-  });
+  it('shows drop zone when there are no files from share launch', async () => {
+    consumeSharedFilesFromLaunch.mockResolvedValue([]);
 
-  it('should reset to drop zone after reset', () => {
-    let files = ['test1.jpg'];
-    files = [];
-    expect(files.length).toBe(0);
-  });
-});
+    render(App);
 
-describe('App - UI state', () => {
-  it('should toggle between drop zone and processor', () => {
-    let showDropZone = true;
-    let files = [];
-
-    if (files.length > 0) {
-      showDropZone = false;
-    }
-
-    expect(showDropZone).toBe(true);
-
-    // Add files
-    files = ['test.jpg'];
-    showDropZone = files.length === 0;
-
-    expect(showDropZone).toBe(false);
+    await screen.findByTestId('upload-drop-zone');
+    expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
   });
 });

@@ -27,10 +27,19 @@
   let latestPipelineEvent = null;
   let activeAbortController = null;
   let processingRunId = 0;
+  let activeTab = "convert";
+  let isAdvancedOpen = false;
+  let isDesktopLayout = false;
 
   const capabilities = getCapabilities();
   const processingProfile = getProcessingProfile(capabilities);
   const safeModeEnabled = processingProfile.safeModeDefault;
+
+  const dispatch = createEventDispatcher();
+
+  $: showConvertPanel = isDesktopLayout || activeTab === "convert";
+  $: showResultsPanel = isDesktopLayout || activeTab === "results";
+  $: showSettingsPanel = isDesktopLayout || activeTab === "settings";
 
   function formatMs(ms) {
     const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
@@ -61,6 +70,10 @@
       activeAbortController.abort();
       activeAbortController = null;
     }
+  }
+
+  function setActiveTab(tab) {
+    activeTab = tab;
   }
 
   // Process a specific list of files and append results
@@ -102,12 +115,13 @@
             latestPipelineEvent = event;
           },
         });
+
         if (controller.signal.aborted || runId !== processingRunId) {
           return;
         }
+
         const url = URL.createObjectURL(blob);
 
-        // Append result
         results = [
           ...results,
           {
@@ -118,8 +132,8 @@
             index: globalIndex,
           },
         ];
-        selectedIndices.add(globalIndex); // Auto-select new results
-        selectedIndices = selectedIndices; // Trigger reactivity
+        selectedIndices.add(globalIndex);
+        selectedIndices = selectedIndices;
       }
     } catch (e) {
       if (e?.name === "AbortError") {
@@ -137,7 +151,6 @@
     }
   }
 
-  // Process ALL files (re-process everything)
   async function processAll() {
     abortActiveProcessing();
     releaseResultUrls(results);
@@ -146,19 +159,43 @@
     await processSubset(files, 0);
   }
 
-  // Initial process
   onMount(() => {
+    let mediaQuery = null;
+    let handleMediaChange = null;
+
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      mediaQuery = window.matchMedia("(min-width: 1024px)");
+      handleMediaChange = (event) => {
+        isDesktopLayout = event.matches;
+      };
+      isDesktopLayout = mediaQuery.matches;
+
+      if (typeof mediaQuery.addEventListener === "function") {
+        mediaQuery.addEventListener("change", handleMediaChange);
+      } else if (typeof mediaQuery.addListener === "function") {
+        mediaQuery.addListener(handleMediaChange);
+      }
+    }
+
     processAll();
+
     return () => {
       processingRunId += 1;
       abortActiveProcessing();
       clearTimeout(debounceTimer);
       clearTimeout(noticeTimer);
       releaseResultUrls(results);
+
+      if (mediaQuery && handleMediaChange) {
+        if (typeof mediaQuery.removeEventListener === "function") {
+          mediaQuery.removeEventListener("change", handleMediaChange);
+        } else if (typeof mediaQuery.removeListener === "function") {
+          mediaQuery.removeListener(handleMediaChange);
+        }
+      }
     };
   });
 
-  // Handle adding new files
   async function handleAddFiles(event) {
     const newFiles = Array.from(event.target.files);
     if (newFiles.length === 0) return;
@@ -166,10 +203,8 @@
     const startIndex = files.length;
     files = [...files, ...newFiles];
 
-    // Process only the new files
     await processSubset(newFiles, startIndex);
 
-    // Reset input
     event.target.value = "";
   }
 
@@ -220,18 +255,15 @@
     } else {
       const zip = new JSZip();
 
-      // Add files to zip
       for (const result of selectedResults) {
         const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
         zip.file(filename, result.blob);
       }
 
-      // Generate and save zip
       const content = await zip.generateAsync({ type: "blob" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(content);
 
-      // Format timestamp: YYYY-MM-DD-HH-mm-ss
       const now = new Date();
       const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
@@ -312,24 +344,22 @@
     discardGainMap = false;
     stripExif = false;
     notice = null;
+    activeTab = "convert";
+    isAdvancedOpen = false;
     dispatch("reset");
   }
 
-  // Handle removing a file
   function removeImage(index) {
     const [removed] = results.filter((_, i) => i === index);
     if (removed?.url) {
       URL.revokeObjectURL(removed.url);
     }
 
-    // Remove from files and results
     files = files.filter((_, i) => i !== index);
     results = results.filter((_, i) => i !== index);
 
-    // Re-calculate indices in results
     results = results.map((r, i) => ({ ...r, index: i }));
 
-    // Update selection
     const newSelection = new Set();
     selectedIndices.forEach((i) => {
       if (i < index) newSelection.add(i);
@@ -341,337 +371,541 @@
       reset();
     }
   }
-
-  const dispatch = createEventDispatcher();
 </script>
 
-<div class="processor">
-  <div class="controls card">
-    <h2>Settings</h2>
-
-    <div class="control-group">
-      <span class="label">Rotation</span>
-      <div class="button-group">
-        <button
-          on:click={() => rotate(-90)}
-          disabled={processing}
-          class="icon-btn"
-          title="Rotate Left"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke-width="1.5"
-            stroke="currentColor"
-            class="w-6 h-6"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-            />
-          </svg>
-          Left
-        </button>
-        <button
-          on:click={() => rotate(90)}
-          disabled={processing}
-          class="icon-btn"
-          title="Rotate Right"
-        >
-          Right
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke-width="1.5"
-            stroke="currentColor"
-            class="w-6 h-6"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"
-            />
-          </svg>
-        </button>
-        <span class="value">{rotation}°</span>
-      </div>
-    </div>
-
-    <div class="control-group">
-      <label for="boost">Max Content Boost (HDR Intensity)</label>
-      <div class="range-wrapper">
-        <input
-          type="range"
-          id="boost"
-          min="1.0"
-          max="4.0"
-          step="0.1"
-          bind:value={maxContentBoost}
-          on:input={handleSettingChange}
-          disabled={processing}
-        />
-        <span class="value">{maxContentBoost.toFixed(1)}x</span>
-      </div>
-      <p class="help-text">
-        Higher values create brighter highlights when generating a new gain map.
-        Existing input gain maps are preserved as-is unless
-        &ldquo;Discard existing gain map(s)&rdquo; is enabled.
-      </p>
-    </div>
-
-    <div class="control-group">
-      <label for="shadowCutoff">
-        Minimum Brightness Threshold for Enhancement: {Math.round(
-          shadowCutoff * 100,
-        )}%
-      </label>
-      <div class="range-wrapper">
-        <input
-          type="range"
-          id="shadowCutoff"
-          min="0.0"
-          max="1.0"
-          step="0.01"
-          bind:value={shadowCutoff}
-          on:input={handleSettingChange}
-          disabled={processing}
-        />
-        <span class="value">{Math.round(shadowCutoff * 100)}%</span>
-      </div>
-      <p class="help-text">
-        Brightness values below this threshold are not enhanced.
-      </p>
-    </div>
-
-    <div class="control-group horizontal">
-      <label for="quality">JPEG Quality</label>
-      <div class="select-wrapper">
-        <select
-          id="quality"
-          bind:value={quality}
-          on:change={handleSettingChange}
-          disabled={processing}
-        >
-          <option value={0.95}>High</option>
-          <option value={0.75}>Medium</option>
-          <option value={0.5}>Low</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="control-group switch-group">
-      <label class="switch">
-        <input
-          type="checkbox"
-          bind:checked={discardGainMap}
-          on:change={handleSettingChange}
-          disabled={processing}
-        />
-        <span class="slider"></span>
-      </label>
-      <span class="switch-label">Discard existing gain map(s)</span>
-    </div>
-
-    <div class="control-group switch-group">
-      <label class="switch">
-        <input
-          type="checkbox"
-          bind:checked={stripExif}
-          on:change={handleSettingChange}
-          disabled={processing}
-        />
-        <span class="slider"></span>
-      </label>
-      <span class="switch-label">Strip EXIF data</span>
-    </div>
-
-    <div class="actions">
-      <input
-        type="file"
-        id="add-files"
-        multiple
-        accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
-        style="display: none;"
-        on:change={handleAddFiles}
-        disabled={processing}
-      />
+<div class="processor" class:desktop={isDesktopLayout}>
+  {#if !isDesktopLayout}
+    <div
+      class="mobile-tab-bar"
+      data-testid="mobile-tab-bar"
+      aria-label="Editor tabs"
+      role="tablist"
+    >
       <button
-        class="secondary"
-        on:click={() => document.getElementById("add-files").click()}
-        disabled={processing}
+        type="button"
+        class="tab-btn"
+        data-testid="tab-convert"
+        role="tab"
+        aria-selected={activeTab === "convert"}
+        aria-controls="panel-convert"
+        on:click={() => setActiveTab("convert")}
       >
-        Add Images
+        Convert
       </button>
-      <button on:click={reset} disabled={processing} class="secondary">
-        Start Over
-      </button>
-    </div>
-
-    {#if notice}
-      <p class="help-text notice" data-testid="notice-message">{notice}</p>
-    {/if}
-
-    {#if latestPipelineEvent}
-      <div
-        class="pipeline-status"
-        data-testid="pipeline-status"
-        data-phase={latestPipelineEvent.phase}
-        data-stage={latestPipelineEvent.stage || ""}
-        data-elapsed-ms={Math.round(latestPipelineEvent.elapsedMs || 0)}
+      <button
+        type="button"
+        class="tab-btn"
+        data-testid="tab-results"
+        role="tab"
+        aria-selected={activeTab === "results"}
+        aria-controls="panel-results"
+        on:click={() => setActiveTab("results")}
       >
-        <p class="help-text">
-          {latestPipelineEvent.phase} • {latestPipelineEvent.stage || "pipeline"} • {formatMs(latestPipelineEvent.elapsedMs)}
-        </p>
-        {#if latestPipelineEvent.phase === "pipeline-complete"}
-          <p class="help-text">
-            Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
-          </p>
-        {/if}
-      </div>
-    {/if}
-  </div>
-
-  {#if error}
-    <div class="error card">
-      <h3>Error</h3>
-      <p>{error}</p>
+        Results <span class="tab-badge">{results.length}</span>
+      </button>
+      <button
+        type="button"
+        class="tab-btn"
+        data-testid="tab-settings"
+        role="tab"
+        aria-selected={activeTab === "settings"}
+        aria-controls="panel-settings"
+        on:click={() => setActiveTab("settings")}
+      >
+        Settings
+      </button>
     </div>
   {/if}
 
-  <div class="results-container" class:loading={processing}>
-    {#if processing && results.length === 0}
-      <div class="loading-overlay">
-        <div class="spinner"></div>
-        <p>
-          Processing...
-          {#if latestPipelineEvent}
-            ({latestPipelineEvent.stage || "pipeline"}, {formatMs(latestPipelineEvent.elapsedMs)})
-          {/if}
-        </p>
-      </div>
-    {/if}
+  <div
+    class="processor-layout"
+    class:desktop-two-pane={isDesktopLayout}
+    data-testid={isDesktopLayout ? "desktop-two-pane" : undefined}
+  >
+    <section class="controls-column">
+      {#if showConvertPanel}
+        <div class="controls card panel convert-panel" id="panel-convert">
+          <h2>Convert</h2>
+          <p class="panel-intro">Quick adjustments for day-to-day processing.</p>
 
-    {#if results.length > 0}
-      <div class="results">
-        <div class="results-header">
-          <h3>Preview</h3>
-          <div class="selection-controls">
-            <button class="text-btn" on:click={selectAll}>Select All</button>
-            <button class="text-btn" on:click={deselectAll}>Deselect All</button
-            >
-            <button
-              class="primary small"
-              on:click={downloadSelected}
-              disabled={selectedIndices.size === 0}
-            >
-              {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
-            </button>
-            {#if typeof navigator !== "undefined" && navigator.canShare}
-              <button
-                class="primary small share-btn"
-                on:click={shareSelected}
-                disabled={selectedIndices.size === 0}
-                title="Share to other apps"
+          <div class="control-group" data-testid="quick-controls">
+            <label for="boost">Max Content Boost (HDR Intensity)</label>
+            <div class="range-wrapper">
+              <input
+                type="range"
+                id="boost"
+                min="1.0"
+                max="4.0"
+                step="0.1"
+                bind:value={maxContentBoost}
+                on:input={handleSettingChange}
+                disabled={processing}
+              />
+              <span class="value">{maxContentBoost.toFixed(1)}x</span>
+            </div>
+          </div>
+
+          <div class="control-group horizontal">
+            <label for="quality">JPEG Quality</label>
+            <div class="select-wrapper">
+              <select
+                id="quality"
+                bind:value={quality}
+                on:change={handleSettingChange}
+                disabled={processing}
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke-width="1.5"
-                  stroke="currentColor"
-                  class="w-5 h-5"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.935-2.186 2.25 2.25 0 00-3.935 2.186z"
-                  />
-                </svg>
-                Share ({selectedIndices.size})
+                <option value={0.95}>High</option>
+                <option value={0.75}>Medium</option>
+                <option value={0.5}>Low</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions">
+            <input
+              type="file"
+              id="add-files"
+              multiple
+              accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
+              style="display: none;"
+              on:change={handleAddFiles}
+              disabled={processing}
+            />
+            <button
+              class="secondary"
+              on:click={() => document.getElementById("add-files").click()}
+              disabled={processing}
+            >
+              Add Images
+            </button>
+            <button on:click={reset} disabled={processing} class="secondary">
+              Start Over
+            </button>
+            {#if !isDesktopLayout}
+              <button
+                class="secondary"
+                on:click={() => setActiveTab("settings")}
+                disabled={processing}
+              >
+                Open Settings
               </button>
             {/if}
           </div>
+
+          <p class="help-text">
+            Existing input gain maps are preserved as-is unless
+            &ldquo;Discard existing gain map(s)&rdquo; is enabled.
+          </p>
+
+          {#if notice}
+            <p class="help-text notice" data-testid="notice-message">{notice}</p>
+          {/if}
         </div>
-        <div class="grid">
-          {#each results as result, i}
-            <div
-              class="result-card card"
-              class:selected={selectedIndices.has(i)}
-              on:click={() => toggleSelection(i)}
-              role="button"
-              tabindex="0"
-              on:keydown={(e) => e.key === "Enter" && toggleSelection(i)}
-            >
-              <div class="selection-indicator">
-                {#if selectedIndices.has(i)}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    class="w-6 h-6"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                {:else}
-                  <div class="circle"></div>
-                {/if}
-              </div>
+      {/if}
+
+      {#if showSettingsPanel}
+        <div class="controls card panel settings-panel" id="panel-settings">
+          <div class="settings-header">
+            <h2>Settings</h2>
+            {#if !isDesktopLayout}
               <button
-                class="remove-btn"
-                on:click|stopPropagation={() => removeImage(i)}
-                title="Remove image"
+                class="text-btn"
+                type="button"
+                on:click={() => (isAdvancedOpen = !isAdvancedOpen)}
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  class="w-5 h-5"
-                >
-                  <path
-                    fill-rule="evenodd"
-                    d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z"
-                    clip-rule="evenodd"
-                  />
-                </svg>
+                {isAdvancedOpen ? "Hide Advanced Settings" : "Show Advanced Settings"}
               </button>
-              <div class="preview">
-                <img src={result.url} alt="Processed result" />
+            {/if}
+          </div>
+
+          {#if isDesktopLayout || isAdvancedOpen}
+            <div data-testid="advanced-settings">
+              <div class="control-group">
+                <span class="label">Rotation</span>
+                <div class="button-group">
+                  <button
+                    on:click={() => rotate(-90)}
+                    disabled={processing}
+                    class="icon-btn"
+                    title="Rotate Left"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                      class="w-6 h-6"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
+                      />
+                    </svg>
+                    Left
+                  </button>
+                  <button
+                    on:click={() => rotate(90)}
+                    disabled={processing}
+                    class="icon-btn"
+                    title="Rotate Right"
+                  >
+                    Right
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke-width="1.5"
+                      stroke="currentColor"
+                      class="w-6 h-6"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"
+                      />
+                    </svg>
+                  </button>
+                  <span class="value">{rotation}°</span>
+                </div>
               </div>
-              <div class="info">
-                <p class="filename">{result.originalName}</p>
-                <p class="size">{(result.size / 1024 / 1024).toFixed(2)} MB</p>
+
+              <div class="control-group">
+                <label for="shadowCutoff">
+                  Minimum Brightness Threshold for Enhancement: {Math.round(
+                    shadowCutoff * 100,
+                  )}%
+                </label>
+                <div class="range-wrapper">
+                  <input
+                    type="range"
+                    id="shadowCutoff"
+                    min="0.0"
+                    max="1.0"
+                    step="0.01"
+                    bind:value={shadowCutoff}
+                    on:input={handleSettingChange}
+                    disabled={processing}
+                  />
+                  <span class="value">{Math.round(shadowCutoff * 100)}%</span>
+                </div>
+                <p class="help-text">
+                  Brightness values below this threshold are not enhanced.
+                </p>
+              </div>
+
+              <div class="control-group switch-group">
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    bind:checked={discardGainMap}
+                    on:change={handleSettingChange}
+                    disabled={processing}
+                  />
+                  <span class="slider"></span>
+                </label>
+                <span class="switch-label">Discard existing gain map(s)</span>
+              </div>
+
+              <div class="control-group switch-group">
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    bind:checked={stripExif}
+                    on:change={handleSettingChange}
+                    disabled={processing}
+                  />
+                  <span class="slider"></span>
+                </label>
+                <span class="switch-label">Strip EXIF data</span>
+              </div>
+
+              {#if latestPipelineEvent}
+                <div
+                  class="pipeline-status"
+                  data-testid="pipeline-status"
+                  data-phase={latestPipelineEvent.phase}
+                  data-stage={latestPipelineEvent.stage || ""}
+                  data-elapsed-ms={Math.round(latestPipelineEvent.elapsedMs || 0)}
+                >
+                  <p class="help-text">
+                    {latestPipelineEvent.phase} • {latestPipelineEvent.stage || "pipeline"} • {formatMs(latestPipelineEvent.elapsedMs)}
+                  </p>
+                  {#if latestPipelineEvent.phase === "pipeline-complete"}
+                    <p class="help-text">
+                      Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
+                    </p>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <p class="help-text collapsed-note">
+              Advanced controls are hidden. Tap to reveal rotation, threshold, and metadata options.
+            </p>
+          {/if}
+        </div>
+      {/if}
+    </section>
+
+    <section class="results-column">
+      {#if error}
+        <div class="error card">
+          <h3>Error</h3>
+          <p>{error}</p>
+        </div>
+      {/if}
+
+      {#if showResultsPanel}
+        <div class="results-container" class:loading={processing} id="panel-results">
+          {#if processing && results.length === 0}
+            <div class="loading-overlay">
+              <div class="spinner"></div>
+              <p>
+                Processing...
+                {#if latestPipelineEvent}
+                  ({latestPipelineEvent.stage || "pipeline"}, {formatMs(latestPipelineEvent.elapsedMs)})
+                {/if}
+              </p>
+            </div>
+          {/if}
+
+          {#if results.length > 0}
+            <div class="results">
+              <div class="results-header">
+                <h3>Results</h3>
+                <div class="selection-controls">
+                  <button class="text-btn" on:click={selectAll}>Select All</button>
+                  <button class="text-btn" on:click={deselectAll}>Deselect All</button>
+                  <button
+                    class="primary small"
+                    on:click={downloadSelected}
+                    disabled={selectedIndices.size === 0}
+                  >
+                    {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
+                  </button>
+                  {#if typeof navigator !== "undefined" && navigator.canShare}
+                    <button
+                      class="primary small share-btn"
+                      on:click={shareSelected}
+                      disabled={selectedIndices.size === 0}
+                      title="Share to other apps"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="1.5"
+                        stroke="currentColor"
+                        class="w-5 h-5"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.935-2.186 2.25 2.25 0 00-3.935 2.186z"
+                        />
+                      </svg>
+                      Share ({selectedIndices.size})
+                    </button>
+                  {/if}
+                </div>
+              </div>
+
+              <div class="grid" data-testid="results-grid">
+                {#each results as result, i}
+                  <div
+                    class="result-card card"
+                    class:selected={selectedIndices.has(i)}
+                    on:click={() => toggleSelection(i)}
+                    role="button"
+                    tabindex="0"
+                    on:keydown={(e) => e.key === "Enter" && toggleSelection(i)}
+                  >
+                    <div class="selection-indicator">
+                      {#if selectedIndices.has(i)}
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          class="w-6 h-6"
+                        >
+                          <path
+                            fill-rule="evenodd"
+                            d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
+                            clip-rule="evenodd"
+                          />
+                        </svg>
+                      {:else}
+                        <div class="circle"></div>
+                      {/if}
+                    </div>
+
+                    <button
+                      class="remove-btn"
+                      on:click|stopPropagation={() => removeImage(i)}
+                      title="Remove image"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        class="w-5 h-5"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </button>
+
+                    <div class="preview">
+                      <img src={result.url} alt="Processed result" />
+                    </div>
+                    <div class="info">
+                      <p class="filename">{result.originalName}</p>
+                      <p class="size">{(result.size / 1024 / 1024).toFixed(2)} MB</p>
+                    </div>
+                  </div>
+                {/each}
               </div>
             </div>
-          {/each}
+          {:else if !processing}
+            <div class="results-placeholder card">
+              <p>No results yet. Process an image from the Convert tab.</p>
+            </div>
+          {/if}
         </div>
-      </div>
-    {/if}
+      {:else if !isDesktopLayout}
+        <div class="results-placeholder card">
+          <p>Open the Results tab to review and export processed images.</p>
+        </div>
+      {/if}
+    </section>
   </div>
+
+  {#if !isDesktopLayout && activeTab === "results" && results.length > 0}
+    <div class="mobile-action-bar" data-testid="mobile-action-bar">
+      <button
+        class="primary"
+        on:click={downloadSelected}
+        disabled={selectedIndices.size === 0}
+      >
+        {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
+      </button>
+
+      {#if typeof navigator !== "undefined" && navigator.canShare}
+        <button
+          class="secondary share-btn"
+          on:click={shareSelected}
+          disabled={selectedIndices.size === 0}
+          title="Share to other apps"
+        >
+          Share ({selectedIndices.size})
+        </button>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
   .processor {
     width: 100%;
-    max-width: 800px;
     margin: 0 auto;
+    display: grid;
+    gap: 1rem;
+  }
+
+  .mobile-tab-bar {
+    position: sticky;
+    top: 0.5rem;
+    z-index: 15;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding: 0.4rem;
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+    backdrop-filter: blur(14px);
+    border-radius: var(--radius-lg);
+  }
+
+  .tab-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    min-height: 44px;
+    border-radius: 0.8rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+  }
+
+  .tab-btn[aria-selected="true"] {
+    background: var(--surface-interactive);
+    border-color: var(--primary-color);
+    color: var(--text-color);
+  }
+
+  .tab-badge {
+    min-width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--primary-color) 26%, transparent);
+    color: var(--text-color);
+    font-size: 0.76rem;
+    font-weight: 700;
+    padding: 0 0.2rem;
+  }
+
+  .processor-layout {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .controls-column,
+  .results-column {
+    display: grid;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .panel {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .panel-intro {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .controls h2,
+  .results h3,
+  .error h3 {
+    margin: 0;
+    font-size: 1.1rem;
   }
 
   .control-group {
-    margin-bottom: 1.5rem;
     text-align: left;
+    display: grid;
+    gap: 0.5rem;
   }
 
   .control-group.horizontal {
     display: flex;
     align-items: center;
     gap: 1rem;
+    flex-wrap: wrap;
   }
 
   .control-group.horizontal label {
@@ -679,23 +913,17 @@
     min-width: max-content;
   }
 
-  .control-group.horizontal .select-wrapper {
-    flex-grow: 0;
-    width: auto;
-  }
-
   .switch-group {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
+    gap: 0.8rem;
+    margin-bottom: 0.15rem;
   }
 
   .switch-label {
     cursor: pointer;
   }
 
-  /* The switch - the box around the slider */
   .switch {
     position: relative;
     display: inline-block;
@@ -704,14 +932,12 @@
     flex-shrink: 0;
   }
 
-  /* Hide default HTML checkbox */
   .switch input {
     opacity: 0;
     width: 0;
     height: 0;
   }
 
-  /* The slider */
   .slider {
     position: absolute;
     cursor: pointer;
@@ -719,8 +945,8 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: var(--text-secondary);
-    transition: 0.4s;
+    background-color: var(--text-muted);
+    transition: 0.2s;
     border-radius: 34px;
   }
 
@@ -731,8 +957,8 @@
     width: 24px;
     left: 2px;
     bottom: 2px;
-    background-color: white;
-    transition: 0.4s;
+    background-color: #ffffff;
+    transition: 0.2s;
     border-radius: 50%;
   }
 
@@ -741,7 +967,7 @@
   }
 
   input:focus + .slider {
-    box-shadow: 0 0 1px var(--primary-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 45%, transparent);
   }
 
   input:checked + .slider:before {
@@ -751,22 +977,28 @@
   label,
   .label {
     display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
+    margin-bottom: 0.2rem;
+    font-weight: 600;
+    font-size: 0.95rem;
   }
 
   .range-wrapper,
-  .select-wrapper {
+  .select-wrapper,
+  .button-group {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.75rem;
+  }
+
+  .button-group {
+    flex-wrap: wrap;
   }
 
   input[type="range"] {
     flex: 1;
     height: 6px;
     border-radius: 3px;
-    background: var(--text-secondary);
+    background: color-mix(in srgb, var(--text-muted) 45%, transparent);
     outline: none;
     -webkit-appearance: none;
     appearance: none;
@@ -774,10 +1006,11 @@
 
   select {
     flex: 1;
-    padding: 0.5rem;
-    border-radius: 6px;
-    border: 1px solid var(--text-secondary);
-    background-color: var(--surface-color);
+    min-height: 44px;
+    padding: 0.65rem 0.8rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-subtle);
+    background-color: var(--surface-raised);
     color: var(--text-color);
     font-size: 1rem;
     cursor: pointer;
@@ -793,58 +1026,73 @@
     cursor: pointer;
   }
 
+  input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: var(--primary-color);
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+  }
+
   .value {
-    font-family: monospace;
-    font-size: 1.1rem;
+    font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Liberation Mono", monospace;
+    font-size: 0.95rem;
     min-width: 3ch;
   }
 
   .help-text {
     font-size: 0.85rem;
     color: var(--text-secondary);
-    margin-top: 0.5rem;
+    margin: 0;
   }
 
-  .button-group {
-    display: flex;
-    gap: 1rem;
-    align-items: center;
+  .collapsed-note {
+    margin-top: 0.2rem;
   }
 
   .icon-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
+    gap: 0.45rem;
+    min-height: 44px;
+    padding: 0.55rem 0.9rem;
     background-color: transparent;
-    border: 1px solid var(--text-secondary);
+    border: 1px solid var(--border-subtle);
     color: var(--text-color);
-    border-radius: 8px;
+    border-radius: 10px;
     cursor: pointer;
   }
 
   .icon-btn svg {
-    width: 1.2rem;
-    height: 1.2rem;
+    width: 1.1rem;
+    height: 1.1rem;
   }
 
   .icon-btn:hover {
-    border-color: var(--text-color);
+    border-color: var(--primary-color);
   }
 
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: flex-start;
+  }
+
+  .settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     gap: 1rem;
-    justify-content: center;
-    margin-top: 2rem;
   }
 
   .pipeline-status {
-    margin-top: 1rem;
-    padding: 0.75rem;
-    border: 1px solid var(--text-secondary);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.02);
+    margin-top: 0.35rem;
+    padding: 0.7rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--surface-muted);
   }
 
   .pipeline-status .help-text {
@@ -853,44 +1101,50 @@
 
   button.primary {
     background-color: var(--primary-color);
-    color: white;
-    border: none;
-    padding: 0.8rem 2rem;
-    font-size: 1.1rem;
+    color: var(--text-on-primary);
+    border: 1px solid transparent;
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+    font-size: 0.95rem;
+    font-weight: 700;
   }
 
   button.primary.small {
-    padding: 0.5rem 1rem;
-    font-size: 0.9rem;
-  }
-
-  button.primary:hover {
-    background-color: #0071e3;
+    min-height: 40px;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.86rem;
+    font-weight: 600;
   }
 
   .share-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.45rem;
     white-space: nowrap;
   }
 
   button.secondary {
     background-color: transparent;
-    border: 1px solid var(--text-secondary);
+    border: 1px solid var(--border-subtle);
     color: var(--text-color);
+    min-height: 44px;
+    padding: 0.55rem 0.9rem;
+    font-size: 0.92rem;
+    font-weight: 600;
   }
 
   button.secondary:hover {
-    border-color: var(--text-color);
+    border-color: var(--primary-color);
   }
 
   button.text-btn {
     background: none;
     border: none;
     color: var(--primary-color);
-    padding: 0.5rem;
+    min-height: 44px;
+    padding: 0.2rem 0.35rem;
     font-size: 0.9rem;
+    font-weight: 600;
   }
 
   button.text-btn:hover {
@@ -898,18 +1152,17 @@
   }
 
   button:disabled {
-    opacity: 0.5;
+    opacity: 0.55;
     cursor: not-allowed;
   }
 
   .results-container {
     position: relative;
-    min-height: 200px;
-    margin-top: 2rem;
+    min-height: 220px;
   }
 
   .results-container.loading .results {
-    opacity: 0.5;
+    opacity: 0.55;
     pointer-events: none;
   }
 
@@ -924,16 +1177,17 @@
     align-items: center;
     justify-content: center;
     z-index: 10;
+    text-align: center;
   }
 
   .spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid rgba(255, 255, 255, 0.1);
+    width: 36px;
+    height: 36px;
+    border: 3px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
     border-left-color: var(--primary-color);
     border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-bottom: 1rem;
+    animation: spin 0.9s linear infinite;
+    margin-bottom: 0.9rem;
   }
 
   @keyframes spin {
@@ -942,18 +1196,22 @@
     }
   }
 
+  .results {
+    display: grid;
+    gap: 0.85rem;
+  }
+
   .results-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1rem;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
   .selection-controls {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.35rem;
     align-items: center;
     flex-wrap: wrap;
     justify-content: flex-end;
@@ -961,8 +1219,8 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.75rem;
   }
 
   .result-card {
@@ -972,44 +1230,45 @@
     gap: 0.5rem;
     position: relative;
     cursor: pointer;
-    border: 2px solid transparent;
-    transition: all 0.2s;
+    border: 1px solid transparent;
+    transition: transform 0.15s ease, border-color 0.15s ease;
   }
 
   .result-card:hover {
-    transform: translateY(-2px);
+    transform: translateY(-1px);
   }
 
   .result-card.selected {
     border-color: var(--primary-color);
-    background-color: rgba(10, 132, 255, 0.1);
+    background-color: var(--surface-interactive);
   }
 
   .selection-indicator {
     position: absolute;
-    top: 0.75rem;
-    right: 0.75rem;
+    top: 0.7rem;
+    right: 0.7rem;
     z-index: 2;
     color: var(--primary-color);
   }
 
   .remove-btn {
     position: absolute;
-    top: 0.75rem;
-    left: 0.75rem;
+    top: 0.7rem;
+    left: 0.7rem;
     z-index: 2;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.45);
     border: none;
     border-radius: 50%;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: #fff;
     padding: 0;
     cursor: pointer;
     transition: background 0.2s;
+    min-height: 28px;
   }
 
   .remove-btn:hover {
@@ -1019,32 +1278,32 @@
   .selection-indicator svg {
     width: 24px;
     height: 24px;
-    background: var(--surface-color);
+    background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
     border-radius: 50%;
   }
 
   .circle {
     width: 20px;
     height: 20px;
-    border: 2px solid var(--text-secondary);
+    border: 2px solid var(--text-muted);
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.45);
   }
 
   .preview img {
     width: 100%;
     height: auto;
-    border-radius: 6px;
+    border-radius: 8px;
     display: block;
   }
 
   .info {
     text-align: left;
-    padding: 0 0.5rem;
+    padding: 0 0.2rem;
   }
 
   .filename {
-    font-weight: 500;
+    font-weight: 600;
     margin-bottom: 0.25rem;
     white-space: nowrap;
     overflow: hidden;
@@ -1055,25 +1314,90 @@
   .size {
     font-size: 0.8rem;
     color: var(--text-secondary);
-    margin-bottom: 0.5rem;
+    margin-bottom: 0;
   }
 
   .error {
-    border-left: 4px solid #ff453a;
-    color: #ff453a;
+    border-left: 4px solid #dc3d33;
+    color: #dc3d33;
   }
 
-  @media (max-width: 640px) {
-    .button-group {
-      flex-wrap: wrap;
+  .results-placeholder {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+  }
+
+  .results-placeholder p {
+    margin: 0;
+  }
+
+  .mobile-action-bar {
+    position: sticky;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+    z-index: 14;
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.7rem;
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+    backdrop-filter: blur(12px);
+    border-radius: var(--radius-lg);
+  }
+
+  .mobile-action-bar button {
+    flex: 1;
+  }
+
+  :global(button:focus-visible),
+  :global(input:focus-visible),
+  :global(select:focus-visible),
+  :global([tabindex]:focus-visible) {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  @media (min-width: 768px) {
+    .grid {
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .processor {
+      gap: 1.2rem;
     }
 
-    .actions {
-      flex-wrap: wrap;
+    .desktop-two-pane {
+      grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+      align-items: start;
+      gap: 1rem;
     }
 
-    .selection-controls {
-      justify-content: flex-start;
+    .controls-column {
+      position: sticky;
+      top: 1rem;
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      padding-right: 0.2rem;
+    }
+
+    .mobile-action-bar {
+      display: none;
+    }
+
+    .results-column {
+      min-height: 50vh;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .result-card,
+    .tab-btn,
+    .icon-btn,
+    .spinner {
+      transition: none;
+      animation: none;
     }
   }
 </style>

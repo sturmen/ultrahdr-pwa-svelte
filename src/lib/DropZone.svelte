@@ -185,6 +185,7 @@
   role="button"
   tabindex="0"
   aria-label="Upload images"
+  data-testid="upload-drop-zone"
 >
   <input
     type="file"
@@ -194,59 +195,83 @@
     on:change={handleFiles}
     hidden
   />
-  <label for="file-upload" class="drop-label">
-    <div class="icon">
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke-width="1.5"
-        stroke="currentColor"
-        class="w-6 h-6"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
-        />
-      </svg>
+  <label for="file-upload" class="drop-label" aria-label="Pick Images">
+    <div class="drop-head">
+      <div class="icon">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke-width="1.5"
+          stroke="currentColor"
+          class="w-6 h-6"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+          />
+        </svg>
+      </div>
+      <span class="cta">Pick Images</span>
     </div>
-    <p>
-      Drag & drop images here, or click to select<br />
-      <span class="sub-text">(JPG, PNG, WebP, HEIC, TIFF)</span>
-    </p>
+    <p class="headline">Convert one photo or batch process many at once.</p>
+    <p class="support">Drag and drop is also supported.</p>
+    <p class="sub-text">Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF</p>
   </label>
 </div>
 
 <style>
   .drop-zone {
-    border: 2px dashed var(--text-secondary);
-    border-radius: var(--border-radius);
-    padding: 3rem;
-    text-align: center;
-    transition: all 0.3s ease;
-    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xl);
+    padding: 1rem;
+    text-align: left;
+    transition: all 0.25s ease;
+    background: var(--surface-raised);
     cursor: pointer;
+    min-height: 44px;
   }
 
   .drop-zone.active {
     border-color: var(--primary-color);
-    background: rgba(10, 132, 255, 0.1);
-    transform: scale(1.02);
+    background: var(--surface-interactive);
+    transform: translateY(-1px);
   }
 
   .drop-label {
     cursor: pointer;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .drop-head {
     display: flex;
-    flex-direction: column;
     align-items: center;
+    justify-content: space-between;
     gap: 1rem;
   }
 
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0.55rem 1rem;
+    border-radius: 999px;
+    background: var(--primary-color);
+    color: var(--text-on-primary);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+
   .icon {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     color: var(--primary-color);
+    padding: 0.4rem;
+    border-radius: 0.75rem;
+    background: var(--surface-muted);
   }
 
   .icon svg {
@@ -256,12 +281,31 @@
 
   p {
     margin: 0;
-    font-size: 1.1rem;
     color: var(--text-color);
   }
 
-  .sub-text {
-    font-size: 0.9rem;
+  .headline {
+    font-weight: 600;
+    font-size: 1rem;
+  }
+
+  .support {
     color: var(--text-secondary);
+    font-size: 0.95rem;
+  }
+
+  .sub-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  @media (min-width: 768px) {
+    .drop-zone {
+      padding: 1.4rem;
+    }
+
+    .headline {
+      font-size: 1.06rem;
+    }
   }
 </style>

@@ -1,3 +1,5 @@
+import '@testing-library/jest-dom/vitest';
+
 // Vitest setup file
 // This file runs before each test file
 console.log('=== SETUP FILE LOADED ===');

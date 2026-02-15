@@ -14,7 +14,7 @@
     "test:e2e": "npx playwright test --project=chromium --project=firefox --project=webkit",
     "test:e2e:mobile": "npx playwright test --project=mobile-webkit-ios --project=mobile-chromium-android",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage"
+    "test:coverage": "vitest --config vite.config.test.js --coverage --coverage.provider=istanbul"
   },
   "keywords": [],
   "author": "Nicholas Tinsley",
