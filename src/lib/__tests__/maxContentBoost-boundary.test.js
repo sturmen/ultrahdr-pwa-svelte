@@ -7,16 +7,6 @@
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 
-// Mock piexifjs
-vi.mock('piexifjs', () => ({
-    default: {
-        load: vi.fn(),
-        dump: vi.fn(),
-        insert: vi.fn(),
-        ImageIFD: { Orientation: 0x0112 },
-    },
-}));
-
 describe('maxContentBoost boundary (4.0x)', () => {
     let generateGainMapData;
 

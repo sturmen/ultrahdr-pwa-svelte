@@ -1,6 +1,4 @@
 import libheifFactory from 'libheif-js/libheif-wasm/libheif.js';
-import { readFileAsDataURL } from './processing.js';
-import piexif from 'piexifjs';
 
 let libheif = null;
 
