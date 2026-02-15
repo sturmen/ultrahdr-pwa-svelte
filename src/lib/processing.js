@@ -14,8 +14,64 @@ const DEFAULT_PROCESS_OPTIONS = {
     discardGainMap: false,
     stripExif: false,
     highlightExponent: 2.0,
-    shadowCutoff: 0.05
+    shadowCutoff: 0.05,
+    safeMode: false,
+    maxOutputMegapixels: null,
+    gainMapScale: 1,
+    abortSignal: null
 };
+
+function createAbortError() {
+    if (typeof DOMException !== 'undefined') {
+        return new DOMException('Operation aborted', 'AbortError');
+    }
+    const error = new Error('Operation aborted');
+    error.name = 'AbortError';
+    return error;
+}
+
+export function throwIfAborted(signal) {
+    if (signal?.aborted) {
+        throw createAbortError();
+    }
+}
+
+export function getConstrainedDimensions(width, height, maxMegapixels) {
+    const w = Math.max(1, Number(width) || 1);
+    const h = Math.max(1, Number(height) || 1);
+    const maxMp = Number(maxMegapixels);
+
+    if (!Number.isFinite(maxMp) || maxMp <= 0) {
+        return { width: w, height: h, changed: false };
+    }
+
+    const currentPixels = w * h;
+    const maxPixels = maxMp * 1_000_000;
+    if (currentPixels <= maxPixels) {
+        return { width: w, height: h, changed: false };
+    }
+
+    const scale = Math.sqrt(maxPixels / currentPixels);
+    let constrainedWidth = Math.max(1, Math.floor(w * scale));
+    let constrainedHeight = Math.max(1, Math.floor(h * scale));
+
+    // Ensure we're under the max pixel budget after integer rounding.
+    while (constrainedWidth * constrainedHeight > maxPixels) {
+        if (constrainedWidth >= constrainedHeight && constrainedWidth > 1) {
+            constrainedWidth--;
+        } else if (constrainedHeight > 1) {
+            constrainedHeight--;
+        } else {
+            break;
+        }
+    }
+
+    return {
+        width: constrainedWidth,
+        height: constrainedHeight,
+        changed: constrainedWidth !== w || constrainedHeight !== h
+    };
+}
 
 /**
  * Check if WASM encoder is available
@@ -87,6 +143,7 @@ function buildGainMapMetadata(maxContentBoost) {
 export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
     const mergedOptions = { ...DEFAULT_PROCESS_OPTIONS, ...(options || {}) };
     console.log('[Process] Starting processing for:', file.name);
+    throwIfAborted(mergedOptions.abortSignal);
 
     const telemetry = createPipelineTelemetry({
         fileName: file.name,
@@ -98,10 +155,14 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
     try {
         await telemetry.runStage('wasm-load', async () => {
+            throwIfAborted(mergedOptions.abortSignal);
             await ensureWasmLoaded();
         });
 
-        file = await telemetry.runStage('preprocess-file', async () => preprocessFile(file, mergedOptions));
+        file = await telemetry.runStage('preprocess-file', async () => {
+            throwIfAborted(mergedOptions.abortSignal);
+            return preprocessFile(file, mergedOptions);
+        });
 
         // Check if JPEG already has a gain map (UltraHDR)
         // When discardGainMap is false, preserve the original gain map.
@@ -110,6 +171,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                 const fileBuffer = await telemetry.runStage('read-source-buffer', async () =>
                     new Uint8Array(await file.arrayBuffer())
                 );
+                throwIfAborted(mergedOptions.abortSignal);
 
                 const isUhdr = await telemetry.runStage('detect-ultrahdr', async () => isUhdrImage(fileBuffer));
                 if (isUhdr) {
@@ -143,14 +205,41 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         // If file is an object with raw data from HEIC preservation, handle it.
         if (!(file instanceof File) && !(file instanceof Blob) && file.sdr) {
             console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
-            const imageData = file.sdr;
-            const gainMapImageData = file.gainMap;
+            let imageData = file.sdr;
+            let gainMapImageData = file.gainMap;
             // Preserve source gain-map metadata when provided by the preprocessor.
             // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
             const metadata = file.gainMapMetadata
                 || (Number.isFinite(file.gainMapHeadroom) && file.gainMapHeadroom > 0
                     ? buildGainMapMetadata(file.gainMapHeadroom)
                     : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST));
+
+            if (mergedOptions.safeMode) {
+                const constrainedDimensions = getConstrainedDimensions(
+                    imageData.width,
+                    imageData.height,
+                    mergedOptions.maxOutputMegapixels
+                );
+                if (constrainedDimensions.changed) {
+                    imageData = await telemetry.runStage('safe-mode-resize-sdr', async () =>
+                        resizeImageData(imageData, constrainedDimensions.width, constrainedDimensions.height)
+                    );
+                }
+
+                const constrainedGainDimensions = getGainMapConstrainedDimensions(
+                    gainMapImageData,
+                    mergedOptions.gainMapScale
+                );
+                if (constrainedGainDimensions.changed) {
+                    gainMapImageData = await telemetry.runStage('safe-mode-resize-gain-map', async () =>
+                        resizeImageData(
+                            gainMapImageData,
+                            constrainedGainDimensions.width,
+                            constrainedGainDimensions.height
+                        )
+                    );
+                }
+            }
 
             const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
                 compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry)
@@ -167,20 +256,59 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         const dataUrl = await telemetry.runStage('read-input-data-url', async () => readFileAsDataURL(file));
         const exifObj = extractExif(file, dataUrl);
         console.log('[Process] File loaded and EXIF extracted');
+        throwIfAborted(mergedOptions.abortSignal);
 
         // Load image pixels
         const { imageData } = await telemetry.runStage('decode-image-data', async () => loadImageData(dataUrl));
+        let workingImageData = imageData;
         console.log('[Process] Image data retrieved');
+
+        if (mergedOptions.safeMode) {
+            const constrainedDimensions = getConstrainedDimensions(
+                workingImageData.width,
+                workingImageData.height,
+                mergedOptions.maxOutputMegapixels
+            );
+            if (constrainedDimensions.changed) {
+                workingImageData = await telemetry.runStage('safe-mode-resize-sdr', async () =>
+                    resizeImageData(
+                        workingImageData,
+                        constrainedDimensions.width,
+                        constrainedDimensions.height
+                    )
+                );
+            }
+        }
+
+        let gainMapSourceImageData = workingImageData;
+        if (mergedOptions.safeMode) {
+            const constrainedGainDimensions = getGainMapConstrainedDimensions(
+                gainMapSourceImageData,
+                mergedOptions.gainMapScale
+            );
+            if (constrainedGainDimensions.changed) {
+                gainMapSourceImageData = await telemetry.runStage('safe-mode-resize-gain-map', async () =>
+                    resizeImageData(
+                        gainMapSourceImageData,
+                        constrainedGainDimensions.width,
+                        constrainedGainDimensions.height
+                    )
+                );
+            }
+        }
+
+        throwIfAborted(mergedOptions.abortSignal);
 
         // Generate gain map data
         const { gainMapImageData, metadata } = await telemetry.runStage('generate-gain-map', async () =>
-            generateGainMapData(imageData, mergedOptions)
+            generateGainMapData(gainMapSourceImageData, mergedOptions)
         );
         console.log('[Process] GainMap generated manually');
+        throwIfAborted(mergedOptions.abortSignal);
 
         // Compress and encode to UltraHDR
         const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
-            compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry)
+            compressImages(workingImageData, gainMapImageData, mergedOptions, metadata, telemetry)
         );
         console.log('[Process] Compression complete');
 
@@ -365,6 +493,62 @@ async function loadImageData(dataUrl) {
     return { imageData, width: canvas?.width || width, height: canvas?.height || height };
 }
 
+async function resizeImageData(imageData, targetWidth, targetHeight) {
+    if (!imageData || targetWidth <= 0 || targetHeight <= 0) {
+        throw new Error('Invalid resize arguments');
+    }
+
+    if (imageData.width === targetWidth && imageData.height === targetHeight) {
+        return imageData;
+    }
+
+    const sourceCanvas = document.createElement('canvas');
+    sourceCanvas.width = imageData.width;
+    sourceCanvas.height = imageData.height;
+    const sourceCtx = sourceCanvas.getContext('2d');
+    if (!sourceCtx) {
+        throw new Error('Failed to create source canvas context for resize');
+    }
+    sourceCtx.putImageData(imageData, 0, 0);
+
+    const targetCanvas = document.createElement('canvas');
+    targetCanvas.width = targetWidth;
+    targetCanvas.height = targetHeight;
+    const targetCtx = targetCanvas.getContext('2d');
+    if (!targetCtx) {
+        throw new Error('Failed to create target canvas context for resize');
+    }
+
+    targetCtx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+    const resized = targetCtx.getImageData(0, 0, targetWidth, targetHeight);
+
+    sourceCanvas.width = 1;
+    sourceCanvas.height = 1;
+    targetCanvas.width = 1;
+    targetCanvas.height = 1;
+
+    return resized;
+}
+
+function getGainMapConstrainedDimensions(imageData, gainMapScale) {
+    const normalizedScale = Number(gainMapScale);
+    if (!Number.isFinite(normalizedScale) || normalizedScale <= 0 || normalizedScale >= 1) {
+        return {
+            width: imageData.width,
+            height: imageData.height,
+            changed: false
+        };
+    }
+
+    const width = Math.max(1, Math.floor(imageData.width * normalizedScale));
+    const height = Math.max(1, Math.floor(imageData.height * normalizedScale));
+    return {
+        width,
+        height,
+        changed: width !== imageData.width || height !== imageData.height
+    };
+}
+
 /**
  * Computes a box-filtered (mean) version of a Float32Array image channel.
  * Uses integral image for O(N) performance regardless of radius.
@@ -532,6 +716,7 @@ function acesInverse(y, maxIter = 8) {
  * @returns {{gainMapImageData: ImageData, metadata: Object}}
  */
 export function generateGainMapData(imageData, options) {
+    throwIfAborted(options?.abortSignal);
     const rgba = imageData.data;
     const length = rgba.length;
     const width = imageData.width;
@@ -561,6 +746,9 @@ export function generateGainMapData(imageData, options) {
     const luminance = new Float32Array(pixelCount);
 
     for (let i = 0; i < pixelCount; i++) {
+        if (i % 4096 === 0) {
+            throwIfAborted(options?.abortSignal);
+        }
         const idx = i * 4;
         const r = toLinear(rgba[idx]);
         const g = toLinear(rgba[idx + 1]);
@@ -592,6 +780,9 @@ export function generateGainMapData(imageData, options) {
     const gainMapData = new Uint8ClampedArray(length);
 
     for (let i = 0; i < pixelCount; i++) {
+        if (i % 4096 === 0) {
+            throwIfAborted(options?.abortSignal);
+        }
         const lum = luminance[i];
         const idx = i * 4;
 

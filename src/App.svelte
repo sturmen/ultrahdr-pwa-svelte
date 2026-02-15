@@ -1,10 +1,13 @@
 <script>
+  import { onMount } from "svelte";
   import DropZone from "./lib/DropZone.svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
+  import { consumeSharedFilesFromLaunch } from "./lib/share-target-launch.js";
 
   const version = import.meta.env.VITE_APP_VERSION || 'dev';
 
   let files = [];
+  let shareLaunchChecked = false;
 
   function handleFiles(event) {
     files = Array.from(event.detail);
@@ -13,6 +16,14 @@
   function handleReset() {
     files = [];
   }
+
+  onMount(async () => {
+    const sharedFiles = await consumeSharedFilesFromLaunch();
+    if (sharedFiles.length > 0) {
+      files = sharedFiles;
+    }
+    shareLaunchChecked = true;
+  });
 </script>
 
 <main>
@@ -23,7 +34,11 @@
     Completely private, completely offline.
   </p>
 
-  {#if files.length === 0}
+  {#if !shareLaunchChecked}
+    <div class="drop-container">
+      <p class="share-loading">Loading shared images...</p>
+    </div>
+  {:else if files.length === 0}
     <div class="drop-container">
       <DropZone on:files={handleFiles} />
     </div>
@@ -49,5 +64,9 @@
   .drop-container {
     max-width: 800px;
     margin: 0 auto;
+  }
+
+  .share-loading {
+    color: var(--text-secondary);
   }
 </style>

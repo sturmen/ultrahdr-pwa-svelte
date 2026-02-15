@@ -1,7 +1,13 @@
 <script>
-  import { onMount } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
+  import { getCapabilities, getProcessingProfile } from "./capabilities.js";
   import { processImage } from "./processing";
   import JSZip from "jszip";
+  import {
+    buildShareFiles,
+    getSelectedResults,
+    releaseResultUrls,
+  } from "./result-management.js";
 
   export let files = [];
 
@@ -14,9 +20,17 @@
   let processing = false;
   let results = [];
   let error = null;
+  let notice = null;
+  let noticeTimer = null;
   let debounceTimer;
   let selectedIndices = new Set();
   let latestPipelineEvent = null;
+  let activeAbortController = null;
+  let processingRunId = 0;
+
+  const capabilities = getCapabilities();
+  const processingProfile = getProcessingProfile(capabilities);
+  const safeModeEnabled = processingProfile.safeModeDefault;
 
   function formatMs(ms) {
     const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
@@ -32,8 +46,36 @@
     return `${name} (${formatMs(duration)})`;
   }
 
+  function setNotice(message) {
+    clearTimeout(noticeTimer);
+    notice = message;
+    if (message) {
+      noticeTimer = setTimeout(() => {
+        notice = null;
+      }, 4000);
+    }
+  }
+
+  function abortActiveProcessing() {
+    if (activeAbortController) {
+      activeAbortController.abort();
+      activeAbortController = null;
+    }
+  }
+
   // Process a specific list of files and append results
   async function processSubset(subset, startIndex) {
+    if (!subset || subset.length === 0) {
+      processing = false;
+      latestPipelineEvent = null;
+      return;
+    }
+
+    const runId = ++processingRunId;
+    abortActiveProcessing();
+    const controller = new AbortController();
+    activeAbortController = controller;
+
     processing = true;
     error = null;
     latestPipelineEvent = null;
@@ -50,12 +92,19 @@
           discardGainMap,
           stripExif,
           shadowCutoff,
+          safeMode: safeModeEnabled,
+          maxOutputMegapixels: processingProfile.maxInputMegapixels,
+          gainMapScale: processingProfile.gainMapScale,
+          abortSignal: controller.signal,
           fileIndex: i,
           totalFiles: subset.length,
           onProgress: (event) => {
             latestPipelineEvent = event;
           },
         });
+        if (controller.signal.aborted || runId !== processingRunId) {
+          return;
+        }
         const url = URL.createObjectURL(blob);
 
         // Append result
@@ -63,6 +112,7 @@
           ...results,
           {
             originalName: file.name,
+            blob,
             url,
             size: blob.size,
             index: globalIndex,
@@ -72,15 +122,25 @@
         selectedIndices = selectedIndices; // Trigger reactivity
       }
     } catch (e) {
+      if (e?.name === "AbortError") {
+        return;
+      }
       console.error("[UI] Error processing files:", e);
       error = e.message;
     } finally {
-      processing = false;
+      if (activeAbortController === controller) {
+        activeAbortController = null;
+      }
+      if (runId === processingRunId) {
+        processing = false;
+      }
     }
   }
 
   // Process ALL files (re-process everything)
   async function processAll() {
+    abortActiveProcessing();
+    releaseResultUrls(results);
     results = [];
     selectedIndices = new Set();
     await processSubset(files, 0);
@@ -88,48 +148,15 @@
 
   // Initial process
   onMount(() => {
-    checkSharedFiles();
     processAll();
+    return () => {
+      processingRunId += 1;
+      abortActiveProcessing();
+      clearTimeout(debounceTimer);
+      clearTimeout(noticeTimer);
+      releaseResultUrls(results);
+    };
   });
-
-  // Check for files shared via Web Share Target API
-  async function checkSharedFiles() {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("share-target") === "true") {
-      console.log("[Share Target] Detected share target launch");
-      try {
-        // Open IndexedDB to get files
-        const db = await new Promise((resolve, reject) => {
-          const request = indexedDB.open("ultrahdr-share-store", 1);
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-
-        const transaction = db.transaction(["shared-files"], "readonly");
-        const store = transaction.objectStore("shared-files");
-        const getAllRequest = store.getAll();
-
-        const sharedFiles = await new Promise((resolve, reject) => {
-          getAllRequest.onsuccess = () => resolve(getAllRequest.result);
-          getAllRequest.onerror = () => reject(getAllRequest.error);
-        });
-
-        if (sharedFiles && sharedFiles.length > 0) {
-          console.log("[Share Target] Found", sharedFiles.length, "files");
-
-          // Clean URL
-          window.history.replaceState({}, "", window.location.pathname);
-
-          // Add to files
-          const startIndex = files.length;
-          files = [...files, ...sharedFiles];
-          await processSubset(sharedFiles, startIndex);
-        }
-      } catch (e) {
-        console.error("[Share Target] Error retrieving files:", e);
-      }
-    }
-  }
 
   // Handle adding new files
   async function handleAddFiles(event) {
@@ -144,34 +171,6 @@
 
     // Reset input
     event.target.value = "";
-  }
-
-  // Handle removing a file
-  function removeImage(index) {
-    // Revoke URL to avoid memory leak
-    if (results[index] && results[index].url) {
-      URL.revokeObjectURL(results[index].url);
-    }
-
-    // Remove from files and results
-    files = files.filter((_, i) => i !== index);
-    results = results.filter((_, i) => i !== index);
-
-    // Re-calculate indices in results
-    results = results.map((r, i) => ({ ...r, index: i }));
-
-    // Update selection
-    const newSelection = new Set();
-    selectedIndices.forEach((i) => {
-      if (i < index) newSelection.add(i);
-      else if (i > index) newSelection.add(i - 1);
-    });
-    selectedIndices = newSelection;
-
-    // If no files left, reset (which might trigger parent to show dropzone if bound, or we just show empty state)
-    if (files.length === 0) {
-      reset();
-    }
   }
 
   function handleSettingChange() {
@@ -213,7 +212,7 @@
   }
 
   async function downloadSelected() {
-    const selectedResults = results.filter((_, i) => selectedIndices.has(i));
+    const selectedResults = getSelectedResults(results, selectedIndices);
     if (selectedResults.length === 0) return;
 
     if (selectedResults.length === 1) {
@@ -223,9 +222,8 @@
 
       // Add files to zip
       for (const result of selectedResults) {
-        const blob = await fetch(result.url).then((r) => r.blob());
         const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
-        zip.file(filename, blob);
+        zip.file(filename, result.blob);
       }
 
       // Generate and save zip
@@ -239,23 +237,16 @@
 
       a.download = `ultrahdr-batch-${timestamp}.zip`;
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(a.href), 0);
     }
   }
 
   async function shareSelected() {
-    const selectedResults = results.filter((_, i) => selectedIndices.has(i));
+    const selectedResults = getSelectedResults(results, selectedIndices);
     if (selectedResults.length === 0) return;
 
     try {
-      const filesToShare = await Promise.all(
-        selectedResults.map(async (res) => {
-          const blob = await fetch(res.url).then((r) => r.blob());
-          // Use original name but ensure .jpg extension
-          const name = res.originalName.replace(/\.[^/.]+$/, "") + ".jpg";
-          return new File([blob], name, { type: "image/jpeg" });
-        }),
-      );
+      const filesToShare = await buildShareFiles(results, selectedIndices);
 
       if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
         await navigator.share({
@@ -263,33 +254,94 @@
           title: "UltraHDR Images",
           text: "Processed with UltraHDR Converter",
         });
-      } else {
-        alert("Your browser does not support sharing these files.");
+        return;
       }
+
+      if (navigator.canShare && selectedResults.length > 1) {
+        const zip = new JSZip();
+        for (const result of selectedResults) {
+          const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
+          zip.file(filename, result.blob);
+        }
+
+        const now = new Date();
+        const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const zipFile = new File([zipBlob], `ultrahdr-batch-${timestamp}.zip`, {
+          type: "application/zip",
+        });
+
+        if (navigator.canShare({ files: [zipFile] })) {
+          await navigator.share({
+            files: [zipFile],
+            title: "UltraHDR Images",
+            text: "Processed with UltraHDR Converter",
+          });
+          return;
+        }
+      }
+
+      await downloadSelected();
+      setNotice("Direct sharing is unavailable. Download started instead.");
     } catch (e) {
       console.error("Error sharing:", e);
-      // Ignore AbortError (user cancelled)
-      if (e.name !== "AbortError") {
-        alert("Share failed: " + e.message);
+      if (e.name === "AbortError") {
+        return;
       }
+      await downloadSelected();
+      setNotice(`Share failed. Download started instead (${e.message}).`);
     }
   }
 
-  function reset() {
-    files = [];
+  function clearResultsState() {
+    releaseResultUrls(results);
     results = [];
+    selectedIndices = new Set();
+    latestPipelineEvent = null;
+  }
+
+  function reset() {
+    processingRunId += 1;
+    abortActiveProcessing();
+    clearResultsState();
+    files = [];
     rotation = 0;
     maxContentBoost = 2.3;
     shadowCutoff = 0.05;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
-    selectedIndices = new Set();
-    latestPipelineEvent = null;
+    notice = null;
     dispatch("reset");
   }
 
-  import { createEventDispatcher } from "svelte";
+  // Handle removing a file
+  function removeImage(index) {
+    const [removed] = results.filter((_, i) => i === index);
+    if (removed?.url) {
+      URL.revokeObjectURL(removed.url);
+    }
+
+    // Remove from files and results
+    files = files.filter((_, i) => i !== index);
+    results = results.filter((_, i) => i !== index);
+
+    // Re-calculate indices in results
+    results = results.map((r, i) => ({ ...r, index: i }));
+
+    // Update selection
+    const newSelection = new Set();
+    selectedIndices.forEach((i) => {
+      if (i < index) newSelection.add(i);
+      else if (i > index) newSelection.add(i - 1);
+    });
+    selectedIndices = newSelection;
+
+    if (files.length === 0) {
+      reset();
+    }
+  }
+
   const dispatch = createEventDispatcher();
 </script>
 
@@ -457,6 +509,10 @@
         Start Over
       </button>
     </div>
+
+    {#if notice}
+      <p class="help-text notice" data-testid="notice-message">{notice}</p>
+    {/if}
 
     {#if latestPipelineEvent}
       <div
