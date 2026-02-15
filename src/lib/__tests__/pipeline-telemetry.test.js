@@ -79,4 +79,25 @@ describe('pipeline-telemetry', () => {
 
     window.removeEventListener(PIPELINE_PROGRESS_EVENT, listener);
   });
+
+  it('emits granular stage progress events with normalized percentage', () => {
+    const onProgress = vi.fn();
+    const telemetry = createPipelineTelemetry({ onProgress });
+
+    telemetry.emitStageProgress('generate-gain-map', 42.5, { note: 'Encoding gain map' });
+    telemetry.emitStageProgress('generate-gain-map', 220);
+
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'stage-progress',
+      stage: 'generate-gain-map',
+      stageProgress: 42.5,
+      note: 'Encoding gain map'
+    }));
+
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'stage-progress',
+      stage: 'generate-gain-map',
+      stageProgress: 100
+    }));
+  });
 });

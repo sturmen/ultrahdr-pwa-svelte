@@ -37,6 +37,14 @@ function normalizeError(error) {
     return { message: String(error) };
 }
 
+function clampPercentage(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return 0;
+    }
+    return Math.max(0, Math.min(100, numeric));
+}
+
 function publishProgress(detail) {
     const target = getEventTarget();
     if (!target) {
@@ -92,6 +100,14 @@ export function createPipelineTelemetry(context = {}) {
         return detail;
     }
 
+    function emitStageProgress(stage, stageProgress, payload = {}) {
+        return emit('stage-progress', {
+            stage,
+            stageProgress: clampPercentage(stageProgress),
+            ...payload
+        });
+    }
+
     async function runStage(stage, fn, payload = {}) {
         const stageStartMs = getNowMs();
         emit('stage-start', { stage, ...payload });
@@ -132,6 +148,7 @@ export function createPipelineTelemetry(context = {}) {
     return {
         pipelineId,
         emit,
+        emitStageProgress,
         runStage,
         complete,
         fail

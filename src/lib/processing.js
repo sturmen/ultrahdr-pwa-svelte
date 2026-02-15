@@ -304,7 +304,12 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         // Generate gain map data
         const { gainMapImageData, metadata } = await telemetry.runStage('generate-gain-map', async () =>
-            generateGainMapData(gainMapSourceImageData, mergedOptions)
+            generateGainMapData(gainMapSourceImageData, {
+                ...mergedOptions,
+                onStageProgress: (stageProgress, note) => {
+                    telemetry.emitStageProgress('generate-gain-map', stageProgress, { note });
+                }
+            })
         );
         console.log('[Process] GainMap generated manually');
         throwIfAborted(mergedOptions.abortSignal);
@@ -715,6 +720,7 @@ function acesInverse(y, maxIter = 8) {
  * @param {number} [options.shadowCutoff=0.05] - Linear luminance below which no boost is applied
  * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation
  * @param {number} [options.localAdaptationRadius] - Guided filter radius (auto if not set)
+ * @param {(progress: number, note?: string) => void} [options.onStageProgress] - Optional granular progress callback.
  * @returns {{gainMapImageData: ImageData, metadata: Object}}
  */
 export function generateGainMapData(imageData, options) {
@@ -731,6 +737,22 @@ export function generateGainMapData(imageData, options) {
     const localAdaptStrength = options.localAdaptationStrength !== undefined ? options.localAdaptationStrength : 0.5;
     const localRadius = options.localAdaptationRadius || Math.max(4, Math.min(64, Math.round(Math.max(width, height) / 32)));
     const guidedEps = 0.0001; // ε = 0.01² for luminance in [0,1]
+    const onStageProgress = typeof options?.onStageProgress === 'function'
+        ? options.onStageProgress
+        : null;
+    let lastReportedProgress = -1;
+
+    function reportProgress(progress, note) {
+        if (!onStageProgress) {
+            return;
+        }
+        const safeProgress = Math.max(0, Math.min(100, Number(progress) || 0));
+        if (safeProgress < lastReportedProgress) {
+            return;
+        }
+        lastReportedProgress = safeProgress;
+        onStageProgress(safeProgress, note);
+    }
 
     const log2MaxBoost = Math.log2(maxContentBoost);
 
@@ -746,6 +768,9 @@ export function generateGainMapData(imageData, options) {
     const linG = new Float32Array(pixelCount);
     const linB = new Float32Array(pixelCount);
     const luminance = new Float32Array(pixelCount);
+    const reportInterval = Math.max(2048, Math.floor(pixelCount / 24));
+
+    reportProgress(0, 'Preparing source pixels');
 
     for (let i = 0; i < pixelCount; i++) {
         if (i % 4096 === 0) {
@@ -759,11 +784,18 @@ export function generateGainMapData(imageData, options) {
         linG[i] = g;
         linB[i] = b;
         luminance[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+        if (i % reportInterval === 0 || i === pixelCount - 1) {
+            const stageProgress = (i / Math.max(1, pixelCount - 1)) * 40;
+            reportProgress(stageProgress, 'Analyzing luminance');
+        }
     }
 
     // ─── Stage 2: Local Adaptation via Guided Filter ───
 
+    reportProgress(45, 'Computing local adaptation');
     const localLum = guidedFilter(luminance, width, height, localRadius, guidedEps);
+    reportProgress(60, 'Building adaptive gain map');
 
     // Compute global average luminance (log-average for perceptual accuracy)
     let logSum = 0;
@@ -859,7 +891,14 @@ export function generateGainMapData(imageData, options) {
         gainMapData[idx + 1] = Math.round(gEncoded * 255);
         gainMapData[idx + 2] = Math.round(bEncoded * 255);
         gainMapData[idx + 3] = 255;
+
+        if (i % reportInterval === 0 || i === pixelCount - 1) {
+            const stageProgress = 60 + (i / Math.max(1, pixelCount - 1)) * 40;
+            reportProgress(stageProgress, 'Encoding gain map');
+        }
     }
+
+    reportProgress(100, 'Gain map ready');
 
     const gainMapImageData = new ImageData(gainMapData, width, height);
 

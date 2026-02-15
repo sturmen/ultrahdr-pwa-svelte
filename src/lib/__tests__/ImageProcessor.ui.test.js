@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import ImageProcessor from '../ImageProcessor.svelte';
+import { processImage } from '../processing';
 
 vi.mock('../processing', () => ({
   processImage: vi.fn(async (_file, options = {}) => {
@@ -86,5 +87,50 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByTestId('desktop-two-pane')).toBeInTheDocument();
     expect(screen.queryByTestId('mobile-tab-bar')).not.toBeInTheDocument();
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
+  });
+
+  it('renders granular progress details from stage-progress telemetry updates', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const baseEvent = {
+        elapsedMs: 12,
+        stageDurationsMs: {},
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        timestamp: Date.now(),
+      };
+
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'pipeline-start',
+        stage: 'pipeline',
+      });
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-start',
+        stage: 'generate-gain-map',
+      });
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'generate-gain-map',
+        stageProgress: 42,
+        note: 'Encoding gain map',
+      });
+
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    await fireEvent.click(screen.getByTestId('tab-settings'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-progress')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Encoding gain map/i)).toBeInTheDocument();
+    expect(screen.getByText(/photo-0.jpg/i)).toBeInTheDocument();
+    expect(screen.getByText(/File 1 of 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Stage 42%/i)).toBeInTheDocument();
   });
 });

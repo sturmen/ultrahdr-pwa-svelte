@@ -30,12 +30,68 @@
   let activeTab = "convert";
   let isAdvancedOpen = false;
   let isDesktopLayout = false;
+  let pipelineOverallProgress = 0;
+  let pipelineCurrentFileProgress = 0;
+  let pipelineStageProgress = 0;
+  let pipelineStatusLabel = "Waiting to start";
+  let pipelineStatusNote = "";
+  let pipelineFileLabel = "";
+  let pipelineFileName = "";
+  let activeProgressFileIndex = null;
 
   const capabilities = getCapabilities();
   const processingProfile = getProcessingProfile(capabilities);
   const safeModeEnabled = processingProfile.safeModeDefault;
 
   const dispatch = createEventDispatcher();
+  const PROGRESS_STAGE_ORDER = [
+    "wasm-load",
+    "preprocess-file",
+    "read-source-buffer",
+    "detect-ultrahdr",
+    "read-input-data-url",
+    "extract-exif",
+    "decode-image-data",
+    "safe-mode-resize-sdr",
+    "safe-mode-resize-gain-map",
+    "generate-gain-map",
+    "compress-components",
+    "encode-init",
+    "rotate-sdr-image",
+    "rotate-gain-map-image",
+    "encode-sdr-to-jpeg",
+    "encode-gain-map-to-jpeg",
+    "encode-set-base-image",
+    "encode-set-gain-map-image",
+    "encode-ultrahdr",
+    "finalize-preserved",
+    "rotate-preserved-ultrahdr",
+    "finalize-output",
+  ];
+  const PROGRESS_STAGE_LABELS = {
+    "wasm-load": "Loading encoder",
+    "preprocess-file": "Preparing input",
+    "read-source-buffer": "Reading source data",
+    "detect-ultrahdr": "Checking for existing gain map",
+    "read-input-data-url": "Reading image",
+    "extract-exif": "Extracting metadata",
+    "decode-image-data": "Decoding pixels",
+    "safe-mode-resize-sdr": "Resizing SDR image",
+    "safe-mode-resize-gain-map": "Resizing gain map source",
+    "generate-gain-map": "Generating gain map",
+    "compress-components": "Compressing components",
+    "encode-init": "Initializing encoder",
+    "rotate-sdr-image": "Rotating SDR image",
+    "rotate-gain-map-image": "Rotating gain map image",
+    "encode-sdr-to-jpeg": "Encoding SDR JPEG",
+    "encode-gain-map-to-jpeg": "Encoding gain map JPEG",
+    "encode-set-base-image": "Preparing base image",
+    "encode-set-gain-map-image": "Preparing gain map image",
+    "encode-ultrahdr": "Encoding UltraHDR output",
+    "finalize-preserved": "Finalizing preserved output",
+    "rotate-preserved-ultrahdr": "Rotating preserved UltraHDR",
+    "finalize-output": "Finalizing output",
+  };
 
   $: showConvertPanel = isDesktopLayout || activeTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeTab === "results";
@@ -53,6 +109,122 @@
     if (entries.length === 0) return null;
     const [name, duration] = entries[0];
     return `${name} (${formatMs(duration)})`;
+  }
+
+  function clampPercent(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(100, numeric));
+  }
+
+  function getStageLabel(stage, phase) {
+    if (phase === "pipeline-complete") return "Complete";
+    if (phase === "pipeline-error") return "Processing failed";
+    if (phase === "pipeline-start") return "Starting pipeline";
+    if (!stage) return "Processing";
+    return PROGRESS_STAGE_LABELS[stage] || stage;
+  }
+
+  function estimatePipelineProgress(event, previousProgress = 0) {
+    if (!event) {
+      return previousProgress;
+    }
+
+    if (event.phase === "pipeline-start") {
+      return 0;
+    }
+
+    if (event.phase === "pipeline-complete") {
+      return 100;
+    }
+
+    const stage = event.stage;
+    const stageIndex = PROGRESS_STAGE_ORDER.indexOf(stage);
+    if (stageIndex < 0) {
+      return previousProgress;
+    }
+
+    const segmentSize = 100 / PROGRESS_STAGE_ORDER.length;
+    const segmentStart = stageIndex * segmentSize;
+    const segmentEnd = segmentStart + segmentSize;
+
+    let stageProgress = previousProgress;
+    if (event.phase === "stage-progress") {
+      stageProgress =
+        segmentStart + ((segmentEnd - segmentStart) * clampPercent(event.stageProgress)) / 100;
+    } else if (event.phase === "stage-complete") {
+      stageProgress = segmentEnd;
+    } else if (event.phase === "stage-start") {
+      stageProgress = segmentStart + segmentSize * 0.08;
+    } else if (event.phase === "stage-error" || event.phase === "pipeline-error") {
+      stageProgress = Math.max(previousProgress, segmentStart);
+    }
+
+    return Math.max(previousProgress, Math.min(100, stageProgress));
+  }
+
+  function toBatchProgress(perFileProgress, fileIndex, totalFiles) {
+    const safeProgress = clampPercent(perFileProgress);
+    const safeIndex = Number(fileIndex);
+    const safeTotal = Number(totalFiles);
+    if (!Number.isFinite(safeIndex) || !Number.isFinite(safeTotal) || safeTotal <= 0) {
+      return safeProgress;
+    }
+    const clampedIndex = Math.max(0, Math.min(safeTotal - 1, safeIndex));
+    return ((clampedIndex + safeProgress / 100) / safeTotal) * 100;
+  }
+
+  function resetProgressUi() {
+    pipelineOverallProgress = 0;
+    pipelineCurrentFileProgress = 0;
+    pipelineStageProgress = 0;
+    pipelineStatusLabel = "Waiting to start";
+    pipelineStatusNote = "";
+    pipelineFileLabel = "";
+    pipelineFileName = "";
+    activeProgressFileIndex = null;
+  }
+
+  function updateProgressUi(event) {
+    latestPipelineEvent = event;
+
+    const fileIndex = Number(event?.fileIndex);
+    const totalFiles = Number(event?.totalFiles);
+    if (Number.isFinite(fileIndex) && fileIndex !== activeProgressFileIndex) {
+      activeProgressFileIndex = fileIndex;
+      pipelineCurrentFileProgress = 0;
+    }
+
+    pipelineCurrentFileProgress = estimatePipelineProgress(event, pipelineCurrentFileProgress);
+    pipelineOverallProgress = toBatchProgress(pipelineCurrentFileProgress, fileIndex, totalFiles);
+
+    if (event?.phase === "stage-progress") {
+      pipelineStageProgress = clampPercent(event.stageProgress);
+    } else if (event?.phase === "stage-complete" || event?.phase === "pipeline-complete") {
+      pipelineStageProgress = 100;
+    } else if (event?.phase === "stage-start") {
+      pipelineStageProgress = 0;
+    }
+
+    pipelineStatusLabel = getStageLabel(event?.stage, event?.phase);
+    pipelineStatusNote =
+      event?.note ||
+      (event?.phase === "stage-progress"
+        ? `${Math.round(pipelineStageProgress)}% of this stage complete`
+        : "");
+    const eventFileName = String(event?.fileName || "").trim();
+    if (eventFileName) {
+      pipelineFileName = eventFileName;
+    } else if (Number.isFinite(fileIndex) && files[fileIndex]?.name) {
+      pipelineFileName = files[fileIndex].name;
+    }
+
+    pipelineFileLabel =
+      Number.isFinite(fileIndex) && Number.isFinite(totalFiles) && totalFiles > 0
+        ? `File ${fileIndex + 1} of ${totalFiles}`
+        : "";
   }
 
   function setNotice(message) {
@@ -81,6 +253,7 @@
     if (!subset || subset.length === 0) {
       processing = false;
       latestPipelineEvent = null;
+      resetProgressUi();
       return;
     }
 
@@ -92,6 +265,7 @@
     processing = true;
     error = null;
     latestPipelineEvent = null;
+    resetProgressUi();
 
     try {
       for (let i = 0; i < subset.length; i++) {
@@ -112,7 +286,7 @@
           fileIndex: i,
           totalFiles: subset.length,
           onProgress: (event) => {
-            latestPipelineEvent = event;
+            updateProgressUi(event);
           },
         });
 
@@ -330,6 +504,7 @@
     results = [];
     selectedIndices = new Set();
     latestPipelineEvent = null;
+    resetProgressUi();
   }
 
   function reset() {
@@ -518,6 +693,63 @@
             {/if}
           </div>
 
+          {#if processing || latestPipelineEvent}
+            <div
+              class="pipeline-status"
+              data-testid="pipeline-status"
+              data-phase={latestPipelineEvent?.phase || ""}
+              data-stage={latestPipelineEvent?.stage || ""}
+              data-elapsed-ms={Math.round(latestPipelineEvent?.elapsedMs || 0)}
+            >
+              <div class="pipeline-header-row">
+                <p class="pipeline-title">{pipelineStatusLabel}</p>
+                <p class="pipeline-percent">{Math.round(pipelineOverallProgress)}%</p>
+              </div>
+
+              {#if pipelineFileLabel}
+                <p class="help-text pipeline-file-label">{pipelineFileLabel}</p>
+              {/if}
+
+              {#if pipelineFileName}
+                <p class="help-text pipeline-file-name" data-testid="pipeline-file-name">
+                  Processing: {pipelineFileName}
+                </p>
+              {/if}
+
+              <div
+                class="progress-track"
+                data-testid="pipeline-progress"
+                role="progressbar"
+                aria-label="Encoding progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.round(pipelineOverallProgress)}
+              >
+                <span
+                  class="progress-fill"
+                  style={`width: ${Math.round(pipelineOverallProgress)}%`}
+                ></span>
+              </div>
+
+              <div class="pipeline-meta-row">
+                <p class="help-text">
+                  Stage {Math.round(pipelineStageProgress)}% • {latestPipelineEvent?.stage || "pipeline"}
+                </p>
+                <p class="help-text">{formatMs(latestPipelineEvent?.elapsedMs)}</p>
+              </div>
+
+              {#if pipelineStatusNote}
+                <p class="help-text">{pipelineStatusNote}</p>
+              {/if}
+
+              {#if latestPipelineEvent?.phase === "pipeline-complete"}
+                <p class="help-text">
+                  Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
+                </p>
+              {/if}
+            </div>
+          {/if}
+
           {#if isDesktopLayout || isAdvancedOpen}
             <div data-testid="advanced-settings">
               <div class="control-group">
@@ -621,24 +853,6 @@
                 <span class="switch-label">Strip EXIF data</span>
               </div>
 
-              {#if latestPipelineEvent}
-                <div
-                  class="pipeline-status"
-                  data-testid="pipeline-status"
-                  data-phase={latestPipelineEvent.phase}
-                  data-stage={latestPipelineEvent.stage || ""}
-                  data-elapsed-ms={Math.round(latestPipelineEvent.elapsedMs || 0)}
-                >
-                  <p class="help-text">
-                    {latestPipelineEvent.phase} • {latestPipelineEvent.stage || "pipeline"} • {formatMs(latestPipelineEvent.elapsedMs)}
-                  </p>
-                  {#if latestPipelineEvent.phase === "pipeline-complete"}
-                    <p class="help-text">
-                      Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
-                    </p>
-                  {/if}
-                </div>
-              {/if}
             </div>
           {:else}
             <p class="help-text collapsed-note">
@@ -663,9 +877,9 @@
             <div class="loading-overlay">
               <div class="spinner"></div>
               <p>
-                Processing...
+                Processing... {Math.round(pipelineOverallProgress)}%
                 {#if latestPipelineEvent}
-                  ({latestPipelineEvent.stage || "pipeline"}, {formatMs(latestPipelineEvent.elapsedMs)})
+                  ({pipelineStatusLabel}, {Math.round(pipelineStageProgress)}% stage, {formatMs(latestPipelineEvent.elapsedMs)})
                 {/if}
               </p>
             </div>
@@ -1089,14 +1303,70 @@
 
   .pipeline-status {
     margin-top: 0.35rem;
-    padding: 0.7rem;
+    padding: 0.75rem;
     border: 1px solid var(--border-subtle);
     border-radius: 10px;
     background: var(--surface-muted);
+    display: grid;
+    gap: 0.45rem;
   }
 
   .pipeline-status .help-text {
-    margin: 0.2rem 0;
+    margin: 0;
+  }
+
+  .pipeline-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+
+  .pipeline-title {
+    margin: 0;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-color);
+  }
+
+  .pipeline-percent {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--primary-color);
+  }
+
+  .pipeline-file-label {
+    color: var(--text-muted);
+  }
+
+  .pipeline-file-name {
+    color: var(--text-color);
+    font-weight: 600;
+    word-break: break-word;
+  }
+
+  .progress-track {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--primary-color), color-mix(in srgb, var(--primary-color) 70%, #ffffff));
+    transition: width 0.2s ease;
+  }
+
+  .pipeline-meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.7rem;
+    flex-wrap: wrap;
   }
 
   button.primary {
@@ -1395,7 +1665,8 @@
     .result-card,
     .tab-btn,
     .icon-btn,
-    .spinner {
+    .spinner,
+    .progress-fill {
       transition: none;
       animation: none;
     }
