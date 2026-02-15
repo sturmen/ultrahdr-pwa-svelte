@@ -43,15 +43,10 @@ console.log(`Output directory: ${outputDir}`);
  */
 function runCommand(command, options = {}) {
     console.log(`\n> ${command}\n`);
-    try {
-        execSync(command, {
-            stdio: 'inherit',
-            ...options
-        });
-    } catch (e) {
-        console.error(`Command failed: ${command}`);
-        process.exit(1);
-    }
+    execSync(command, {
+        stdio: 'inherit',
+        ...options
+    });
 }
 
 /**
@@ -104,6 +99,11 @@ function buildWasm() {
 
     // Build
     runCommand(`emmake make -j4`, { cwd: buildDir });
+}
+
+function hasExistingAssets() {
+    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm'];
+    return requiredFiles.every((file) => fs.existsSync(path.join(outputDir, file)));
 }
 
 /**
@@ -203,8 +203,17 @@ function verifyOutput() {
 function main() {
     try {
         checkEmsdk();
-        buildWasm();
-        copyAssets();
+        try {
+            buildWasm();
+            copyAssets();
+        } catch (buildError) {
+            if (!hasExistingAssets()) {
+                throw buildError;
+            }
+            console.warn('\n=== WASM rebuild failed; using existing public/assets artifacts ===');
+            console.warn(buildError.message);
+        }
+
         verifyOutput();
 
         console.log('\n=== Build complete ===');

@@ -16,11 +16,27 @@
   let error = null;
   let debounceTimer;
   let selectedIndices = new Set();
+  let latestPipelineEvent = null;
+
+  function formatMs(ms) {
+    const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+    if (safeMs < 1000) return `${Math.round(safeMs)} ms`;
+    return `${(safeMs / 1000).toFixed(2)} s`;
+  }
+
+  function getSlowestStage(stageDurationsMs) {
+    if (!stageDurationsMs) return null;
+    const entries = Object.entries(stageDurationsMs).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) return null;
+    const [name, duration] = entries[0];
+    return `${name} (${formatMs(duration)})`;
+  }
 
   // Process a specific list of files and append results
   async function processSubset(subset, startIndex) {
     processing = true;
     error = null;
+    latestPipelineEvent = null;
 
     try {
       for (let i = 0; i < subset.length; i++) {
@@ -34,6 +50,11 @@
           discardGainMap,
           stripExif,
           shadowCutoff,
+          fileIndex: i,
+          totalFiles: subset.length,
+          onProgress: (event) => {
+            latestPipelineEvent = event;
+          },
         });
         const url = URL.createObjectURL(blob);
 
@@ -264,6 +285,7 @@
     discardGainMap = false;
     stripExif = false;
     selectedIndices = new Set();
+    latestPipelineEvent = null;
     dispatch("reset");
   }
 
@@ -431,6 +453,25 @@
         Start Over
       </button>
     </div>
+
+    {#if latestPipelineEvent}
+      <div
+        class="pipeline-status"
+        data-testid="pipeline-status"
+        data-phase={latestPipelineEvent.phase}
+        data-stage={latestPipelineEvent.stage || ""}
+        data-elapsed-ms={Math.round(latestPipelineEvent.elapsedMs || 0)}
+      >
+        <p class="help-text">
+          {latestPipelineEvent.phase} • {latestPipelineEvent.stage || "pipeline"} • {formatMs(latestPipelineEvent.elapsedMs)}
+        </p>
+        {#if latestPipelineEvent.phase === "pipeline-complete"}
+          <p class="help-text">
+            Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
+          </p>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   {#if error}
@@ -444,7 +485,12 @@
     {#if processing && results.length === 0}
       <div class="loading-overlay">
         <div class="spinner"></div>
-        <p>Processing...</p>
+        <p>
+          Processing...
+          {#if latestPipelineEvent}
+            ({latestPipelineEvent.stage || "pipeline"}, {formatMs(latestPipelineEvent.elapsedMs)})
+          {/if}
+        </p>
       </div>
     {/if}
 
@@ -731,6 +777,18 @@
     gap: 1rem;
     justify-content: center;
     margin-top: 2rem;
+  }
+
+  .pipeline-status {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--text-secondary);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .pipeline-status .help-text {
+    margin: 0.2rem 0;
   }
 
   button.primary {

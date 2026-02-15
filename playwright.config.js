@@ -2,10 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
     testDir: './tests/e2e',
-    fullyParallel: true,
+    fullyParallel: false,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
-    workers: process.env.CI ? 1 : undefined,
+    workers: process.env.CI ? 1 : 2,
     reporter: 'html',
     timeout: 60000,
 
@@ -30,7 +30,7 @@ export default defineConfig({
     ],
 
     webServer: {
-        command: 'npm run build && npm run preview',
+        command: 'npm run build:wasm && npm run build && npm run preview',
         url: 'http://localhost:4173/ultrahdr-pwa-svelte/',
         reuseExistingServer: !process.env.CI,
         timeout: 120 * 1000,

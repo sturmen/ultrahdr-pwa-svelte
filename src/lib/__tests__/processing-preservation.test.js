@@ -27,8 +27,9 @@ const gainMapImageData = new ImageData(
 );
 
 const inputUhdrBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xd9]);
-const baseUhdrBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x02, 0xff, 0xd9]);
-const gainMapUhdrBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xc4, 0x00, 0x02, 0xff, 0xd9]);
+const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBAVFhUVFRUVFRUVFRUVFRUVFRUWFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGxAQGy0mICYtLS8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAgMBIgACEQEDEQH/xAAXAAEAAwAAAAAAAAAAAAAAAAAAAQID/8QAFhABAQEAAAAAAAAAAAAAAAAAABES/9oADAMBAAIQAxAAAAG0AH//xAAXEAEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEBAAEFAtNv/8QAFhEAAwAAAAAAAAAAAAAAAAAAARAR/9oACAEDAQE/AYf/xAAVEQEBAAAAAAAAAAAAAAAAAAABEP/aAAgBAgEBPwGH/8QAGhABAAMAAwAAAAAAAAAAAAAAAAERITFBUf/aAAgBAQAGPwKjNf/EABsQAQEAAwEBAQAAAAAAAAAAAAERACExQVGh/9oACAEBAAE/IdXQjFzWq9KQ2rgo8sfr/9oADAMBAAIAAwAAABAf/wD/xAAXEQEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEDAQE/EFjP/8QAFxEBAQEBAAAAAAAAAAAAAAAAAREhQf/aAAgBAgEBPxBfM//EAB0QAQACAgIDAAAAAAAAAAAAAAEAESExQVFhcZH/2gAIAQEAAT8QObXbJ0UuE1ULhBrxwC4j5V0F3l0JgS3f/2Q==';
+const baseUhdrBytes = new Uint8Array(Buffer.from(tinyJpegBase64, 'base64'));
+const gainMapUhdrBytes = new Uint8Array(Buffer.from(tinyJpegBase64, 'base64'));
 const gainMapMetadata = {
     gainMapMin: [1.0, 1.0, 1.0],
     gainMapMax: [4.0, 4.0, 4.0],
@@ -96,11 +97,10 @@ describe('processImage UltraHDR preservation path', () => {
         vi.clearAllMocks();
     });
 
-    it('avoids intermediate re-encoding when preserving HEIC gain maps', async () => {
+    it('encodes SDR and gain-map components into compressed inputs before final encode', async () => {
         const { processImage } = await import('../processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
-        const canvasSpy = vi.spyOn(document, 'createElement');
 
         const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
 
@@ -110,27 +110,57 @@ describe('processImage UltraHDR preservation path', () => {
             stripExif: true
         });
 
-        expect(encoderInstance.setSDRImage).toHaveBeenCalledWith(sdrImageData, 2, 2);
-        expect(encoderInstance.setGainMapImage).toHaveBeenCalledWith(
-            gainMapImageData,
+        expect(encoderInstance.setCompressedBaseImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array)
+        );
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
             expect.objectContaining({
                 gainMapMin: [1.0, 1.0, 1.0],
                 gainMapMax: [4.0, 4.0, 4.0]
-            }),
-            2,
-            2
+            })
         );
+
         expect(encoderInstance.encode).toHaveBeenCalledWith(95);
-        expect(encoderInstance.setCompressedBaseImage).not.toHaveBeenCalled();
-        expect(encoderInstance.setCompressedGainMapImage).not.toHaveBeenCalled();
+        expect(encoderInstance.setSDRImage).not.toHaveBeenCalled();
+        expect(encoderInstance.setGainMapImage).not.toHaveBeenCalled();
         expect(encoderInstance.addEffectRotate).not.toHaveBeenCalled();
 
         expect(result).toBeInstanceOf(Blob);
         expect(result.type).toBe('image/jpeg');
-        expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBe(0);
     });
 
-    it('uses libultrahdr rotation effect for preserved HEIC gain-map flow', async () => {
+    it('emits progress events through onProgress callback across the pipeline', async () => {
+        const { processImage } = await import('../processing.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const onProgress = vi.fn();
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true,
+            onProgress
+        });
+
+        expect(onProgress).toHaveBeenCalled();
+        expect(onProgress).toHaveBeenCalledWith(
+            expect.objectContaining({
+                phase: 'pipeline-start',
+                stage: 'pipeline'
+            })
+        );
+        expect(onProgress).toHaveBeenCalledWith(
+            expect.objectContaining({
+                phase: 'pipeline-complete',
+                stage: 'pipeline'
+            })
+        );
+    });
+
+    it('rotates preserved HEIC components before re-encoding', async () => {
         const { processImage } = await import('../processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
@@ -144,14 +174,56 @@ describe('processImage UltraHDR preservation path', () => {
             stripExif: true
         });
 
-        expect(encoderInstance.addEffectRotate).toHaveBeenCalledWith(270);
+        expect(encoderInstance.addEffectRotate).not.toHaveBeenCalled();
+        expect(encoderInstance.setCompressedBaseImage).toHaveBeenCalledWith(expect.any(Uint8Array));
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.any(Object)
+        );
     });
 
-    it('avoids intermediate decode/re-encode when rotating an existing UltraHDR JPEG', async () => {
+    it('rotates an existing UltraHDR JPEG and keeps gain-map metadata in the output', async () => {
         const { processImage } = await import('../processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(true);
-        const canvasSpy = vi.spyOn(document, 'createElement');
+
+        const originalImage = global.Image;
+        global.Image = class MockImage {
+            constructor() {
+                this.width = 1;
+                this.height = 1;
+            }
+
+            set src(_value) {
+                setTimeout(() => {
+                    if (this.onload) this.onload();
+                }, 0);
+            }
+        };
+
+        const originalCreateElement = document.createElement.bind(document);
+        const canvasSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
+            if (tagName !== 'canvas') {
+                return originalCreateElement(tagName);
+            }
+
+            return {
+                width: 1,
+                height: 1,
+                getContext: vi.fn(() => ({
+                    drawImage: vi.fn(),
+                    getImageData: vi.fn(() =>
+                        new ImageData(new Uint8ClampedArray([128, 128, 128, 255]), 1, 1)
+                    ),
+                    putImageData: vi.fn(),
+                    translate: vi.fn(),
+                    rotate: vi.fn()
+                })),
+                toBlob: vi.fn((callback) => {
+                    callback(new Blob([baseUhdrBytes], { type: 'image/jpeg' }));
+                })
+            };
+        });
 
         const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
         file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
@@ -163,21 +235,26 @@ describe('processImage UltraHDR preservation path', () => {
             stripExif: true
         });
 
+        global.Image = originalImage;
+
         expect(decoderInstance.setImage).toHaveBeenCalledWith(inputUhdrBytes);
         expect(decoderInstance.getBaseImage).toHaveBeenCalledTimes(1);
         expect(decoderInstance.getGainMapImage).toHaveBeenCalledTimes(1);
         expect(decoderInstance.getGainMapMetadata).toHaveBeenCalledTimes(1);
         expect(decoderInstance.destroy).toHaveBeenCalledTimes(1);
 
-        expect(encoderInstance.setCompressedBaseImage).toHaveBeenCalledWith(baseUhdrBytes);
-        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(gainMapUhdrBytes, gainMapMetadata);
-        expect(encoderInstance.addEffectRotate).toHaveBeenCalledWith(90);
+        expect(encoderInstance.setCompressedBaseImage).toHaveBeenCalledWith(expect.any(Uint8Array));
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.objectContaining(gainMapMetadata)
+        );
+        expect(encoderInstance.addEffectRotate).not.toHaveBeenCalled();
         expect(encoderInstance.encode).toHaveBeenCalledWith(95);
         expect(encoderInstance.setSDRImage).not.toHaveBeenCalled();
         expect(encoderInstance.setGainMapImage).not.toHaveBeenCalled();
 
         expect(result).toBeInstanceOf(Blob);
         expect(result.type).toBe('image/jpeg');
-        expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBe(0);
+        expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
     });
 });

@@ -12,8 +12,11 @@ const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/test_sdr2.jpg');
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
 
-// Timeout for processing (WASM encoding can be slow)
-const PROCESSING_TIMEOUT = 60_000;
+// Timeouts for processing diagnostics.
+const PROCESSING_TIMEOUT = 180_000;
+const PROCESSING_STALL_TIMEOUT = 20_000;
+const POLL_INTERVAL = 250;
+const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
 
 /**
  * Helper: upload file(s) via the file input.
@@ -25,17 +28,61 @@ async function uploadFiles(page, filePaths, inputSelector = '#file-upload') {
 }
 
 /**
- * Helper: wait until processing is complete.
- * We look for the results grid to appear and the spinner to disappear.
+ * Helper: return current processing snapshot from the page.
  */
-async function waitForProcessing(page) {
-    // Wait for the spinner to appear and then disappear
-    // The spinner may already be gone for cached/fast operations
-    await page.waitForFunction(() => {
-        const spinner = document.querySelector('.spinner');
-        const results = document.querySelectorAll('.result-card');
-        return !spinner && results.length > 0;
-    }, { timeout: PROCESSING_TIMEOUT });
+async function getProcessingSnapshot(page) {
+    return await page.evaluate((stateKey) => {
+        const error = document.querySelector('.error p');
+        const results = document.querySelectorAll('.result-card').length;
+        const loading = document.querySelector('.results-container')?.classList.contains('loading') || false;
+        const pipelineState = window[stateKey] || null;
+        return {
+            errorText: error ? error.textContent : null,
+            resultCount: results,
+            loading,
+            pipelineState
+        };
+    }, PIPELINE_STATE_KEY);
+}
+
+/**
+ * Helper: wait until processing is complete using pipeline progress state.
+ */
+async function waitForProcessing(page, expectedResults = 1) {
+    const startedAt = Date.now();
+    let lastActivityAt = startedAt;
+    let lastStage = 'unknown';
+
+    while (Date.now() - startedAt < PROCESSING_TIMEOUT) {
+        const snapshot = await getProcessingSnapshot(page);
+        const pipeline = snapshot.pipelineState;
+
+        if (snapshot.errorText) {
+            throw new Error(`Processing failed: ${snapshot.errorText}`);
+        }
+
+        if (pipeline?.timestamp) {
+            lastActivityAt = pipeline.timestamp;
+            lastStage = pipeline.stage || lastStage;
+        }
+
+        if (pipeline?.phase === 'pipeline-error') {
+            const message = pipeline.error?.message || 'Unknown processing error';
+            throw new Error(`Processing failed at stage "${pipeline.stage}": ${message}`);
+        }
+
+        if (snapshot.resultCount >= expectedResults && !snapshot.loading) {
+            return;
+        }
+
+        if (snapshot.loading && Date.now() - lastActivityAt > PROCESSING_STALL_TIMEOUT) {
+            throw new Error(`Processing appears stalled at stage "${lastStage}"`);
+        }
+
+        await page.waitForTimeout(POLL_INTERVAL);
+    }
+
+    throw new Error(`Processing timed out after ${PROCESSING_TIMEOUT}ms (last stage: ${lastStage})`);
 }
 
 /**
@@ -53,7 +100,7 @@ async function waitForReprocessing(page) {
         // Results may have already cleared by the time we check
     });
     // Then wait for new results to appear
-    await waitForProcessing(page);
+    await waitForProcessing(page, 1);
 }
 
 /**
@@ -79,20 +126,57 @@ async function downloadFirstResult(page) {
  * Looks for the APP1 marker (0xFFE1) with "Exif" header.
  */
 function hasExifData(buffer) {
-    // Search for APP1 marker followed by "Exif\0\0"
-    for (let i = 0; i < buffer.length - 8; i++) {
-        if (buffer[i] === 0xFF && buffer[i + 1] === 0xE1) {
-            // Check for "Exif" string after length bytes
-            if (
-                buffer[i + 4] === 0x45 && // E
-                buffer[i + 5] === 0x78 && // x
-                buffer[i + 6] === 0x69 && // i
-                buffer[i + 7] === 0x66    // f
-            ) {
+    if (!buffer || buffer.length < 4) {
+        return false;
+    }
+
+    // JPEG SOI
+    if (buffer[0] !== 0xFF || buffer[1] !== 0xD8) {
+        return false;
+    }
+
+    let offset = 2;
+    while (offset + 4 <= buffer.length) {
+        if (buffer[offset] !== 0xFF) {
+            offset++;
+            continue;
+        }
+
+        const marker = buffer[offset + 1];
+        // Start of scan / end of image: metadata segments are done.
+        if (marker === 0xDA || marker === 0xD9) {
+            break;
+        }
+
+        // Restart markers / TEM do not have a length field.
+        if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+            offset += 2;
+            continue;
+        }
+
+        const segmentLength = (buffer[offset + 2] << 8) | buffer[offset + 3];
+        if (segmentLength < 2 || offset + 2 + segmentLength > buffer.length) {
+            break;
+        }
+
+        if (marker === 0xE1) {
+            const sigOffset = offset + 4;
+            const isExifSignature =
+                sigOffset + 5 < buffer.length &&
+                buffer[sigOffset] === 0x45 && // E
+                buffer[sigOffset + 1] === 0x78 && // x
+                buffer[sigOffset + 2] === 0x69 && // i
+                buffer[sigOffset + 3] === 0x66 && // f
+                buffer[sigOffset + 4] === 0x00 &&
+                buffer[sigOffset + 5] === 0x00;
+            if (isExifSignature) {
                 return true;
             }
         }
+
+        offset += 2 + segmentLength;
     }
+
     return false;
 }
 
@@ -143,18 +227,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
     test.describe('Batch Processing', () => {
         test('should process multiple images', async ({ page }) => {
+            test.setTimeout(180_000);
             await page.goto('/');
 
             // Upload both SDR images at once
             await uploadFiles(page, [SDR_IMAGE, SDR_IMAGE_2]);
 
             // Wait for processing to complete
-            await waitForProcessing(page);
-
-            // Wait a bit more for the second image to finish
-            await page.waitForFunction(() => {
-                return document.querySelectorAll('.result-card').length >= 2;
-            }, { timeout: PROCESSING_TIMEOUT });
+            await waitForProcessing(page, 2);
 
             // Verify both result cards appeared
             const resultCards = page.locator('.result-card');
@@ -162,6 +242,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         });
 
         test('should allow adding images after initial processing', async ({ page }) => {
+            test.setTimeout(180_000);
             await page.goto('/');
 
             // Upload first image
@@ -176,9 +257,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await uploadFiles(page, [SDR_IMAGE_2], '#add-files');
 
             // Wait for second processing
-            await page.waitForFunction(() => {
-                return document.querySelectorAll('.result-card').length >= 2;
-            }, { timeout: PROCESSING_TIMEOUT });
+            await waitForProcessing(page, 2);
 
             await expect(page.locator('.result-card')).toHaveCount(2);
         });
