@@ -20,6 +20,9 @@ vi.mock('libheif-js/libheif-wasm/libheif', () => {
     }),
     _malloc: vi.fn().mockReturnValue(0),
     _free: vi.fn(),
+    heif_js_context_get_list_of_top_level_image_IDs: vi.fn().mockReturnValue([1]),
+    heif_js_context_get_image_handle: vi.fn().mockReturnValue({ code: 1, subcode: 0, message: 'mock-error' }),
+    heif_image_handle_release: vi.fn(),
     getValue: vi.fn(),
     UTF8ToString: vi.fn().mockReturnValue('urn:apple:gainmap'),
   };
