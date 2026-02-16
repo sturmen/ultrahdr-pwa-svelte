@@ -30,7 +30,7 @@
   let quality = 0.95;
   let discardGainMap = false;
   let stripExif = false;
-  let reverseToneMapVersion = "v4";
+  let reverseToneMapVersion = "v2";
   let performanceMode = "auto";
   let keepScreenAwake = true;
 
@@ -1023,7 +1023,7 @@
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
-    reverseToneMapVersion = "v4";
+    reverseToneMapVersion = "v2";
     performanceMode = "auto";
     keepScreenAwake = true;
 
