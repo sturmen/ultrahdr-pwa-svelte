@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   clearSharedFiles,
+  clearQueueState,
   consumeSharedFiles,
   loadQueueState,
   storeQueueState,
@@ -58,5 +59,19 @@ describe('share-store', () => {
     const loaded = await loadQueueState();
 
     expect(loaded).toEqual(queueState);
+  });
+
+  it('clears persisted queue state explicitly', async () => {
+    const queueState = {
+      files: ['a.jpg'],
+      createdAt: Date.now(),
+      mode: 'paused'
+    };
+
+    await storeQueueState(queueState);
+    await clearQueueState();
+    const loaded = await loadQueueState();
+
+    expect(loaded).toBeNull();
   });
 });

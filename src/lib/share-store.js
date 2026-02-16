@@ -155,6 +155,21 @@ export async function loadQueueState() {
   });
 }
 
+export async function clearQueueState() {
+  if (!canUseIndexedDb()) {
+    getMemoryStore().queueState = null;
+    return;
+  }
+
+  const db = await openDb();
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction([QUEUE_STATE_STORE], "readwrite");
+    transaction.objectStore(QUEUE_STATE_STORE).delete(QUEUE_STATE_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
 export function __resetShareStoreForTests() {
   delete globalThis[MEMORY_STORE_KEY];
   resetCachedDb();

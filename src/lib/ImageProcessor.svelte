@@ -8,8 +8,20 @@
     getSelectedResults,
     releaseResultUrls,
   } from "./result-management.js";
+  import {
+    clearQueueState,
+    loadQueueState,
+    storeQueueState,
+  } from "./share-store.js";
+  import {
+    QUEUE_ITEM_STATES,
+    WORKFLOW_EVENTS,
+    WORKFLOW_STATES,
+    transitionWorkflow,
+  } from "./workflow-state.js";
 
   export let files = [];
+  export let launchSource = "regular";
 
   let maxContentBoost = 2.3;
   let shadowCutoff = 0.05;
@@ -17,16 +29,34 @@
   let quality = 0.95;
   let discardGainMap = false;
   let stripExif = false;
+  let performanceMode = "auto";
+  let keepScreenAwake = false;
+
   let processing = false;
   let results = [];
+  let queue = [];
+  let nextQueueId = 0;
+  let workflowState = WORKFLOW_STATES.EMPTY;
+  let settingsVersion = 1;
+  let staleCount = 0;
+  let showStalePrompt = false;
+  let queueRestoreNotice = null;
+  let backgroundProcessingNotice = null;
+  let emphasizeShareOut = false;
+
   let error = null;
   let notice = null;
   let noticeTimer = null;
-  let debounceTimer;
   let selectedIndices = new Set();
   let latestPipelineEvent = null;
   let activeAbortController = null;
   let processingRunId = 0;
+  let queueLoopActive = false;
+  let pauseRequested = false;
+  let cancelCurrentRequested = false;
+  let currentQueueId = null;
+  let wakeLockSentinel = null;
+
   let activeTab = "convert";
   let isAdvancedOpen = false;
   let isDesktopLayout = false;
@@ -41,9 +71,8 @@
 
   const capabilities = getCapabilities();
   const processingProfile = getProcessingProfile(capabilities);
-  const safeModeEnabled = processingProfile.safeModeDefault;
-
   const dispatch = createEventDispatcher();
+
   const PROGRESS_STAGE_ORDER = [
     "wasm-load",
     "preprocess-file",
@@ -68,6 +97,7 @@
     "rotate-preserved-ultrahdr",
     "finalize-output",
   ];
+
   const PROGRESS_STAGE_LABELS = {
     "wasm-load": "Loading encoder",
     "preprocess-file": "Preparing input",
@@ -96,6 +126,26 @@
   $: showConvertPanel = isDesktopLayout || activeTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeTab === "results";
   $: showSettingsPanel = isDesktopLayout || activeTab === "settings";
+  $: staleCount = queue.filter((item) => item.status === QUEUE_ITEM_STATES.STALE).length;
+  $: queuePendingCount = queue.filter(
+    (item) => item.status === QUEUE_ITEM_STATES.QUEUED || item.status === QUEUE_ITEM_STATES.PROCESSING,
+  ).length;
+  $: queueCompletedCount = queue.filter(
+    (item) => item.status === QUEUE_ITEM_STATES.COMPLETED || item.status === QUEUE_ITEM_STATES.STALE,
+  ).length;
+  $: canPauseQueue =
+    workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
+    workflowState === WORKFLOW_STATES.PROCESSING_PAUSING;
+  $: canResumeQueue = workflowState === WORKFLOW_STATES.PROCESSING_PAUSED;
+  $: canCancelCurrent = processing && currentQueueId !== null;
+  $: hasShareCapability =
+    typeof navigator !== "undefined" && typeof navigator.canShare === "function";
+  $: if (showStalePrompt && staleCount === 0) {
+    showStalePrompt = false;
+  }
+  $: if (!keepScreenAwake) {
+    void releaseWakeLock();
+  }
 
   function formatMs(ms) {
     const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
@@ -128,23 +178,13 @@
   }
 
   function estimatePipelineProgress(event, previousProgress = 0) {
-    if (!event) {
-      return previousProgress;
-    }
-
-    if (event.phase === "pipeline-start") {
-      return 0;
-    }
-
-    if (event.phase === "pipeline-complete") {
-      return 100;
-    }
+    if (!event) return previousProgress;
+    if (event.phase === "pipeline-start") return 0;
+    if (event.phase === "pipeline-complete") return 100;
 
     const stage = event.stage;
     const stageIndex = PROGRESS_STAGE_ORDER.indexOf(stage);
-    if (stageIndex < 0) {
-      return previousProgress;
-    }
+    if (stageIndex < 0) return previousProgress;
 
     const segmentSize = 100 / PROGRESS_STAGE_ORDER.length;
     const segmentStart = stageIndex * segmentSize;
@@ -161,7 +201,6 @@
     } else if (event.phase === "stage-error" || event.phase === "pipeline-error") {
       stageProgress = Math.max(previousProgress, segmentStart);
     }
-
     return Math.max(previousProgress, Math.min(100, stageProgress));
   }
 
@@ -189,9 +228,9 @@
 
   function updateProgressUi(event) {
     latestPipelineEvent = event;
-
     const fileIndex = Number(event?.fileIndex);
     const totalFiles = Number(event?.totalFiles);
+
     if (Number.isFinite(fileIndex) && fileIndex !== activeProgressFileIndex) {
       activeProgressFileIndex = fileIndex;
       pipelineCurrentFileProgress = 0;
@@ -214,11 +253,12 @@
       (event?.phase === "stage-progress"
         ? `${Math.round(pipelineStageProgress)}% of this stage complete`
         : "");
+
     const eventFileName = String(event?.fileName || "").trim();
     if (eventFileName) {
       pipelineFileName = eventFileName;
-    } else if (Number.isFinite(fileIndex) && files[fileIndex]?.name) {
-      pipelineFileName = files[fileIndex].name;
+    } else if (Number.isFinite(fileIndex) && queue[fileIndex]?.name) {
+      pipelineFileName = queue[fileIndex].name;
     }
 
     pipelineFileLabel =
@@ -248,150 +288,446 @@
     activeTab = tab;
   }
 
-  // Process a specific list of files and append results
-  async function processSubset(subset, startIndex) {
-    if (!subset || subset.length === 0) {
-      processing = false;
-      latestPipelineEvent = null;
-      resetProgressUi();
+  function getPerformanceSettings() {
+    if (performanceMode === "faster") {
+      return {
+        safeMode: true,
+        maxOutputMegapixels: Math.max(8, Math.floor(processingProfile.maxInputMegapixels * 0.6)),
+        gainMapScale: Math.min(0.5, processingProfile.gainMapScale),
+      };
+    }
+    if (performanceMode === "best-quality") {
+      return {
+        safeMode: false,
+        maxOutputMegapixels: null,
+        gainMapScale: 1,
+      };
+    }
+    return {
+      safeMode: processingProfile.safeModeDefault,
+      maxOutputMegapixels: processingProfile.maxInputMegapixels,
+      gainMapScale: processingProfile.gainMapScale,
+    };
+  }
+
+  function buildProcessingOptions(abortSignal, fileIndex, totalFiles) {
+    const performanceSettings = getPerformanceSettings();
+    return {
+      maxContentBoost,
+      rotation,
+      quality,
+      discardGainMap,
+      stripExif,
+      shadowCutoff,
+      safeMode: performanceSettings.safeMode,
+      maxOutputMegapixels: performanceSettings.maxOutputMegapixels,
+      gainMapScale: performanceSettings.gainMapScale,
+      abortSignal,
+      fileIndex,
+      totalFiles,
+      onProgress: (event) => updateProgressUi(event),
+    };
+  }
+
+  function createQueueItems(fileList) {
+    return fileList.map((file) => ({
+      id: nextQueueId++,
+      file,
+      name: file.name,
+      status: QUEUE_ITEM_STATES.QUEUED,
+      settingsVersion: settingsVersion,
+      error: null,
+    }));
+  }
+
+  async function persistQueueStateSnapshot() {
+    try {
+      const hasPending = queue.some(
+        (item) =>
+          item.status === QUEUE_ITEM_STATES.QUEUED || item.status === QUEUE_ITEM_STATES.PROCESSING,
+      );
+      if (queue.length === 0 || (!hasPending && workflowState === WORKFLOW_STATES.PROCESSING_DONE)) {
+        await clearQueueState();
+        return;
+      }
+
+      await storeQueueState({
+        workflowState,
+        settingsVersion,
+        launchSource,
+        hasPending,
+        queue: queue.map((item) => ({
+          id: item.id,
+          name: item.name,
+          status: item.status,
+          settingsVersion: item.settingsVersion,
+          error: item.error || null,
+        })),
+        updatedAt: Date.now(),
+      });
+    } catch (e) {
+      console.warn("[UI] Failed to persist queue state:", e);
+    }
+  }
+
+  function schedulePersistQueueState() {
+    void persistQueueStateSnapshot();
+  }
+
+  function setWorkflow(eventType) {
+    workflowState = transitionWorkflow(workflowState, { type: eventType });
+    schedulePersistQueueState();
+  }
+
+  function updateQueueItem(queueId, changes) {
+    queue = queue.map((item) =>
+      item.id === queueId
+        ? { ...item, ...(typeof changes === "function" ? changes(item) : changes) }
+        : item,
+    );
+    schedulePersistQueueState();
+  }
+
+  function getQueueItemStatus(queueId) {
+    return queue.find((item) => item.id === queueId)?.status || QUEUE_ITEM_STATES.COMPLETED;
+  }
+
+  function upsertResult(queueItem, blob, appliedSettingsVersion) {
+    const resultRecord = {
+      originalName: queueItem.name,
+      blob,
+      url: URL.createObjectURL(blob),
+      size: blob.size,
+      index: queueItem.id,
+      queueId: queueItem.id,
+      settingsVersion: appliedSettingsVersion,
+    };
+
+    const existingIndex = results.findIndex((result) => result.queueId === queueItem.id);
+    if (existingIndex >= 0) {
+      URL.revokeObjectURL(results[existingIndex].url);
+      results = results.map((result, index) => (index === existingIndex ? resultRecord : result));
+      selectedIndices.add(existingIndex);
+    } else {
+      results = [...results, resultRecord];
+      selectedIndices.add(results.length - 1);
+    }
+    selectedIndices = selectedIndices;
+  }
+
+  function startQueue() {
+    if (queueLoopActive) return;
+
+    const hasQueuedItems = queue.some((item) => item.status === QUEUE_ITEM_STATES.QUEUED);
+    if (!hasQueuedItems) return;
+
+    if (workflowState === WORKFLOW_STATES.EMPTY) {
+      setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
+    }
+
+    if (
+      workflowState === WORKFLOW_STATES.QUEUE_READY ||
+      workflowState === WORKFLOW_STATES.PROCESSING_DONE ||
+      workflowState === WORKFLOW_STATES.ERROR_RECOVERABLE
+    ) {
+      setWorkflow(WORKFLOW_EVENTS.AUTO_START);
+    }
+
+    if (workflowState === WORKFLOW_STATES.PROCESSING_PAUSED) return;
+
+    processing = true;
+    void runQueue();
+  }
+
+  async function acquireWakeLockIfNeeded() {
+    if (!keepScreenAwake || !capabilities.supportsWakeLock || wakeLockSentinel) return;
+    if (typeof navigator === "undefined" || !navigator.wakeLock?.request) return;
+
+    try {
+      wakeLockSentinel = await navigator.wakeLock.request("screen");
+      wakeLockSentinel.addEventListener?.("release", () => {
+        wakeLockSentinel = null;
+      });
+    } catch (e) {
+      setNotice(`Screen wake lock unavailable (${e.message || "unsupported"}).`);
+    }
+  }
+
+  async function releaseWakeLock() {
+    if (!wakeLockSentinel) return;
+    try {
+      await wakeLockSentinel.release();
+    } catch {
+      // ignore release errors
+    } finally {
+      wakeLockSentinel = null;
+    }
+  }
+
+  async function runQueue() {
+    if (queueLoopActive) return;
+    queueLoopActive = true;
+
+    await acquireWakeLockIfNeeded();
+
+    try {
+      while (true) {
+        if (pauseRequested && currentQueueId === null) {
+          setWorkflow(WORKFLOW_EVENTS.CURRENT_FILE_SETTLED);
+          processing = false;
+          await releaseWakeLock();
+          break;
+        }
+
+        const nextItem = queue.find((item) => item.status === QUEUE_ITEM_STATES.QUEUED);
+        if (!nextItem) {
+          processing = false;
+          pauseRequested = false;
+
+          if (queueCompletedCount > 0) {
+            setWorkflow(WORKFLOW_EVENTS.QUEUE_DRAINED);
+          } else {
+            workflowState = WORKFLOW_STATES.ERROR_RECOVERABLE;
+          }
+
+          if (launchSource === "share-target" && results.length > 0) {
+            activeTab = "results";
+            emphasizeShareOut = true;
+          }
+
+          await releaseWakeLock();
+          schedulePersistQueueState();
+          break;
+        }
+
+        currentQueueId = nextItem.id;
+        cancelCurrentRequested = false;
+        latestPipelineEvent = null;
+        resetProgressUi();
+        error = null;
+        processing = true;
+
+        const controller = new AbortController();
+        activeAbortController = controller;
+        const activeSettingsVersion = settingsVersion;
+        const queueIndex = queue.findIndex((item) => item.id === nextItem.id);
+        updateQueueItem(nextItem.id, {
+          status: QUEUE_ITEM_STATES.PROCESSING,
+          settingsVersion: activeSettingsVersion,
+          error: null,
+        });
+
+        try {
+          const blob = await processImage(
+            nextItem.file,
+            buildProcessingOptions(controller.signal, queueIndex, queue.length),
+          );
+
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          upsertResult(nextItem, blob, activeSettingsVersion);
+          updateQueueItem(nextItem.id, {
+            status: QUEUE_ITEM_STATES.COMPLETED,
+            settingsVersion: activeSettingsVersion,
+            error: null,
+          });
+        } catch (e) {
+          if (e?.name === "AbortError") {
+            if (cancelCurrentRequested) {
+              updateQueueItem(nextItem.id, {
+                status: QUEUE_ITEM_STATES.CANCELLED,
+                error: "Cancelled by user",
+              });
+              processing = false;
+              pauseRequested = false;
+              setWorkflow(WORKFLOW_EVENTS.CANCEL_CURRENT);
+              await releaseWakeLock();
+              break;
+            }
+            return;
+          }
+
+          console.error("[UI] Error processing queue item:", e);
+          error = e.message || "Processing failed";
+          updateQueueItem(nextItem.id, {
+            status: QUEUE_ITEM_STATES.FAILED,
+            error: error,
+          });
+          setWorkflow(WORKFLOW_EVENTS.FILE_FAILED);
+        } finally {
+          if (activeAbortController === controller) {
+            activeAbortController = null;
+          }
+          currentQueueId = null;
+        }
+
+        if (pauseRequested) {
+          setWorkflow(WORKFLOW_EVENTS.CURRENT_FILE_SETTLED);
+          processing = false;
+          await releaseWakeLock();
+          break;
+        }
+      }
+    } finally {
+      queueLoopActive = false;
+    }
+  }
+
+  function initializeQueueFromFiles(initialFiles) {
+    const normalizedFiles = Array.from(initialFiles || []).filter((file) => file instanceof File);
+    if (normalizedFiles.length === 0) {
+      workflowState = WORKFLOW_STATES.EMPTY;
       return;
     }
 
-    const runId = ++processingRunId;
-    abortActiveProcessing();
-    const controller = new AbortController();
-    activeAbortController = controller;
-
-    processing = true;
-    error = null;
-    latestPipelineEvent = null;
-    resetProgressUi();
-
-    try {
-      for (let i = 0; i < subset.length; i++) {
-        const file = subset[i];
-        const globalIndex = startIndex + i;
-
-        const blob = await processImage(file, {
-          maxContentBoost,
-          rotation,
-          quality,
-          discardGainMap,
-          stripExif,
-          shadowCutoff,
-          safeMode: safeModeEnabled,
-          maxOutputMegapixels: processingProfile.maxInputMegapixels,
-          gainMapScale: processingProfile.gainMapScale,
-          abortSignal: controller.signal,
-          fileIndex: i,
-          totalFiles: subset.length,
-          onProgress: (event) => {
-            updateProgressUi(event);
-          },
-        });
-
-        if (controller.signal.aborted || runId !== processingRunId) {
-          return;
-        }
-
-        const url = URL.createObjectURL(blob);
-
-        results = [
-          ...results,
-          {
-            originalName: file.name,
-            blob,
-            url,
-            size: blob.size,
-            index: globalIndex,
-          },
-        ];
-        selectedIndices.add(globalIndex);
-        selectedIndices = selectedIndices;
-      }
-    } catch (e) {
-      if (e?.name === "AbortError") {
-        return;
-      }
-      console.error("[UI] Error processing files:", e);
-      error = e.message;
-    } finally {
-      if (activeAbortController === controller) {
-        activeAbortController = null;
-      }
-      if (runId === processingRunId) {
-        processing = false;
-      }
-    }
+    queue = createQueueItems(normalizedFiles);
+    files = normalizedFiles;
+    setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
+    startQueue();
   }
 
-  async function processAll() {
-    abortActiveProcessing();
-    releaseResultUrls(results);
-    results = [];
-    selectedIndices = new Set();
-    await processSubset(files, 0);
-  }
-
-  onMount(() => {
-    let mediaQuery = null;
-    let handleMediaChange = null;
-
-    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-      mediaQuery = window.matchMedia("(min-width: 1024px)");
-      handleMediaChange = (event) => {
-        isDesktopLayout = event.matches;
-      };
-      isDesktopLayout = mediaQuery.matches;
-
-      if (typeof mediaQuery.addEventListener === "function") {
-        mediaQuery.addEventListener("change", handleMediaChange);
-      } else if (typeof mediaQuery.addListener === "function") {
-        mediaQuery.addListener(handleMediaChange);
+  function markCompletedOutputsStale() {
+    let changed = false;
+    queue = queue.map((item) => {
+      if (item.status === QUEUE_ITEM_STATES.COMPLETED) {
+        changed = true;
+        return { ...item, status: QUEUE_ITEM_STATES.STALE };
       }
+      return item;
+    });
+    if (changed) {
+      showStalePrompt = true;
+      schedulePersistQueueState();
     }
-
-    processAll();
-
-    return () => {
-      processingRunId += 1;
-      abortActiveProcessing();
-      clearTimeout(debounceTimer);
-      clearTimeout(noticeTimer);
-      releaseResultUrls(results);
-
-      if (mediaQuery && handleMediaChange) {
-        if (typeof mediaQuery.removeEventListener === "function") {
-          mediaQuery.removeEventListener("change", handleMediaChange);
-        } else if (typeof mediaQuery.removeListener === "function") {
-          mediaQuery.removeListener(handleMediaChange);
-        }
-      }
-    };
-  });
-
-  async function handleAddFiles(event) {
-    const newFiles = Array.from(event.target.files);
-    if (newFiles.length === 0) return;
-
-    const startIndex = files.length;
-    files = [...files, ...newFiles];
-
-    await processSubset(newFiles, startIndex);
-
-    event.target.value = "";
   }
 
   function handleSettingChange() {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      processAll();
-    }, 500);
+    settingsVersion += 1;
+    markCompletedOutputsStale();
   }
 
   function rotate(degrees) {
     rotation = (rotation + degrees + 360) % 360;
     handleSettingChange();
+  }
+
+  function handleMetadataToggle(event) {
+    const keepMetadata = Boolean(event?.currentTarget?.checked);
+    stripExif = !keepMetadata;
+    handleSettingChange();
+  }
+
+  function requestPauseQueue() {
+    if (!processing) return;
+    pauseRequested = true;
+    setWorkflow(WORKFLOW_EVENTS.PAUSE_REQUESTED);
+  }
+
+  function resumeQueue() {
+    pauseRequested = false;
+    cancelCurrentRequested = false;
+    setWorkflow(WORKFLOW_EVENTS.RESUME_REQUESTED);
+    processing = true;
+    startQueue();
+  }
+
+  function cancelCurrent() {
+    if (!canCancelCurrent) return;
+    cancelCurrentRequested = true;
+    abortActiveProcessing();
+  }
+
+  function selectedStaleQueueIds() {
+    const ids = new Set();
+    selectedIndices.forEach((index) => {
+      const queueId = results[index]?.queueId;
+      if (queueId === undefined || queueId === null) return;
+      if (getQueueItemStatus(queueId) === QUEUE_ITEM_STATES.STALE) {
+        ids.add(queueId);
+      }
+    });
+    return ids;
+  }
+
+  function requeueByIds(queueIds) {
+    if (!queueIds || queueIds.size === 0) return false;
+    let changed = false;
+
+    queue = queue.map((item) => {
+      if (
+        queueIds.has(item.id) &&
+        (item.status === QUEUE_ITEM_STATES.STALE ||
+          item.status === QUEUE_ITEM_STATES.CANCELLED ||
+          item.status === QUEUE_ITEM_STATES.FAILED)
+      ) {
+        changed = true;
+        return {
+          ...item,
+          status: QUEUE_ITEM_STATES.QUEUED,
+          error: null,
+        };
+      }
+      return item;
+    });
+
+    if (changed) {
+      if (
+        workflowState === WORKFLOW_STATES.PROCESSING_DONE ||
+        workflowState === WORKFLOW_STATES.ERROR_RECOVERABLE
+      ) {
+        setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
+      }
+      schedulePersistQueueState();
+    }
+    return changed;
+  }
+
+  function reprocessSelectedStale() {
+    const staleIds = selectedStaleQueueIds();
+    if (requeueByIds(staleIds)) {
+      showStalePrompt = staleCount > staleIds.size;
+      startQueue();
+    }
+  }
+
+  function reprocessAllStale() {
+    const staleIds = new Set(
+      queue.filter((item) => item.status === QUEUE_ITEM_STATES.STALE).map((item) => item.id),
+    );
+    if (requeueByIds(staleIds)) {
+      showStalePrompt = false;
+      startQueue();
+    }
+  }
+
+  function keepCurrentResults() {
+    showStalePrompt = false;
+  }
+
+  async function handleAddFiles(event) {
+    const newFiles = Array.from(event.target.files || []).filter((file) => file instanceof File);
+    if (newFiles.length === 0) return;
+
+    const addedItems = createQueueItems(newFiles);
+    queue = [...queue, ...addedItems];
+    files = [...files, ...newFiles];
+
+    if (
+      workflowState === WORKFLOW_STATES.EMPTY ||
+      workflowState === WORKFLOW_STATES.PROCESSING_DONE ||
+      workflowState === WORKFLOW_STATES.ERROR_RECOVERABLE
+    ) {
+      setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
+    }
+
+    schedulePersistQueueState();
+    if (workflowState !== WORKFLOW_STATES.PROCESSING_PAUSED) {
+      startQueue();
+    }
+
+    event.target.value = "";
   }
 
   function toggleSelection(index) {
@@ -426,25 +762,22 @@
 
     if (selectedResults.length === 1) {
       download(selectedResults[0]);
-    } else {
-      const zip = new JSZip();
-
-      for (const result of selectedResults) {
-        const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
-        zip.file(filename, result.blob);
-      }
-
-      const content = await zip.generateAsync({ type: "blob" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(content);
-
-      const now = new Date();
-      const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
-
-      a.download = `ultrahdr-batch-${timestamp}.zip`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 0);
+      return;
     }
+
+    const zip = new JSZip();
+    for (const result of selectedResults) {
+      const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
+      zip.file(filename, result.blob);
+    }
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(content);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `ultrahdr-batch-${timestamp}.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 0);
   }
 
   async function shareSelected() {
@@ -470,8 +803,7 @@
           zip.file(filename, result.blob);
         }
 
-        const now = new Date();
-        const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const zipBlob = await zip.generateAsync({ type: "blob" });
         const zipFile = new File([zipBlob], `ultrahdr-batch-${timestamp}.zip`, {
           type: "application/zip",
@@ -491,9 +823,7 @@
       setNotice("Direct sharing is unavailable. Download started instead.");
     } catch (e) {
       console.error("Error sharing:", e);
-      if (e.name === "AbortError") {
-        return;
-      }
+      if (e.name === "AbortError") return;
       await downloadSelected();
       setNotice(`Share failed. Download started instead (${e.message}).`);
     }
@@ -507,33 +837,66 @@
     resetProgressUi();
   }
 
-  function reset() {
+  async function reset(requireConfirm = true) {
+    if (typeof requireConfirm === "object") {
+      requireConfirm = true;
+    }
+    if (
+      requireConfirm &&
+      typeof window !== "undefined" &&
+      typeof window.confirm === "function" &&
+      !window.confirm("Start over and clear queue/results?")
+    ) {
+      return;
+    }
+
     processingRunId += 1;
     abortActiveProcessing();
+    await releaseWakeLock();
+
     clearResultsState();
     files = [];
+    queue = [];
+    nextQueueId = 0;
+    pauseRequested = false;
+    cancelCurrentRequested = false;
+    currentQueueId = null;
+    workflowState = WORKFLOW_STATES.EMPTY;
+    settingsVersion = 1;
+    showStalePrompt = false;
+    staleCount = 0;
+    emphasizeShareOut = false;
+
     rotation = 0;
     maxContentBoost = 2.3;
     shadowCutoff = 0.05;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
+    performanceMode = "auto";
+    keepScreenAwake = false;
+
     notice = null;
+    error = null;
     activeTab = "convert";
     isAdvancedOpen = false;
+
+    await clearQueueState();
     dispatch("reset");
   }
 
   function removeImage(index) {
-    const [removed] = results.filter((_, i) => i === index);
-    if (removed?.url) {
-      URL.revokeObjectURL(removed.url);
+    const removed = results[index];
+    if (removed?.url) URL.revokeObjectURL(removed.url);
+
+    const removedQueueId = removed?.queueId;
+    if (removedQueueId !== undefined) {
+      queue = queue.filter((item) => item.id !== removedQueueId);
+      files = queue.map((item) => item.file);
+      schedulePersistQueueState();
     }
 
-    files = files.filter((_, i) => i !== index);
     results = results.filter((_, i) => i !== index);
-
-    results = results.map((r, i) => ({ ...r, index: i }));
 
     const newSelection = new Set();
     selectedIndices.forEach((i) => {
@@ -542,10 +905,81 @@
     });
     selectedIndices = newSelection;
 
-    if (files.length === 0) {
-      reset();
+    if (queue.length === 0) {
+      void reset(false);
     }
   }
+
+  onMount(() => {
+    let mediaQuery = null;
+    let handleMediaChange = null;
+
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      mediaQuery = window.matchMedia("(min-width: 1024px)");
+      handleMediaChange = (event) => {
+        isDesktopLayout = event.matches;
+      };
+      isDesktopLayout = mediaQuery.matches;
+
+      if (typeof mediaQuery.addEventListener === "function") {
+        mediaQuery.addEventListener("change", handleMediaChange);
+      } else if (typeof mediaQuery.addListener === "function") {
+        mediaQuery.addListener(handleMediaChange);
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (typeof document === "undefined") return;
+      if (
+        document.hidden &&
+        (workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
+          workflowState === WORKFLOW_STATES.PROCESSING_PAUSING)
+      ) {
+        backgroundProcessingNotice =
+          "Processing continues best-effort in the background, but your OS/browser may pause this tab.";
+      } else {
+        backgroundProcessingNotice = null;
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    void (async () => {
+      try {
+        const persistedQueue = await loadQueueState();
+        if (persistedQueue?.hasPending && (!files || files.length === 0)) {
+          queueRestoreNotice = "Previous queue could not be restored. Please re-add files.";
+          setNotice(queueRestoreNotice);
+        }
+      } catch (e) {
+        console.warn("[UI] Failed to load persisted queue state:", e);
+      }
+
+      initializeQueueFromFiles(files);
+    })();
+
+    return () => {
+      processingRunId += 1;
+      abortActiveProcessing();
+      clearTimeout(noticeTimer);
+      releaseResultUrls(results);
+      void releaseWakeLock();
+
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+
+      if (mediaQuery && handleMediaChange) {
+        if (typeof mediaQuery.removeEventListener === "function") {
+          mediaQuery.removeEventListener("change", handleMediaChange);
+        } else if (typeof mediaQuery.removeListener === "function") {
+          mediaQuery.removeListener(handleMediaChange);
+        }
+      }
+    };
+  });
 </script>
 
 <div class="processor" class:desktop={isDesktopLayout}>
@@ -601,10 +1035,10 @@
       {#if showConvertPanel}
         <div class="controls card panel convert-panel" id="panel-convert">
           <h2>Convert</h2>
-          <p class="panel-intro">Quick adjustments for day-to-day processing.</p>
+          <p class="panel-intro">Queue images, process locally, then export to other apps.</p>
 
           <div class="control-group" data-testid="quick-controls">
-            <label for="boost">Max Content Boost (HDR Intensity)</label>
+            <label for="boost">HDR Strength (Max Content Boost)</label>
             <div class="range-wrapper">
               <input
                 type="range"
@@ -614,26 +1048,28 @@
                 step="0.1"
                 bind:value={maxContentBoost}
                 on:input={handleSettingChange}
-                disabled={processing}
               />
               <span class="value">{maxContentBoost.toFixed(1)}x</span>
             </div>
           </div>
 
           <div class="control-group horizontal">
-            <label for="quality">JPEG Quality</label>
+            <label for="quality">Quality</label>
             <div class="select-wrapper">
-              <select
-                id="quality"
-                bind:value={quality}
-                on:change={handleSettingChange}
-                disabled={processing}
-              >
+              <select id="quality" bind:value={quality} on:change={handleSettingChange}>
                 <option value={0.95}>High</option>
                 <option value={0.75}>Medium</option>
                 <option value={0.5}>Low</option>
               </select>
             </div>
+          </div>
+
+          <div class="control-group switch-group">
+            <label class="switch">
+              <input type="checkbox" checked={!stripExif} on:change={handleMetadataToggle} />
+              <span class="slider"></span>
+            </label>
+            <span class="switch-label">Keep camera metadata</span>
           </div>
 
           <div class="actions">
@@ -644,33 +1080,68 @@
               accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
               style="display: none;"
               on:change={handleAddFiles}
-              disabled={processing}
             />
-            <button
-              class="secondary"
-              on:click={() => document.getElementById("add-files").click()}
-              disabled={processing}
-            >
+            <button class="secondary" on:click={() => document.getElementById("add-files").click()}>
               Add Images
             </button>
-            <button on:click={reset} disabled={processing} class="secondary">
-              Start Over
-            </button>
+            <button on:click={reset} class="secondary">Start Over</button>
             {#if !isDesktopLayout}
-              <button
-                class="secondary"
-                on:click={() => setActiveTab("settings")}
-                disabled={processing}
-              >
+              <button class="secondary" on:click={() => setActiveTab("settings")}>
                 Open Settings
               </button>
             {/if}
           </div>
 
+          <div class="queue-controls" data-testid="queue-controls">
+            {#if canPauseQueue}
+              <button
+                class="secondary small"
+                on:click={requestPauseQueue}
+                disabled={workflowState === WORKFLOW_STATES.PROCESSING_PAUSING}
+              >
+                Pause Queue
+              </button>
+            {/if}
+
+            {#if canResumeQueue}
+              <button class="primary small" on:click={resumeQueue}>Resume Queue</button>
+            {/if}
+
+            {#if canCancelCurrent}
+              <button class="secondary small" on:click={cancelCurrent}>Cancel Current</button>
+            {/if}
+          </div>
+
+          <p class="help-text">
+            Queue: {queueCompletedCount}/{queue.length} completed, {queuePendingCount} pending.
+          </p>
           <p class="help-text">
             Existing input gain maps are preserved as-is unless
             &ldquo;Discard existing gain map(s)&rdquo; is enabled.
           </p>
+
+          {#if backgroundProcessingNotice}
+            <p class="help-text notice">{backgroundProcessingNotice}</p>
+          {/if}
+
+          {#if queueRestoreNotice}
+            <p class="help-text notice">{queueRestoreNotice}</p>
+          {/if}
+
+          {#if showStalePrompt && staleCount > 0}
+            <div class="stale-prompt card" data-testid="stale-reprocess-prompt">
+              <p>{staleCount} result(s) were generated with older settings.</p>
+              <div class="stale-actions">
+                <button class="primary small" on:click={reprocessSelectedStale}>
+                  Reprocess Selected
+                </button>
+                <button class="secondary small" on:click={reprocessAllStale}>
+                  Reprocess All Stale
+                </button>
+                <button class="text-btn" on:click={keepCurrentResults}>Keep Current Results</button>
+              </div>
+            </div>
+          {/if}
 
           {#if notice}
             <p class="help-text notice" data-testid="notice-message">{notice}</p>
@@ -757,7 +1228,6 @@
                 <div class="button-group">
                   <button
                     on:click={() => rotate(-90)}
-                    disabled={processing}
                     class="icon-btn"
                     title="Rotate Left"
                   >
@@ -779,7 +1249,6 @@
                   </button>
                   <button
                     on:click={() => rotate(90)}
-                    disabled={processing}
                     class="icon-btn"
                     title="Rotate Right"
                   >
@@ -818,7 +1287,6 @@
                     step="0.01"
                     bind:value={shadowCutoff}
                     on:input={handleSettingChange}
-                    disabled={processing}
                   />
                   <span class="value">{Math.round(shadowCutoff * 100)}%</span>
                 </div>
@@ -833,11 +1301,25 @@
                     type="checkbox"
                     bind:checked={discardGainMap}
                     on:change={handleSettingChange}
-                    disabled={processing}
                   />
                   <span class="slider"></span>
                 </label>
                 <span class="switch-label">Discard existing gain map(s)</span>
+              </div>
+
+              <div class="control-group horizontal">
+                <label for="performance-mode">Performance mode</label>
+                <div class="select-wrapper">
+                  <select
+                    id="performance-mode"
+                    bind:value={performanceMode}
+                    on:change={handleSettingChange}
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="faster">Faster</option>
+                    <option value="best-quality">Best Quality</option>
+                  </select>
+                </div>
               </div>
 
               <div class="control-group switch-group">
@@ -846,12 +1328,21 @@
                     type="checkbox"
                     bind:checked={stripExif}
                     on:change={handleSettingChange}
-                    disabled={processing}
                   />
                   <span class="slider"></span>
                 </label>
                 <span class="switch-label">Strip EXIF data</span>
               </div>
+
+              {#if capabilities.supportsWakeLock}
+                <div class="control-group switch-group">
+                  <label class="switch">
+                    <input type="checkbox" bind:checked={keepScreenAwake} />
+                    <span class="slider"></span>
+                  </label>
+                  <span class="switch-label">Keep screen awake while processing</span>
+                </div>
+              {/if}
 
             </div>
           {:else}
@@ -896,15 +1387,19 @@
                     class="primary small"
                     on:click={downloadSelected}
                     disabled={selectedIndices.size === 0}
+                    data-testid={emphasizeShareOut && isDesktopLayout && !hasShareCapability
+                      ? "share-out-cta"
+                      : undefined}
                   >
                     {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
                   </button>
-                  {#if typeof navigator !== "undefined" && navigator.canShare}
+                  {#if hasShareCapability}
                     <button
                       class="primary small share-btn"
                       on:click={shareSelected}
                       disabled={selectedIndices.size === 0}
                       title="Share to other apps"
+                      data-testid={emphasizeShareOut && isDesktopLayout ? "share-out-cta" : undefined}
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -931,6 +1426,8 @@
                   <div
                     class="result-card card"
                     class:selected={selectedIndices.has(i)}
+                    class:stale={getQueueItemStatus(result.queueId) === QUEUE_ITEM_STATES.STALE}
+                    class:failed={getQueueItemStatus(result.queueId) === QUEUE_ITEM_STATES.FAILED}
                     on:click={() => toggleSelection(i)}
                     role="button"
                     tabindex="0"
@@ -980,6 +1477,7 @@
                     <div class="info">
                       <p class="filename">{result.originalName}</p>
                       <p class="size">{(result.size / 1024 / 1024).toFixed(2)} MB</p>
+                      <p class="status-tag">{getQueueItemStatus(result.queueId)}</p>
                     </div>
                   </div>
                 {/each}
@@ -1005,16 +1503,18 @@
         class="primary"
         on:click={downloadSelected}
         disabled={selectedIndices.size === 0}
+        data-testid={emphasizeShareOut && !hasShareCapability ? "share-out-cta" : undefined}
       >
         {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
       </button>
 
-      {#if typeof navigator !== "undefined" && navigator.canShare}
+      {#if hasShareCapability}
         <button
           class="secondary share-btn"
           on:click={shareSelected}
           disabled={selectedIndices.size === 0}
           title="Share to other apps"
+          data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
         >
           Share ({selectedIndices.size})
         </button>
@@ -1294,6 +1794,35 @@
     justify-content: flex-start;
   }
 
+  .queue-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+  }
+
+  .stale-prompt {
+    padding: 0.8rem;
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .stale-prompt p {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+
+  .stale-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+  }
+
+  .notice {
+    color: var(--text-color);
+  }
+
   .settings-header {
     display: flex;
     justify-content: space-between;
@@ -1513,6 +2042,14 @@
     background-color: var(--surface-interactive);
   }
 
+  .result-card.stale {
+    border-color: var(--queue-stale);
+  }
+
+  .result-card.failed {
+    border-color: var(--queue-failed);
+  }
+
   .selection-indicator {
     position: absolute;
     top: 0.7rem;
@@ -1585,6 +2122,14 @@
     font-size: 0.8rem;
     color: var(--text-secondary);
     margin-bottom: 0;
+  }
+
+  .status-tag {
+    margin: 0.25rem 0 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
   .error {

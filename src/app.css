@@ -14,6 +14,11 @@
   --text-muted: #93aab2;
   --text-link: #5adbe5;
   --border-subtle: rgba(176, 203, 211, 0.28);
+  --queue-completed: #2fc8d4;
+  --queue-processing: #47d68f;
+  --queue-failed: #ff6b6b;
+  --queue-stale: #f3b356;
+  --queue-paused: #8aa4ff;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -128,6 +133,11 @@ a:hover {
     --text-muted: #536d77;
     --text-link: #0e8d9a;
     --border-subtle: rgba(88, 120, 135, 0.24);
+    --queue-completed: #0f9baa;
+    --queue-processing: #2a9e63;
+    --queue-failed: #cc3f3f;
+    --queue-stale: #b67f26;
+    --queue-paused: #536fd4;
     color-scheme: light;
   }
 }

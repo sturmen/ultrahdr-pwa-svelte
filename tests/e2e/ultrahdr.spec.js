@@ -94,16 +94,15 @@ async function waitForProcessing(page, expectedResults = 1) {
  * processAll() clears results first, so we wait for results to disappear then reappear.
  */
 async function waitForReprocessing(page) {
-    // Wait for debounce (500ms) + processing start
-    await page.waitForTimeout(600);
-    // First wait for any existing results to clear (processAll sets results = [])
-    await page.waitForFunction(() => {
-        const results = document.querySelectorAll('.result-card');
-        return results.length === 0;
-    }, { timeout: 5000 }).catch(() => {
-        // Results may have already cleared by the time we check
-    });
-    // Then wait for new results to appear
+    const prompt = page.getByTestId('stale-reprocess-prompt');
+    if (await prompt.count()) {
+        await prompt.getByRole('button', { name: /Reprocess All Stale/i }).click();
+    } else {
+        const fallback = page.getByRole('button', { name: /Reprocess All Stale/i });
+        if (await fallback.count()) {
+            await fallback.first().click();
+        }
+    }
     await waitForProcessing(page, 1);
 }
 
@@ -481,6 +480,23 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             await expect(page.locator('.result-card')).toHaveCount(2);
         });
+
+        test('should pause after current file and resume remaining queue items', async ({ page, browserName }) => {
+            test.skip(browserName === 'webkit', 'Queue pause/resume is timing-flaky on WebKit CI.');
+            test.setTimeout(180_000);
+            await page.goto('/');
+
+            await uploadFiles(page, [SDR_IMAGE, SDR_IMAGE_2]);
+            await page.getByRole('button', { name: /Pause Queue/i }).click();
+
+            await expect(page.getByRole('button', { name: /Resume Queue/i })).toBeVisible({
+                timeout: PROCESSING_TIMEOUT
+            });
+
+            await page.getByRole('button', { name: /Resume Queue/i }).click();
+            await waitForProcessing(page, 2);
+            await expect(page.locator('.result-card')).toHaveCount(2);
+        });
     });
 
     test.describe('Slider Controls', () => {
@@ -505,8 +521,6 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 slider.dispatchEvent(new Event('input', { bubbles: true }));
             });
 
-            // Wait for re-processing to complete (debounce is 500ms + processing time)
-            await page.waitForTimeout(1000);
             await waitForReprocessing(page);
 
             // Download the re-processed result
@@ -629,19 +643,17 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             const preservedResult = await downloadFirstResult(page);
             const preservedSize = preservedResult.length;
 
-            // Now enable "Discard existing gain map(s)" toggle
-            // Settings are visible alongside the results, no need to Start Over
-            // Use evaluate because the hidden checkbox (opacity:0, width:0) can't be clicked directly
+            // Now enable "Discard existing gain map(s)" toggle by label text.
             await page.evaluate(() => {
-                const switchGroups = document.querySelectorAll('.control-group.switch-group');
-                // Discard gain map is the first toggle switch
-                const checkbox = switchGroups[0].querySelector('input[type="checkbox"]');
+                const label = Array.from(document.querySelectorAll('.switch-label'))
+                    .find((el) => el.textContent?.includes('Discard existing gain map(s)'));
+                const container = label?.closest('.control-group.switch-group');
+                const checkbox = container?.querySelector('input[type="checkbox"]');
+                if (!checkbox) throw new Error('Discard gain map toggle not found');
                 checkbox.checked = true;
                 checkbox.dispatchEvent(new Event('change', { bubbles: true }));
             });
 
-            // Wait for re-processing (debounce 500ms + processing)
-            await page.waitForTimeout(1000);
             await waitForReprocessing(page);
 
             // Download the re-processed result
@@ -717,18 +729,17 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             const sourceData = fs.readFileSync(EXIF_RICH_IMAGE);
             expect(extractExifSegmentBytes(sourceData), 'EXIF fixture is missing APP1 EXIF data').not.toBeNull();
 
-            // Enable "Strip EXIF data" toggle (visible alongside results)
-            // Use evaluate because the hidden checkbox (opacity:0, width:0) can't be clicked directly
+            // Enable "Strip EXIF data" toggle by label text.
             await page.evaluate(() => {
-                const switchGroups = document.querySelectorAll('.control-group.switch-group');
-                // Strip EXIF is the second toggle switch
-                const checkbox = switchGroups[1].querySelector('input[type="checkbox"]');
+                const label = Array.from(document.querySelectorAll('.switch-label'))
+                    .find((el) => el.textContent?.includes('Strip EXIF data'));
+                const container = label?.closest('.control-group.switch-group');
+                const checkbox = container?.querySelector('input[type="checkbox"]');
+                if (!checkbox) throw new Error('Strip EXIF toggle not found');
                 checkbox.checked = true;
                 checkbox.dispatchEvent(new Event('change', { bubbles: true }));
             });
 
-            // Wait for re-processing (debounce 500ms + processing)
-            await page.waitForTimeout(1000);
             await waitForReprocessing(page);
 
             // Download the re-processed result

@@ -38,6 +38,16 @@ function makeFiles(count = 1) {
   );
 }
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('ImageProcessor mobile-native UI behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -132,5 +142,99 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByText(/photo-0.jpg/i)).toBeInTheDocument();
     expect(screen.getByText(/File 1 of 1/i)).toBeInTheDocument();
     expect(screen.getByText(/Stage 42%/i)).toBeInTheDocument();
+  });
+
+  it('pauses after the current file and resumes queued work only when resumed', async () => {
+    const firstFileGate = createDeferred();
+
+    vi.mocked(processImage)
+      .mockImplementationOnce(async (_file, options = {}) => {
+        options.onProgress?.({
+          phase: 'pipeline-start',
+          stage: 'pipeline',
+          elapsedMs: 1,
+          stageDurationsMs: {},
+          fileIndex: 0,
+          totalFiles: 2,
+          timestamp: Date.now(),
+        });
+        await firstFileGate.promise;
+        options.onProgress?.({
+          phase: 'pipeline-complete',
+          stage: 'pipeline',
+          elapsedMs: 5,
+          stageDurationsMs: { pipeline: 5 },
+          fileIndex: 0,
+          totalFiles: 2,
+          timestamp: Date.now(),
+        });
+        return new Blob(['first'], { type: 'image/jpeg' });
+      })
+      .mockImplementationOnce(async (_file, options = {}) => {
+        options.onProgress?.({
+          phase: 'pipeline-complete',
+          stage: 'pipeline',
+          elapsedMs: 5,
+          stageDurationsMs: { pipeline: 5 },
+          fileIndex: 1,
+          totalFiles: 2,
+          timestamp: Date.now(),
+        });
+        return new Blob(['second'], { type: 'image/jpeg' });
+      });
+
+    render(ImageProcessor, { props: { files: makeFiles(2) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: /pause queue/i }));
+    firstFileGate.resolve();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /resume queue/i })).toBeInTheDocument();
+    });
+    expect(processImage).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole('button', { name: /resume queue/i }));
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('marks completed outputs stale on setting changes and waits for explicit reprocess', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.input(screen.getByLabelText(/max content boost/i), {
+      target: { value: '4.0' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(processImage).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('moves to results and emphasizes share-out action after share-target completion', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1), launchSource: 'share-target' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('share-out-cta')).toBeInTheDocument();
   });
 });
