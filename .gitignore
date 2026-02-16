@@ -3,7 +3,9 @@ node_modules/
 .vscode/
 build/
 playwright-report/
+
 # Build artifacts
+dist/
 libultrahdr/build/
 ultrahdr-wasm/build/
 *.o
