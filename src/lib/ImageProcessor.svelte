@@ -57,8 +57,12 @@
   let currentQueueId = null;
   let wakeLockSentinel = null;
 
-  let activeTab = "convert";
-  let isAdvancedOpen = false;
+  let activeMobileTab = "convert";
+  let activeDesktopTab = "all";
+  let openSheet = "none";
+  let isFabOpen = false;
+  let selectionToggleState = "none";
+  let queueControlVisibility = "hidden";
   let isDesktopLayout = false;
   let pipelineOverallProgress = 0;
   let pipelineCurrentFileProgress = 0;
@@ -123,9 +127,9 @@
     "finalize-output": "Finalizing output",
   };
 
-  $: showConvertPanel = isDesktopLayout || activeTab === "convert";
-  $: showResultsPanel = isDesktopLayout || activeTab === "results";
-  $: showSettingsPanel = isDesktopLayout || activeTab === "settings";
+  $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
+  $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
+  $: showSettingsPanel = isDesktopLayout;
   $: staleCount = queue.filter((item) => item.status === QUEUE_ITEM_STATES.STALE).length;
   $: queuePendingCount = queue.filter(
     (item) => item.status === QUEUE_ITEM_STATES.QUEUED || item.status === QUEUE_ITEM_STATES.PROCESSING,
@@ -138,10 +142,20 @@
     workflowState === WORKFLOW_STATES.PROCESSING_PAUSING;
   $: canResumeQueue = workflowState === WORKFLOW_STATES.PROCESSING_PAUSED;
   $: canCancelCurrent = processing && currentQueueId !== null;
+  $: queueControlVisibility = canPauseQueue ? "pause" : canResumeQueue ? "resume" : "hidden";
+  $: selectionToggleState =
+    results.length === 0 || selectedIndices.size === 0
+      ? "none"
+      : selectedIndices.size === results.length
+        ? "all"
+        : "partial";
   $: hasShareCapability =
     typeof navigator !== "undefined" && typeof navigator.canShare === "function";
   $: if (showStalePrompt && staleCount === 0) {
     showStalePrompt = false;
+  }
+  $: if (isDesktopLayout && openSheet === "settings") {
+    openSheet = "none";
   }
   $: if (!keepScreenAwake) {
     void releaseWakeLock();
@@ -285,7 +299,60 @@
   }
 
   function setActiveTab(tab) {
-    activeTab = tab;
+    activeMobileTab = tab;
+    openSheet = "none";
+    isFabOpen = false;
+  }
+
+  function toggleFab() {
+    isFabOpen = !isFabOpen;
+  }
+
+  function openSettingsSurface() {
+    if (isDesktopLayout) {
+      activeDesktopTab = "settings";
+      isFabOpen = false;
+      return;
+    }
+    openSheet = "settings";
+    isFabOpen = false;
+  }
+
+  function openUtilitySheet() {
+    openSheet = "utility";
+    isFabOpen = false;
+  }
+
+  function openExportSheet() {
+    openSheet = "export";
+    isFabOpen = false;
+  }
+
+  function openReprocessSheet() {
+    openSheet = "reprocess";
+    isFabOpen = false;
+  }
+
+  function closeSheet() {
+    openSheet = "none";
+  }
+
+  function toggleSelectionSet() {
+    if (selectionToggleState === "all") {
+      deselectAll();
+      return;
+    }
+    selectAll();
+  }
+
+  function handleQueueSmartControl() {
+    if (queueControlVisibility === "pause") {
+      requestPauseQueue();
+      return;
+    }
+    if (queueControlVisibility === "resume") {
+      resumeQueue();
+    }
   }
 
   function getPerformanceSettings() {
@@ -407,12 +474,10 @@
     if (existingIndex >= 0) {
       URL.revokeObjectURL(results[existingIndex].url);
       results = results.map((result, index) => (index === existingIndex ? resultRecord : result));
-      selectedIndices.add(existingIndex);
     } else {
       results = [...results, resultRecord];
-      selectedIndices.add(results.length - 1);
     }
-    selectedIndices = selectedIndices;
+    selectedIndices = new Set(selectedIndices);
   }
 
   function startQueue() {
@@ -491,8 +556,9 @@
           }
 
           if (launchSource === "share-target" && results.length > 0) {
-            activeTab = "results";
+            activeMobileTab = "results";
             emphasizeShareOut = true;
+            openSheet = "export";
           }
 
           await releaseWakeLock();
@@ -688,6 +754,7 @@
     const staleIds = selectedStaleQueueIds();
     if (requeueByIds(staleIds)) {
       showStalePrompt = staleCount > staleIds.size;
+      closeSheet();
       startQueue();
     }
   }
@@ -698,12 +765,14 @@
     );
     if (requeueByIds(staleIds)) {
       showStalePrompt = false;
+      closeSheet();
       startQueue();
     }
   }
 
   function keepCurrentResults() {
     showStalePrompt = false;
+    closeSheet();
   }
 
   async function handleAddFiles(event) {
@@ -756,12 +825,19 @@
     a.click();
   }
 
-  async function downloadSelected() {
+  async function downloadSelected(asZip = false) {
     const selectedResults = getSelectedResults(results, selectedIndices);
     if (selectedResults.length === 0) return;
 
     if (selectedResults.length === 1) {
       download(selectedResults[0]);
+      closeSheet();
+      return;
+    }
+
+    if (!asZip) {
+      selectedResults.forEach((result) => download(result));
+      closeSheet();
       return;
     }
 
@@ -778,6 +854,7 @@
     a.download = `ultrahdr-batch-${timestamp}.zip`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 0);
+    closeSheet();
   }
 
   async function shareSelected() {
@@ -793,6 +870,7 @@
           title: "UltraHDR Images",
           text: "Processed with UltraHDR Converter",
         });
+        closeSheet();
         return;
       }
 
@@ -815,16 +893,17 @@
             title: "UltraHDR Images",
             text: "Processed with UltraHDR Converter",
           });
+          closeSheet();
           return;
         }
       }
 
-      await downloadSelected();
+      await downloadSelected(true);
       setNotice("Direct sharing is unavailable. Download started instead.");
     } catch (e) {
       console.error("Error sharing:", e);
       if (e.name === "AbortError") return;
-      await downloadSelected();
+      await downloadSelected(true);
       setNotice(`Share failed. Download started instead (${e.message}).`);
     }
   }
@@ -878,8 +957,10 @@
 
     notice = null;
     error = null;
-    activeTab = "convert";
-    isAdvancedOpen = false;
+    activeMobileTab = "convert";
+    activeDesktopTab = "all";
+    openSheet = "none";
+    isFabOpen = false;
 
     await clearQueueState();
     dispatch("reset");
@@ -995,7 +1076,7 @@
         class="tab-btn"
         data-testid="tab-convert"
         role="tab"
-        aria-selected={activeTab === "convert"}
+        aria-selected={activeMobileTab === "convert"}
         aria-controls="panel-convert"
         on:click={() => setActiveTab("convert")}
       >
@@ -1006,22 +1087,11 @@
         class="tab-btn"
         data-testid="tab-results"
         role="tab"
-        aria-selected={activeTab === "results"}
+        aria-selected={activeMobileTab === "results"}
         aria-controls="panel-results"
         on:click={() => setActiveTab("results")}
       >
         Results <span class="tab-badge">{results.length}</span>
-      </button>
-      <button
-        type="button"
-        class="tab-btn"
-        data-testid="tab-settings"
-        role="tab"
-        aria-selected={activeTab === "settings"}
-        aria-controls="panel-settings"
-        on:click={() => setActiveTab("settings")}
-      >
-        Settings
       </button>
     </div>
   {/if}
@@ -1029,6 +1099,7 @@
   <div
     class="processor-layout"
     class:desktop-two-pane={isDesktopLayout}
+    data-desktop-tab={activeDesktopTab}
     data-testid={isDesktopLayout ? "desktop-two-pane" : undefined}
   >
     <section class="controls-column">
@@ -1072,7 +1143,7 @@
             <span class="switch-label">Keep camera metadata</span>
           </div>
 
-          <div class="actions">
+          <div class="actions compact-actions">
             <input
               type="file"
               id="add-files"
@@ -1084,31 +1155,15 @@
             <button class="secondary" on:click={() => document.getElementById("add-files").click()}>
               Add Images
             </button>
-            <button on:click={reset} class="secondary">Start Over</button>
-            {#if !isDesktopLayout}
-              <button class="secondary" on:click={() => setActiveTab("settings")}>
-                Open Settings
-              </button>
-            {/if}
-          </div>
-
-          <div class="queue-controls" data-testid="queue-controls">
-            {#if canPauseQueue}
+            {#if queueControlVisibility !== "hidden"}
               <button
-                class="secondary small"
-                on:click={requestPauseQueue}
+                class="primary"
+                data-testid="queue-smart-control"
+                on:click={handleQueueSmartControl}
                 disabled={workflowState === WORKFLOW_STATES.PROCESSING_PAUSING}
               >
-                Pause Queue
+                {queueControlVisibility === "pause" ? "Pause Queue" : "Resume Queue"}
               </button>
-            {/if}
-
-            {#if canResumeQueue}
-              <button class="primary small" on:click={resumeQueue}>Resume Queue</button>
-            {/if}
-
-            {#if canCancelCurrent}
-              <button class="secondary small" on:click={cancelCurrent}>Cancel Current</button>
             {/if}
           </div>
 
@@ -1119,50 +1174,6 @@
             Existing input gain maps are preserved as-is unless
             &ldquo;Discard existing gain map(s)&rdquo; is enabled.
           </p>
-
-          {#if backgroundProcessingNotice}
-            <p class="help-text notice">{backgroundProcessingNotice}</p>
-          {/if}
-
-          {#if queueRestoreNotice}
-            <p class="help-text notice">{queueRestoreNotice}</p>
-          {/if}
-
-          {#if showStalePrompt && staleCount > 0}
-            <div class="stale-prompt card" data-testid="stale-reprocess-prompt">
-              <p>{staleCount} result(s) were generated with older settings.</p>
-              <div class="stale-actions">
-                <button class="primary small" on:click={reprocessSelectedStale}>
-                  Reprocess Selected
-                </button>
-                <button class="secondary small" on:click={reprocessAllStale}>
-                  Reprocess All Stale
-                </button>
-                <button class="text-btn" on:click={keepCurrentResults}>Keep Current Results</button>
-              </div>
-            </div>
-          {/if}
-
-          {#if notice}
-            <p class="help-text notice" data-testid="notice-message">{notice}</p>
-          {/if}
-        </div>
-      {/if}
-
-      {#if showSettingsPanel}
-        <div class="controls card panel settings-panel" id="panel-settings">
-          <div class="settings-header">
-            <h2>Settings</h2>
-            {#if !isDesktopLayout}
-              <button
-                class="text-btn"
-                type="button"
-                on:click={() => (isAdvancedOpen = !isAdvancedOpen)}
-              >
-                {isAdvancedOpen ? "Hide Advanced Settings" : "Show Advanced Settings"}
-              </button>
-            {/if}
-          </div>
 
           {#if processing || latestPipelineEvent}
             <div
@@ -1196,10 +1207,7 @@
                 aria-valuemax="100"
                 aria-valuenow={Math.round(pipelineOverallProgress)}
               >
-                <span
-                  class="progress-fill"
-                  style={`width: ${Math.round(pipelineOverallProgress)}%`}
-                ></span>
+                <span class="progress-fill" style={`width: ${Math.round(pipelineOverallProgress)}%`}></span>
               </div>
 
               <div class="pipeline-meta-row">
@@ -1221,135 +1229,132 @@
             </div>
           {/if}
 
-          {#if isDesktopLayout || isAdvancedOpen}
-            <div data-testid="advanced-settings">
-              <div class="control-group">
-                <span class="label">Rotation</span>
-                <div class="button-group">
-                  <button
-                    on:click={() => rotate(-90)}
-                    class="icon-btn"
-                    title="Rotate Left"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke-width="1.5"
-                      stroke="currentColor"
-                      class="w-6 h-6"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                      />
-                    </svg>
-                    Left
-                  </button>
-                  <button
-                    on:click={() => rotate(90)}
-                    class="icon-btn"
-                    title="Rotate Right"
-                  >
-                    Right
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke-width="1.5"
-                      stroke="currentColor"
-                      class="w-6 h-6"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"
-                      />
-                    </svg>
-                  </button>
-                  <span class="value">{rotation}°</span>
-                </div>
-              </div>
-
-              <div class="control-group">
-                <label for="shadowCutoff">
-                  Minimum Brightness Threshold for Enhancement: {Math.round(
-                    shadowCutoff * 100,
-                  )}%
-                </label>
-                <div class="range-wrapper">
-                  <input
-                    type="range"
-                    id="shadowCutoff"
-                    min="0.0"
-                    max="1.0"
-                    step="0.01"
-                    bind:value={shadowCutoff}
-                    on:input={handleSettingChange}
-                  />
-                  <span class="value">{Math.round(shadowCutoff * 100)}%</span>
-                </div>
-                <p class="help-text">
-                  Brightness values below this threshold are not enhanced.
-                </p>
-              </div>
-
-              <div class="control-group switch-group">
-                <label class="switch">
-                  <input
-                    type="checkbox"
-                    bind:checked={discardGainMap}
-                    on:change={handleSettingChange}
-                  />
-                  <span class="slider"></span>
-                </label>
-                <span class="switch-label">Discard existing gain map(s)</span>
-              </div>
-
-              <div class="control-group horizontal">
-                <label for="performance-mode">Performance mode</label>
-                <div class="select-wrapper">
-                  <select
-                    id="performance-mode"
-                    bind:value={performanceMode}
-                    on:change={handleSettingChange}
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="faster">Faster</option>
-                    <option value="best-quality">Best Quality</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="control-group switch-group">
-                <label class="switch">
-                  <input
-                    type="checkbox"
-                    bind:checked={stripExif}
-                    on:change={handleSettingChange}
-                  />
-                  <span class="slider"></span>
-                </label>
-                <span class="switch-label">Strip EXIF data</span>
-              </div>
-
-              {#if capabilities.supportsWakeLock}
-                <div class="control-group switch-group">
-                  <label class="switch">
-                    <input type="checkbox" bind:checked={keepScreenAwake} />
-                    <span class="slider"></span>
-                  </label>
-                  <span class="switch-label">Keep screen awake while processing</span>
-                </div>
-              {/if}
-
-            </div>
-          {:else}
-            <p class="help-text collapsed-note">
-              Advanced controls are hidden. Tap to reveal rotation, threshold, and metadata options.
-            </p>
+          {#if backgroundProcessingNotice}
+            <p class="help-text notice">{backgroundProcessingNotice}</p>
           {/if}
+
+          {#if queueRestoreNotice}
+            <p class="help-text notice">{queueRestoreNotice}</p>
+          {/if}
+
+          {#if showStalePrompt && staleCount > 0}
+            <div class="stale-prompt card" data-testid="stale-reprocess-prompt">
+              <p>{staleCount} result(s) were generated with older settings.</p>
+              <div class="stale-actions">
+                <button class="primary small" on:click={openReprocessSheet}>Reprocess</button>
+              </div>
+            </div>
+          {/if}
+
+          {#if notice}
+            <p class="help-text notice" data-testid="notice-message">{notice}</p>
+          {/if}
+        </div>
+      {/if}
+
+      {#if showSettingsPanel}
+        <div class="controls card panel settings-panel" id="panel-settings">
+          <div class="settings-header">
+            <h2>Settings</h2>
+          </div>
+          <div data-testid="advanced-settings">
+            <div class="control-group">
+              <span class="label">Rotation</span>
+              <div class="button-group">
+                <button on:click={() => rotate(-90)} class="icon-btn" title="Rotate Left">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke-width="1.5"
+                    stroke="currentColor"
+                    class="w-6 h-6"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
+                    />
+                  </svg>
+                  Left
+                </button>
+                <button on:click={() => rotate(90)} class="icon-btn" title="Rotate Right">
+                  Right
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke-width="1.5"
+                    stroke="currentColor"
+                    class="w-6 h-6"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3"
+                    />
+                  </svg>
+                </button>
+                <span class="value">{rotation}°</span>
+              </div>
+            </div>
+
+            <div class="control-group">
+              <label for="shadowCutoff">
+                Minimum Brightness Threshold for Enhancement: {Math.round(shadowCutoff * 100)}%
+              </label>
+              <div class="range-wrapper">
+                <input
+                  type="range"
+                  id="shadowCutoff"
+                  min="0.0"
+                  max="1.0"
+                  step="0.01"
+                  bind:value={shadowCutoff}
+                  on:input={handleSettingChange}
+                />
+                <span class="value">{Math.round(shadowCutoff * 100)}%</span>
+              </div>
+              <p class="help-text">Brightness values below this threshold are not enhanced.</p>
+            </div>
+
+            <div class="control-group switch-group">
+              <label class="switch">
+                <input type="checkbox" bind:checked={discardGainMap} on:change={handleSettingChange} />
+                <span class="slider"></span>
+              </label>
+              <span class="switch-label">Discard existing gain map(s)</span>
+            </div>
+
+            <div class="control-group horizontal">
+              <label for="performance-mode">Performance mode</label>
+              <div class="select-wrapper">
+                <select id="performance-mode" bind:value={performanceMode} on:change={handleSettingChange}>
+                  <option value="auto">Auto</option>
+                  <option value="faster">Faster</option>
+                  <option value="best-quality">Best Quality</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="control-group switch-group">
+              <label class="switch">
+                <input type="checkbox" bind:checked={stripExif} on:change={handleSettingChange} />
+                <span class="slider"></span>
+              </label>
+              <span class="switch-label">Strip EXIF data</span>
+            </div>
+
+            {#if capabilities.supportsWakeLock}
+              <div class="control-group switch-group">
+                <label class="switch">
+                  <input type="checkbox" bind:checked={keepScreenAwake} />
+                  <span class="slider"></span>
+                </label>
+                <span class="switch-label">Keep screen awake while processing</span>
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
     </section>
@@ -1380,42 +1385,17 @@
             <div class="results">
               <div class="results-header">
                 <h3>Results</h3>
-                <div class="selection-controls">
-                  <button class="text-btn" on:click={selectAll}>Select All</button>
-                  <button class="text-btn" on:click={deselectAll}>Deselect All</button>
-                  <button
-                    class="primary small"
-                    on:click={downloadSelected}
-                    disabled={selectedIndices.size === 0}
-                    data-testid={emphasizeShareOut && isDesktopLayout && !hasShareCapability
-                      ? "share-out-cta"
-                      : undefined}
-                  >
-                    {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
+                <div class="selection-controls compact">
+                  <button class="text-btn" on:click={toggleSelectionSet}>
+                    {selectionToggleState === "all" ? "Clear Selection" : "Select All"}
                   </button>
-                  {#if hasShareCapability}
+                  {#if isDesktopLayout}
                     <button
-                      class="primary small share-btn"
-                      on:click={shareSelected}
-                      disabled={selectedIndices.size === 0}
-                      title="Share to other apps"
-                      data-testid={emphasizeShareOut && isDesktopLayout ? "share-out-cta" : undefined}
+                      class="primary small"
+                      on:click={openExportSheet}
+                      data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke-width="1.5"
-                        stroke="currentColor"
-                        class="w-5 h-5"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.935-2.186 2.25 2.25 0 00-3.935 2.186z"
-                        />
-                      </svg>
-                      Share ({selectedIndices.size})
+                      Export ({selectedIndices.size})
                     </button>
                   {/if}
                 </div>
@@ -1497,28 +1477,186 @@
     </section>
   </div>
 
-  {#if !isDesktopLayout && activeTab === "results" && results.length > 0}
+  {#if !isDesktopLayout && activeMobileTab === "results" && results.length > 0}
     <div class="mobile-action-bar" data-testid="mobile-action-bar">
       <button
         class="primary"
-        on:click={downloadSelected}
-        disabled={selectedIndices.size === 0}
-        data-testid={emphasizeShareOut && !hasShareCapability ? "share-out-cta" : undefined}
+        on:click={openExportSheet}
+        data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
       >
-        {selectedIndices.size > 1 ? "Download Zip" : "Download"} ({selectedIndices.size})
+        Export ({selectedIndices.size})
       </button>
+    </div>
+  {/if}
 
-      {#if hasShareCapability}
-        <button
-          class="secondary share-btn"
-          on:click={shareSelected}
-          disabled={selectedIndices.size === 0}
-          title="Share to other apps"
-          data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
-        >
-          Share ({selectedIndices.size})
+  <div class="fab-layer">
+    {#if isFabOpen}
+      <div class="fab-menu">
+        <button class="secondary small" on:click={openSettingsSurface}>Settings</button>
+        <button class="secondary small" on:click={openUtilitySheet}>More</button>
+      </div>
+    {/if}
+    <button
+      class="floating-gear"
+      type="button"
+      data-testid="floating-gear"
+      aria-expanded={isFabOpen}
+      on:click={toggleFab}
+    >
+      Gear
+    </button>
+  </div>
+
+  {#if openSheet !== "none"}
+    <button class="sheet-backdrop" type="button" aria-label="Close panel" on:click={closeSheet}></button>
+  {/if}
+
+  {#if openSheet === "settings" && !isDesktopLayout}
+    <div class="sheet-card" data-testid="settings-sheet">
+      <div class="sheet-header">
+        <h3>Settings</h3>
+        <button class="text-btn" on:click={closeSheet}>Done</button>
+      </div>
+
+      <div data-testid="advanced-settings">
+        <div class="control-group">
+          <span class="label">Rotation</span>
+          <div class="button-group">
+            <button on:click={() => rotate(-90)} class="icon-btn" title="Rotate Left">Left</button>
+            <button on:click={() => rotate(90)} class="icon-btn" title="Rotate Right">Right</button>
+            <span class="value">{rotation}°</span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label for="shadowCutoff">
+            Minimum Brightness Threshold for Enhancement: {Math.round(shadowCutoff * 100)}%
+          </label>
+          <div class="range-wrapper">
+            <input
+              type="range"
+              id="shadowCutoff"
+              min="0.0"
+              max="1.0"
+              step="0.01"
+              bind:value={shadowCutoff}
+              on:input={handleSettingChange}
+            />
+            <span class="value">{Math.round(shadowCutoff * 100)}%</span>
+          </div>
+        </div>
+
+        <div class="control-group switch-group">
+          <label class="switch">
+            <input type="checkbox" bind:checked={discardGainMap} on:change={handleSettingChange} />
+            <span class="slider"></span>
+          </label>
+          <span class="switch-label">Discard existing gain map(s)</span>
+        </div>
+
+        <div class="control-group horizontal">
+          <label for="performance-mode-mobile">Performance mode</label>
+          <div class="select-wrapper">
+            <select
+              id="performance-mode-mobile"
+              bind:value={performanceMode}
+              on:change={handleSettingChange}
+            >
+              <option value="auto">Auto</option>
+              <option value="faster">Faster</option>
+              <option value="best-quality">Best Quality</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="control-group switch-group">
+          <label class="switch">
+            <input type="checkbox" bind:checked={stripExif} on:change={handleSettingChange} />
+            <span class="slider"></span>
+          </label>
+          <span class="switch-label">Strip EXIF data</span>
+        </div>
+
+        {#if capabilities.supportsWakeLock}
+          <div class="control-group switch-group">
+            <label class="switch">
+              <input type="checkbox" bind:checked={keepScreenAwake} />
+              <span class="slider"></span>
+            </label>
+            <span class="switch-label">Keep screen awake while processing</span>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if openSheet === "utility"}
+    <div class="sheet-card" data-testid="utility-sheet">
+      <div class="sheet-header">
+        <h3>More</h3>
+        <button class="text-btn" on:click={closeSheet}>Done</button>
+      </div>
+
+      <div class="sheet-actions">
+        {#if canCancelCurrent}
+          <button class="secondary" on:click={cancelCurrent}>Cancel Current</button>
+        {/if}
+        <button class="secondary" on:click={reset}>Start Over</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if openSheet === "export"}
+    <div class="sheet-card" data-testid="export-sheet">
+      <div class="sheet-header">
+        <h3>Export</h3>
+        <button class="text-btn" on:click={closeSheet}>Done</button>
+      </div>
+
+      <p class="help-text">
+        {#if selectedIndices.size === 0}
+          Select at least one result to export.
+        {:else}
+          {selectedIndices.size} item(s) selected.
+        {/if}
+      </p>
+
+      <div class="sheet-actions">
+        <button class="secondary" on:click={toggleSelectionSet}>
+          {selectionToggleState === "all" ? "Clear Selection" : "Select All"}
         </button>
-      {/if}
+        <button class="primary" on:click={() => downloadSelected(false)} disabled={selectedIndices.size === 0}>
+          Download
+        </button>
+        {#if selectedIndices.size > 1}
+          <button class="secondary" on:click={() => downloadSelected(true)}>Download ZIP</button>
+        {/if}
+        {#if hasShareCapability}
+          <button
+            class="primary share-btn"
+            on:click={shareSelected}
+            disabled={selectedIndices.size === 0}
+            title="Share to other apps"
+            data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
+          >
+            Share
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if openSheet === "reprocess"}
+    <div class="sheet-card" data-testid="reprocess-sheet">
+      <div class="sheet-header">
+        <h3>Reprocess</h3>
+        <button class="text-btn" on:click={closeSheet}>Done</button>
+      </div>
+      <div class="sheet-actions">
+        <button class="primary" on:click={reprocessSelectedStale}>Reprocess Selected</button>
+        <button class="secondary" on:click={reprocessAllStale}>Reprocess All Stale</button>
+        <button class="text-btn" on:click={keepCurrentResults}>Keep Current Results</button>
+      </div>
     </div>
   {/if}
 </div>
@@ -1536,7 +1674,7 @@
     top: 0.5rem;
     z-index: 15;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
     padding: 0.4rem;
     border: 1px solid var(--border-subtle);
@@ -1761,10 +1899,6 @@
     margin: 0;
   }
 
-  .collapsed-note {
-    margin-top: 0.2rem;
-  }
-
   .icon-btn {
     display: inline-flex;
     align-items: center;
@@ -1794,11 +1928,9 @@
     justify-content: flex-start;
   }
 
-  .queue-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.55rem;
-    align-items: center;
+  .compact-actions button {
+    flex: 1;
+    min-width: 130px;
   }
 
   .stale-prompt {
@@ -2016,6 +2148,10 @@
     justify-content: flex-end;
   }
 
+  .selection-controls.compact {
+    gap: 0.5rem;
+  }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -2164,6 +2300,83 @@
     flex: 1;
   }
 
+  .fab-layer {
+    position: fixed;
+    right: 1rem;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 4.8rem);
+    display: grid;
+    gap: 0.55rem;
+    justify-items: end;
+    z-index: 25;
+  }
+
+  .fab-menu {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.6rem;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    min-width: 120px;
+  }
+
+  .floating-gear {
+    min-width: 56px;
+    min-height: 56px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: var(--primary-color);
+    color: var(--text-on-primary);
+    font-weight: 700;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 29;
+  }
+
+  .sheet-card {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem);
+    width: min(92vw, 520px);
+    max-height: min(72vh, 680px);
+    overflow: auto;
+    padding: 0.95rem;
+    border-radius: 14px;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+    z-index: 30;
+    display: grid;
+    gap: 0.8rem;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sheet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
+  .sheet-header h3 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .sheet-actions {
+    display: grid;
+    gap: 0.55rem;
+  }
+
   :global(button:focus-visible),
   :global(input:focus-visible),
   :global(select:focus-visible),
@@ -2199,6 +2412,11 @@
 
     .mobile-action-bar {
       display: none;
+    }
+
+    .fab-layer {
+      right: 1.25rem;
+      bottom: 1.25rem;
     }
 
     .results-column {

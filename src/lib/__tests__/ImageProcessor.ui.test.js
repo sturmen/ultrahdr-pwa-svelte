@@ -54,21 +54,20 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     window.matchMedia = createMatchMedia(false);
   });
 
-  it('defaults to Convert tab and keeps advanced settings collapsed until requested', async () => {
+  it('shows only Convert/Results mobile tabs and opens settings from floating gear', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     const convertTab = screen.getByTestId('tab-convert');
     expect(convertTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
+    expect(screen.queryByTestId('tab-settings')).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByTestId('tab-settings'));
-    expect(screen.queryByTestId('advanced-settings')).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole('button', { name: /show advanced settings/i }));
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
     expect(screen.getByTestId('advanced-settings')).toBeInTheDocument();
   });
 
-  it('shows results count in tab badge and only shows sticky mobile action bar on Results tab', async () => {
+  it('shows export-only mobile action bar and export sheet with selection guidance', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     await waitFor(() => {
@@ -80,9 +79,11 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.click(screen.getByTestId('tab-results'));
     expect(screen.getByTestId('results-grid')).toBeInTheDocument();
     expect(screen.getByTestId('mobile-action-bar')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^export/i })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByTestId('tab-settings'));
-    expect(screen.queryByTestId('mobile-action-bar')).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
+    expect(screen.getByTestId('export-sheet')).toBeInTheDocument();
+    expect(screen.getByText(/select at least one result to export/i)).toBeInTheDocument();
   });
 
   it('renders two-pane desktop layout and hides mobile tab bar', async () => {
@@ -97,6 +98,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByTestId('desktop-two-pane')).toBeInTheDocument();
     expect(screen.queryByTestId('mobile-tab-bar')).not.toBeInTheDocument();
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^settings$/i })).toBeInTheDocument();
   });
 
   it('renders granular progress details from stage-progress telemetry updates', async () => {
@@ -132,7 +134,6 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     render(ImageProcessor, { props: { files: makeFiles(1) } });
-    await fireEvent.click(screen.getByTestId('tab-settings'));
 
     await waitFor(() => {
       expect(screen.getByTestId('pipeline-progress')).toBeInTheDocument();
@@ -189,21 +190,27 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: /pause queue/i }));
+    expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/pause queue/i);
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    await fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    expect(screen.getByTestId('utility-sheet')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cancel current/i })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('queue-smart-control'));
     firstFileGate.resolve();
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /resume queue/i })).toBeInTheDocument();
+      expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/resume queue/i);
     });
     expect(processImage).toHaveBeenCalledTimes(1);
 
-    await fireEvent.click(screen.getByRole('button', { name: /resume queue/i }));
+    await fireEvent.click(screen.getByTestId('queue-smart-control'));
     await waitFor(() => {
       expect(processImage).toHaveBeenCalledTimes(2);
     });
   });
 
-  it('marks completed outputs stale on setting changes and waits for explicit reprocess', async () => {
+  it('shows one stale reprocess CTA that opens reprocess sheet options', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     await waitFor(() => {
@@ -218,8 +225,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(processImage).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
+    expect(screen.getByTestId('reprocess-sheet')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
     await waitFor(() => {

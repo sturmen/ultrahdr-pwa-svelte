@@ -96,11 +96,13 @@ async function waitForProcessing(page, expectedResults = 1) {
 async function waitForReprocessing(page) {
     const prompt = page.getByTestId('stale-reprocess-prompt');
     if (await prompt.count()) {
-        await prompt.getByRole('button', { name: /Reprocess All Stale/i }).click();
+        await prompt.getByRole('button', { name: /^Reprocess$/i }).click();
+        await page.getByTestId('reprocess-sheet').getByRole('button', { name: /Reprocess All Stale/i }).click();
     } else {
-        const fallback = page.getByRole('button', { name: /Reprocess All Stale/i });
+        const fallback = page.getByRole('button', { name: /^Reprocess$/i });
         if (await fallback.count()) {
             await fallback.first().click();
+            await page.getByTestId('reprocess-sheet').getByRole('button', { name: /Reprocess All Stale/i }).click();
         }
     }
     await waitForProcessing(page, 1);
@@ -110,14 +112,18 @@ async function waitForReprocessing(page) {
  * Helper: download the first result and return its data as a Buffer.
  */
 async function downloadFirstResult(page) {
-    // Click "Select All" to ensure at least one is selected
-    await page.click('text=Select All');
+    // Ensure at least one result is selected before export.
+    const selectAll = page.getByRole('button', { name: /Select All/i });
+    if (await selectAll.count()) {
+        await selectAll.first().click();
+    }
+    await page.getByRole('button', { name: /^Export/i }).first().click();
 
     // Listen for the download event
     const downloadPromise = page.waitForEvent('download');
 
     // Click the download button
-    await page.click('button:has-text("Download")');
+    await page.getByTestId('export-sheet').getByRole('button', { name: /^Download$/i }).click();
 
     const download = await downloadPromise;
     const downloadPath = await download.path();
@@ -487,13 +493,13 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await page.goto('/');
 
             await uploadFiles(page, [SDR_IMAGE, SDR_IMAGE_2]);
-            await page.getByRole('button', { name: /Pause Queue/i }).click();
+            await page.getByTestId('queue-smart-control').click();
 
-            await expect(page.getByRole('button', { name: /Resume Queue/i })).toBeVisible({
+            await expect(page.getByTestId('queue-smart-control')).toHaveText(/Resume Queue/i, {
                 timeout: PROCESSING_TIMEOUT
             });
 
-            await page.getByRole('button', { name: /Resume Queue/i }).click();
+            await page.getByTestId('queue-smart-control').click();
             await waitForProcessing(page, 2);
             await expect(page.locator('.result-card')).toHaveCount(2);
         });
@@ -868,7 +874,10 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Verify action buttons
             await expect(page.locator('text=Add Images')).toBeVisible();
-            await expect(page.locator('text=Start Over')).toBeVisible();
+            await expect(page.locator('text=Start Over')).toHaveCount(0);
+            await page.getByTestId('floating-gear').click();
+            await page.getByRole('button', { name: /^More$/i }).click();
+            await expect(page.getByTestId('utility-sheet').getByRole('button', { name: /Start Over/i })).toBeVisible();
         });
 
         test('should display JPEG quality options', async ({ page }) => {

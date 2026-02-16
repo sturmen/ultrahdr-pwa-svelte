@@ -48,17 +48,17 @@ test.describe('Mobile smoke tests', () => {
 
     await expect(page.getByTestId('tab-convert')).toBeVisible();
     await expect(page.getByTestId('tab-results')).toBeVisible();
-    await expect(page.getByTestId('tab-settings')).toBeVisible();
+    await expect(page.getByTestId('floating-gear')).toBeVisible();
 
     await page.getByTestId('tab-convert').click();
     await expect(page.getByRole('button', { name: 'Add Images' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Start Over' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start Over' })).toHaveCount(0);
 
     await page.getByTestId('tab-results').click();
     await expect(page.locator('.result-card')).toHaveCount(1);
     await expect(page.getByTestId('mobile-action-bar')).toBeVisible();
     await expect(
-      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Download/ }),
+      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Export/ }),
     ).toBeVisible();
 
     const viewportFits = await page.evaluate(() => {
@@ -85,9 +85,10 @@ test.describe('Mobile smoke tests', () => {
     await page.getByTestId('tab-results').click();
     await waitForProcessing(page, 1);
 
+    await page.getByRole('button', { name: /select all/i }).click();
+    await page.getByTestId('mobile-action-bar').getByRole('button', { name: /export/i }).click();
+    await expect(page.getByTestId('export-sheet')).toBeVisible();
     await expect(page.locator('.share-btn')).toHaveCount(0);
-    await expect(
-      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Download/ }),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Download/i })).toBeVisible();
   });
 });
