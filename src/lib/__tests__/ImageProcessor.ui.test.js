@@ -292,6 +292,40 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
   });
 
+  it('defaults to v4 and lets users switch reverse tone map version from advanced settings', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(processImage).mock.calls[0][1]).toMatchObject({
+      reverseToneMapVersion: 'v4',
+    });
+
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+
+    await fireEvent.click(screen.getByText(/advanced algorithm controls/i));
+    const versionSelect = screen.getByLabelText(/reverse tone map version/i);
+    expect(versionSelect).toHaveValue('v4');
+
+    await fireEvent.change(versionSelect, { target: { value: 'v2' } });
+    expect(versionSelect).toHaveValue('v2');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(2);
+    });
+    expect(vi.mocked(processImage).mock.calls[1][1]).toMatchObject({
+      reverseToneMapVersion: 'v2',
+    });
+  });
+
   it('moves to results and emphasizes share-out action after share-target completion', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1), launchSource: 'share-target' } });
 
