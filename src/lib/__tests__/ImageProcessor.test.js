@@ -9,11 +9,6 @@ describe('ImageProcessor - Settings defaults', () => {
     expect(maxContentBoost).toBe(2.3);
   });
 
-  it('should have default shadowCutoff of 0.05', () => {
-    const shadowCutoff = 0.05;
-    expect(shadowCutoff).toBe(0.05);
-  });
-
   it('should have default rotation of 0', () => {
     const rotation = 0;
     expect(rotation).toBe(0);
@@ -39,12 +34,6 @@ describe('ImageProcessor - Settings ranges', () => {
   it('should have maxContentBoost range 1.0 to 4.0', () => {
     const min = 1.0;
     const max = 4.0;
-    expect(min).toBeLessThan(max);
-  });
-
-  it('should have shadowCutoff range 0.0 to 1.0', () => {
-    const min = 0.0;
-    const max = 1.0;
     expect(min).toBeLessThan(max);
   });
 

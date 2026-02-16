@@ -387,4 +387,48 @@ describe('processImage UltraHDR preservation path', () => {
         expect(encoderInstance.setExifData).toHaveBeenCalledTimes(1);
         expect(encoderInstance.setExifData).toHaveBeenCalledWith(extractedExifPayload);
     });
+
+    it('does not downscale preserved gain maps by gainMapScale in safe mode', async () => {
+        const { processImage } = await import('../processing.js');
+        const { processHeic } = await import('../heic-processing.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+        const onProgress = vi.fn();
+
+        const safeModeSdr = new ImageData(
+            new Uint8ClampedArray(4 * 4 * 4).fill(128),
+            4,
+            4
+        );
+        const safeModeGainMap = new ImageData(
+            new Uint8ClampedArray(2 * 2 * 4).fill(64),
+            2,
+            2
+        );
+
+        processHeic.mockResolvedValueOnce({
+            sdr: safeModeSdr,
+            gainMap: safeModeGainMap,
+            gainMapMetadata,
+            name: 'input.heic'
+        });
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true,
+            safeMode: true,
+            maxOutputMegapixels: 0.000009,
+            gainMapScale: 0.5,
+            onProgress
+        });
+
+        const stages = onProgress.mock.calls
+            .map(([event]) => event?.stage)
+            .filter(Boolean);
+        expect(stages).toContain('safe-mode-resize-sdr');
+        expect(stages).not.toContain('safe-mode-resize-gain-map');
+    });
 });

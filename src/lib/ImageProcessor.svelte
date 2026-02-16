@@ -26,7 +26,6 @@
   export let launchIntent = { action: null, tab: null };
 
   let maxContentBoost = 2.3;
-  let shadowCutoff = 0.05;
   let rotation = 0;
   let quality = 0.95;
   let discardGainMap = false;
@@ -92,6 +91,7 @@
     "decode-image-data",
     "safe-mode-resize-sdr",
     "safe-mode-resize-gain-map",
+    "safe-mode-clamp-preserved-gain-map",
     "generate-gain-map",
     "compress-components",
     "encode-init",
@@ -117,6 +117,7 @@
     "decode-image-data": "Decoding pixels",
     "safe-mode-resize-sdr": "Resizing SDR image",
     "safe-mode-resize-gain-map": "Resizing gain map source",
+    "safe-mode-clamp-preserved-gain-map": "Clamping preserved gain map",
     "generate-gain-map": "Generating gain map",
     "compress-components": "Compressing components",
     "encode-init": "Initializing encoder",
@@ -402,20 +403,20 @@
       return {
         safeMode: true,
         maxOutputMegapixels: Math.max(8, Math.floor(processingProfile.maxInputMegapixels * 0.6)),
-        gainMapScale: Math.min(0.5, processingProfile.gainMapScale),
+        gainMapScale: 0.5,
       };
     }
     if (performanceMode === "best-quality") {
       return {
         safeMode: false,
         maxOutputMegapixels: null,
-        gainMapScale: 1,
+        gainMapScale: 0.5,
       };
     }
     return {
       safeMode: processingProfile.safeModeDefault,
       maxOutputMegapixels: processingProfile.maxInputMegapixels,
-      gainMapScale: processingProfile.gainMapScale,
+      gainMapScale: 0.5,
     };
   }
 
@@ -427,7 +428,6 @@
       quality,
       discardGainMap,
       stripExif,
-      shadowCutoff,
       safeMode: performanceSettings.safeMode,
       maxOutputMegapixels: performanceSettings.maxOutputMegapixels,
       gainMapScale: performanceSettings.gainMapScale,
@@ -1004,7 +1004,6 @@
 
     rotation = 0;
     maxContentBoost = 2.3;
-    shadowCutoff = 0.05;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
@@ -1348,25 +1347,6 @@
               </div>
             </div>
 
-            <div class="control-group">
-              <label for="shadowCutoff">
-                Minimum Brightness Threshold for Enhancement: {Math.round(shadowCutoff * 100)}%
-              </label>
-              <div class="range-wrapper">
-                <input
-                  type="range"
-                  id="shadowCutoff"
-                  min="0.0"
-                  max="1.0"
-                  step="0.01"
-                  bind:value={shadowCutoff}
-                  on:input={handleSettingChange}
-                />
-                <span class="value">{Math.round(shadowCutoff * 100)}%</span>
-              </div>
-              <p class="help-text">Brightness values below this threshold are not enhanced.</p>
-            </div>
-
             <div class="control-group switch-group">
               <label class="switch">
                 <input type="checkbox" bind:checked={discardGainMap} on:change={handleSettingChange} />
@@ -1586,24 +1566,6 @@
             <button on:click={() => rotate(-90)} class="icon-btn" title="Rotate Left">Left</button>
             <button on:click={() => rotate(90)} class="icon-btn" title="Rotate Right">Right</button>
             <span class="value">{rotation}°</span>
-          </div>
-        </div>
-
-        <div class="control-group">
-          <label for="shadowCutoff">
-            Minimum Brightness Threshold for Enhancement: {Math.round(shadowCutoff * 100)}%
-          </label>
-          <div class="range-wrapper">
-            <input
-              type="range"
-              id="shadowCutoff"
-              min="0.0"
-              max="1.0"
-              step="0.01"
-              bind:value={shadowCutoff}
-              on:input={handleSettingChange}
-            />
-            <span class="value">{Math.round(shadowCutoff * 100)}%</span>
           </div>
         </div>
 

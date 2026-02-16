@@ -10,6 +10,9 @@ import {
 import { extractExifApp1PayloadFromInput } from './input-exif.js';
 
 const DEFAULT_MAX_CONTENT_BOOST = 2.3;
+const DEFAULT_REVERSE_TONEMAP_VERSION = 'v2';
+const DEFAULT_BRIGHTNESS_INTENT = 'conservative';
+const SHADOW_CUTOFF_DEPRECATION_KEY = 'processing.shadowCutoff.deprecated';
 
 const DEFAULT_PROCESS_OPTIONS = {
     maxContentBoost: DEFAULT_MAX_CONTENT_BOOST,
@@ -18,12 +21,50 @@ const DEFAULT_PROCESS_OPTIONS = {
     discardGainMap: false,
     stripExif: false,
     highlightExponent: 2.0,
-    shadowCutoff: 0.05,
+    reverseToneMapVersion: DEFAULT_REVERSE_TONEMAP_VERSION,
+    brightnessIntent: DEFAULT_BRIGHTNESS_INTENT,
     safeMode: false,
     maxOutputMegapixels: null,
-    gainMapScale: 1,
+    gainMapScale: 0.5,
     abortSignal: null
 };
+
+function getDeprecationWarningStore() {
+    if (!globalThis.__ultrahdrDeprecationWarnings) {
+        globalThis.__ultrahdrDeprecationWarnings = new Set();
+    }
+    return globalThis.__ultrahdrDeprecationWarnings;
+}
+
+function warnDeprecationOnce(key, message) {
+    const warningStore = getDeprecationWarningStore();
+    if (warningStore.has(key)) {
+        return;
+    }
+    warningStore.add(key);
+    console.warn(`${key}: ${message}`);
+}
+
+function clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function smoothstep(edge0, edge1, x) {
+    if (edge0 === edge1) {
+        return x >= edge1 ? 1 : 0;
+    }
+    const t = clamp01((x - edge0) / (edge1 - edge0));
+    return t * t * (3 - 2 * t);
+}
+
+function percentile(sortedValues, p) {
+    if (!sortedValues.length) {
+        return 0;
+    }
+    const clampedP = clamp01(p);
+    const index = Math.floor((sortedValues.length - 1) * clampedP);
+    return sortedValues[index];
+}
 
 function createAbortError() {
     if (typeof DOMException !== 'undefined') {
@@ -109,15 +150,19 @@ async function ensureWasmLoaded() {
 }
 
 function buildGainMapMetadata(maxContentBoost) {
-    const log2MaxBoost = Math.log2(maxContentBoost);
+    const safeMaxContentBoost = Number.isFinite(maxContentBoost) && maxContentBoost > 0
+        ? maxContentBoost
+        : DEFAULT_MAX_CONTENT_BOOST;
+    const normalizedMaxContentBoost = Math.max(1.0, safeMaxContentBoost);
+    const log2MaxBoost = Math.log2(normalizedMaxContentBoost);
     return {
         gainMapMin: [1.0, 1.0, 1.0],
-        gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
+        gainMapMax: [normalizedMaxContentBoost, normalizedMaxContentBoost, normalizedMaxContentBoost],
         gamma: [1.0, 1.0, 1.0],
         offsetSdr: [0, 0, 0],
         offsetHdr: [0, 0, 0],
         hdrCapacityMin: 1.0,
-        hdrCapacityMax: maxContentBoost,
+        hdrCapacityMax: normalizedMaxContentBoost,
         parsedGainMapMin: [0, 0, 0],
         parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
         parsedGamma: [1.0, 1.0, 1.0],
@@ -138,7 +183,9 @@ function buildGainMapMetadata(maxContentBoost) {
  * @param {boolean} options.discardGainMap - Whether to discard existing gain map and regenerate.
  * @param {boolean} options.stripExif - Whether to strip EXIF data.
  * @param {number} options.highlightExponent - Exponent for highlight boost curve.
- * @param {number} options.shadowCutoff - Cutoff for shadow boost (0-1).
+ * @param {"v1" | "v2"} [options.reverseToneMapVersion] - Reverse tonemap mode. Defaults to "v2".
+ * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent] - Brightness profile for v2 mode.
+ * @param {number} [options.shadowCutoff] - Deprecated in v2 (accepted as no-op for compatibility).
  * @param {(event: Object) => void} [options.onProgress] - Optional telemetry callback.
  * @param {number} [options.fileIndex] - Optional file index in current batch.
  * @param {number} [options.totalFiles] - Optional total files in current batch.
@@ -244,12 +291,12 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     );
                 }
 
-                const constrainedGainDimensions = getGainMapConstrainedDimensions(
+                const constrainedGainDimensions = getPreservedGainMapConstrainedDimensions(
                     gainMapImageData,
-                    mergedOptions.gainMapScale
+                    imageData
                 );
                 if (constrainedGainDimensions.changed) {
-                    gainMapImageData = await telemetry.runStage('safe-mode-resize-gain-map', async () =>
+                    gainMapImageData = await telemetry.runStage('safe-mode-clamp-preserved-gain-map', async () =>
                         resizeImageData(
                             gainMapImageData,
                             constrainedGainDimensions.width,
@@ -298,20 +345,18 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         }
 
         let gainMapSourceImageData = workingImageData;
-        if (mergedOptions.safeMode) {
-            const constrainedGainDimensions = getGainMapConstrainedDimensions(
-                gainMapSourceImageData,
-                mergedOptions.gainMapScale
+        const constrainedGainDimensions = getGainMapConstrainedDimensions(
+            gainMapSourceImageData,
+            mergedOptions.gainMapScale
+        );
+        if (constrainedGainDimensions.changed) {
+            gainMapSourceImageData = await telemetry.runStage('safe-mode-resize-gain-map', async () =>
+                resizeImageData(
+                    gainMapSourceImageData,
+                    constrainedGainDimensions.width,
+                    constrainedGainDimensions.height
+                )
             );
-            if (constrainedGainDimensions.changed) {
-                gainMapSourceImageData = await telemetry.runStage('safe-mode-resize-gain-map', async () =>
-                    resizeImageData(
-                        gainMapSourceImageData,
-                        constrainedGainDimensions.width,
-                        constrainedGainDimensions.height
-                    )
-                );
-            }
         }
 
         throwIfAborted(mergedOptions.abortSignal);
@@ -556,6 +601,16 @@ function getGainMapConstrainedDimensions(imageData, gainMapScale) {
     };
 }
 
+function getPreservedGainMapConstrainedDimensions(gainMapImageData, sdrImageData) {
+    const width = Math.min(gainMapImageData.width, sdrImageData.width);
+    const height = Math.min(gainMapImageData.height, sdrImageData.height);
+    return {
+        width,
+        height,
+        changed: width !== gainMapImageData.width || height !== gainMapImageData.height
+    };
+}
+
 /**
  * Computes a box-filtered (mean) version of a Float32Array image channel.
  * Uses integral image for O(N) performance regardless of radius.
@@ -643,24 +698,24 @@ function guidedFilter(I, w, h, r, eps) {
 }
 
 /**
- * ACES-approximate forward tone curve (Narkowicz 2015 fit).
+ * Legacy ACES-approximate forward tone curve (Narkowicz 2015 fit).
  * Maps scene-linear [0, ∞) → display [0, ~1].
  * f(x) = (x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14)
  * @param {number} x - Scene-linear luminance
  * @returns {number} Display luminance
  */
-function acesForward(x) {
+function acesNarkowiczForward(x) {
     return (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
 }
 
 /**
- * Derivative of the ACES-approximate forward curve, used for Newton's method.
+ * Derivative of the legacy ACES-approximate forward curve, used for Newton's method.
  * f(x) = (ax² + bx) / (cx² + dx + e) where a=2.51, b=0.03, c=2.43, d=0.59, e=0.14
  * f'(x) = [(2ax+b)(cx²+dx+e) - (ax²+bx)(2cx+d)] / (cx²+dx+e)²
  * @param {number} x
  * @returns {number}
  */
-function acesForwardDerivative(x) {
+function acesNarkowiczForwardDerivative(x) {
     const a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
     const num = a * x * x + b * x;
     const den = c * x * x + d * x + e;
@@ -670,13 +725,13 @@ function acesForwardDerivative(x) {
 }
 
 /**
- * Inverse ACES tone curve via Newton's method.
- * Given a display-referred value y in [0, ~1], recovers scene-linear x such that acesForward(x) ≈ y.
+ * Inverse legacy ACES tone curve via Newton's method.
+ * Given a display-referred value y in [0, ~1], recovers scene-linear x such that acesNarkowiczForward(x) ≈ y.
  * @param {number} y - Display-referred (SDR) luminance in [0, 1]
  * @param {number} maxIter - Max Newton iterations
  * @returns {number} Scene-linear HDR luminance
  */
-function acesInverse(y, maxIter = 8) {
+function acesNarkowiczInverse(y, maxIter = 8) {
     if (y <= 0) return 0;
     if (y >= 1) return 20.0; // ACES saturates around x≈20 → f(x)≈1.0
 
@@ -691,8 +746,8 @@ function acesInverse(y, maxIter = 8) {
 
     // Refine with Newton's method for numerical precision
     for (let i = 0; i < maxIter; i++) {
-        const fx = acesForward(x) - y;
-        const fpx = acesForwardDerivative(x);
+        const fx = acesNarkowiczForward(x) - y;
+        const fpx = acesNarkowiczForwardDerivative(x);
         if (Math.abs(fpx) < 1e-10) break;
         const step = fx / fpx;
         x -= step;
@@ -703,27 +758,69 @@ function acesInverse(y, maxIter = 8) {
 }
 
 /**
- * Generates the Gain Map ImageData using state-of-the-art reverse tonemapping.
+ * Stephen Hill ACES RRT+ODT fit (scalar form for luminance).
+ * Reference implementation: BakingLab/ACES.hlsl.
+ * @param {number} x - Scene-linear luminance
+ * @returns {number}
+ */
+function acesHillForward(x) {
+    const a = x * (x + 0.0245786) - 0.000090537;
+    const b = x * (0.983729 * x + 0.4329510) + 0.238081;
+    return a / b;
+}
+
+function acesHillForwardDerivative(x) {
+    const a = x * (x + 0.0245786) - 0.000090537;
+    const b = x * (0.983729 * x + 0.4329510) + 0.238081;
+    const aPrime = 2.0 * x + 0.0245786;
+    const bPrime = 1.967458 * x + 0.4329510;
+    return (aPrime * b - a * bPrime) / (b * b);
+}
+
+function acesHillInverse(y, maxIter = 8) {
+    if (y <= 0) return 0;
+    if (y >= 1) return 20.0;
+
+    let x = y / Math.max(1e-6, 1 - y);
+    x = Math.max(0, Math.min(20, x));
+
+    for (let i = 0; i < maxIter; i++) {
+        const fx = acesHillForward(x) - y;
+        const fpx = acesHillForwardDerivative(x);
+        if (!Number.isFinite(fpx) || Math.abs(fpx) < 1e-10) break;
+        const step = fx / fpx;
+        x -= step;
+        x = Math.max(0, Math.min(20, x));
+        if (Math.abs(step) < 1e-8) break;
+    }
+    return Math.max(0, x);
+}
+
+/**
+ * Generates gain-map data using a deterministic reverse-tonemapping pipeline.
  *
- * Pipeline stages:
- *  1. Luminance decomposition (BT.709) — prevents hue shifts
- *  2. Guided filter local adaptation (He et al. 2013) — edge-preserving spatial context
- *  3. ACES-inspired inverse sigmoid — natural highlight expansion
- *  4. Adaptive boost blending (global + local) — spatially-aware gain
- *  5. Desaturation compensation — maintains color vibrancy at high boost
- *  6. Log2 gain encoding — UltraHDR-compatible metadata
+ * v2 (default):
+ *  - Clip-aware highlight emphasis
+ *  - Two-scale edge-aware local adaptation
+ *  - Conservative APL/midtone guardrails
+ *  - Continuous low-luma regularization (no hard shadow cutoff)
+ *
+ * v1:
+ *  - Legacy single-scale adaptation and hard shadow cutoff behavior.
  *
  * @param {ImageData} imageData - The SDR image data.
- * @param {Object} options
- * @param {number} [options.maxContentBoost=2.3] - Maximum HDR boost factor
- * @param {number} [options.highlightExponent=2.0] - Controls highlight expansion aggressiveness
- * @param {number} [options.shadowCutoff=0.05] - Linear luminance below which no boost is applied
- * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation
- * @param {number} [options.localAdaptationRadius] - Guided filter radius (auto if not set)
+ * @param {Object} [options]
+ * @param {number} [options.maxContentBoost=2.3] - Maximum HDR boost factor.
+ * @param {number} [options.highlightExponent=2.0] - Controls highlight expansion aggressiveness.
+ * @param {"v1" | "v2"} [options.reverseToneMapVersion="v2"] - Reverse tonemapping mode.
+ * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent="conservative"] - Brightness profile for v2.
+ * @param {number} [options.shadowCutoff] - Deprecated in v2 (accepted as no-op).
+ * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation.
+ * @param {number} [options.localAdaptationRadius] - Guided filter radius (auto if not set).
  * @param {(progress: number, note?: string) => void} [options.onStageProgress] - Optional granular progress callback.
  * @returns {{gainMapImageData: ImageData, metadata: Object}}
  */
-export function generateGainMapData(imageData, options) {
+export function generateGainMapData(imageData, options = {}) {
     throwIfAborted(options?.abortSignal);
     const rgba = imageData.data;
     const length = rgba.length;
@@ -731,12 +828,35 @@ export function generateGainMapData(imageData, options) {
     const height = imageData.height;
     const pixelCount = width * height;
 
-    const maxContentBoost = options.maxContentBoost ?? DEFAULT_MAX_CONTENT_BOOST;
+    const reverseToneMapVersion = options.reverseToneMapVersion === 'v1'
+        ? 'v1'
+        : DEFAULT_REVERSE_TONEMAP_VERSION;
+    const brightnessIntent = ['conservative', 'balanced', 'vibrant'].includes(options.brightnessIntent)
+        ? options.brightnessIntent
+        : DEFAULT_BRIGHTNESS_INTENT;
+
+    if (
+        reverseToneMapVersion === 'v2' &&
+        Object.prototype.hasOwnProperty.call(options, 'shadowCutoff')
+    ) {
+        warnDeprecationOnce(
+            SHADOW_CUTOFF_DEPRECATION_KEY,
+            'shadowCutoff is deprecated and ignored in v2; remove it from callers.'
+        );
+    }
+
+    const rawMaxContentBoost = Number.isFinite(options.maxContentBoost)
+        ? options.maxContentBoost
+        : DEFAULT_MAX_CONTENT_BOOST;
+    const maxContentBoost = Math.max(1.0, rawMaxContentBoost);
     const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 2.0;
-    const shadowCutoff = options.shadowCutoff !== undefined ? options.shadowCutoff : 0.05;
+    const legacyShadowCutoff = options.shadowCutoff !== undefined ? options.shadowCutoff : 0.05;
     const localAdaptStrength = options.localAdaptationStrength !== undefined ? options.localAdaptationStrength : 0.5;
     const localRadius = options.localAdaptationRadius || Math.max(4, Math.min(64, Math.round(Math.max(width, height) / 32)));
-    const guidedEps = 0.0001; // ε = 0.01² for luminance in [0,1]
+    const v2BaseRadius = Math.max(3, Math.min(12, Math.round(Math.max(width, height) / 256)));
+    const localRadiusSmall = Math.max(2, Math.min(8, Math.round(v2BaseRadius * 0.6)));
+    const localRadiusLarge = Math.max(localRadiusSmall + 2, Math.min(14, Math.round(v2BaseRadius * 1.6)));
+    const guidedEps = 0.0001;
     const onStageProgress = typeof options?.onStageProgress === 'function'
         ? options.onStageProgress
         : null;
@@ -755,15 +875,14 @@ export function generateGainMapData(imageData, options) {
     }
 
     const log2MaxBoost = Math.log2(maxContentBoost);
-
-    // ─── Stage 1: sRGB → Linear + Luminance Decomposition ───
+    const canEncodeGain = log2MaxBoost > 0;
+    const logDelta = 1e-6;
 
     const toLinear = (v) => {
         v /= 255;
         return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     };
 
-    // Convert to linear RGB and compute BT.709 luminance
     const linR = new Float32Array(pixelCount);
     const linG = new Float32Array(pixelCount);
     const linB = new Float32Array(pixelCount);
@@ -791,25 +910,56 @@ export function generateGainMapData(imageData, options) {
         }
     }
 
-    // ─── Stage 2: Local Adaptation via Guided Filter ───
-
     reportProgress(45, 'Computing local adaptation');
-    const localLum = guidedFilter(luminance, width, height, localRadius, guidedEps);
+
+    let localLum;
+    let localDetailLum;
+    if (reverseToneMapVersion === 'v2') {
+        const localSmall = guidedFilter(luminance, width, height, localRadiusSmall, guidedEps);
+        const localLarge = guidedFilter(luminance, width, height, localRadiusLarge, guidedEps * 1.5);
+        localLum = new Float32Array(pixelCount);
+        localDetailLum = localSmall;
+        for (let i = 0; i < pixelCount; i++) {
+            const contrastRatio = Math.abs(localSmall[i] - localLarge[i]) / (localLarge[i] + logDelta);
+            const edgeWeight = smoothstep(0.0, 0.06, contrastRatio);
+            localLum[i] = localLarge[i] * (1 - edgeWeight) + localSmall[i] * edgeWeight;
+        }
+    } else {
+        localLum = guidedFilter(luminance, width, height, localRadius, guidedEps);
+        localDetailLum = localLum;
+    }
+
     reportProgress(60, 'Building adaptive gain map');
 
-    // Compute global average luminance (log-average for perceptual accuracy)
     let logSum = 0;
-    const logDelta = 1e-6; // prevent log(0)
     for (let i = 0; i < pixelCount; i++) {
         logSum += Math.log(luminance[i] + logDelta);
     }
     const globalAvgLum = Math.exp(logSum / pixelCount);
 
-    // ─── Stage 3 & 4: ACES Inverse + Adaptive Boost ───
+    const sortedLuminance = Array.from(luminance).sort((a, b) => a - b);
+    const medianLum = percentile(sortedLuminance, 0.5);
+    const p75Lum = percentile(sortedLuminance, 0.75);
 
-    // Normalize the ACES forward curve so that f(1) maps to the curve's output at 1.0
-    // This lets us treat SDR [0,1] luminance as the output of the ACES curve
-    const acesAt1 = acesForward(1.0); // ≈ 0.8048
+    const toneForward = reverseToneMapVersion === 'v2' ? acesHillForward : acesNarkowiczForward;
+    const toneInverse = reverseToneMapVersion === 'v2' ? acesHillInverse : acesNarkowiczInverse;
+    const acesAt1 = toneForward(1.0);
+    const medianNorm = clamp01(medianLum);
+    const medianSceneLinear = toneInverse(medianNorm * acesAt1);
+    const medianBaseBoost = medianLum > logDelta ? medianSceneLinear / medianLum : 1.0;
+    const medianHighlightWeight = Math.pow(medianNorm, highlightExponent);
+    const medianBaseScale = medianBaseBoost > 1.0
+        ? Math.min(medianBaseBoost / (maxContentBoost * 0.6), 1.0)
+        : 0.4;
+    const estimatedMedianRawBoost = 1.0 + (maxContentBoost - 1.0) * medianHighlightWeight * medianBaseScale;
+    const medianLiftCap = brightnessIntent === 'vibrant'
+        ? 1.26
+        : brightnessIntent === 'balanced'
+            ? 1.16
+            : 1.08;
+    const midtoneGuard = reverseToneMapVersion === 'v2'
+        ? Math.min(1.0, Math.max(0, (medianLiftCap - 1.0) / Math.max(1e-5, estimatedMedianRawBoost - 1.0)))
+        : 1.0;
 
     const gainMapData = new Uint8ClampedArray(length);
 
@@ -820,72 +970,87 @@ export function generateGainMapData(imageData, options) {
         const lum = luminance[i];
         const idx = i * 4;
 
-        // Blend between global and local average luminance for adaptation
         const adaptedAvg = localAdaptStrength > 0
             ? globalAvgLum * (1 - localAdaptStrength) + localLum[i] * localAdaptStrength
             : globalAvgLum;
-
-        // Adaptation ratio: how bright is this pixel relative to its local context?
-        // Values > 1 mean brighter than surroundings (highlight), < 1 means darker (shadow)
         const adaptRatio = (lum + logDelta) / (adaptedAvg + logDelta);
 
-        // Map SDR luminance through inverse ACES to get "scene-linear" HDR luminance
-        // Scale input to the ACES curve range and then invert
-        const sdrNorm = Math.min(1.0, lum / 1.0); // already in [0,1] from linear
-        const acesInput = sdrNorm * acesAt1; // scale to ACES output range
-        const sceneLinear = acesInverse(acesInput);
+        const sdrNorm = clamp01(lum);
+        const acesInput = sdrNorm * acesAt1;
+        const sceneLinear = toneInverse(acesInput);
+        const baseBoost = lum > logDelta ? sceneLinear / lum : 1.0;
 
-        // The base boost from the inverse tone curve
-        let baseBoost = lum > logDelta ? sceneLinear / lum : 1.0;
-
-        // Apply highlight exponent to control aggressiveness of expansion
-        // Higher exponent = more aggressive boost for bright pixels
-        const lumNorm = Math.max(0, (lum - shadowCutoff) / (1 - shadowCutoff + logDelta));
+        const lumNorm = reverseToneMapVersion === 'v1'
+            ? Math.max(0, (lum - legacyShadowCutoff) / (1 - legacyShadowCutoff + logDelta))
+            : clamp01(lum);
         const highlightWeight = Math.pow(Math.min(1, lumNorm), highlightExponent);
+        const localBoostMod = Math.pow(
+            Math.max(0.6, adaptRatio),
+            (reverseToneMapVersion === 'v2' ? 0.22 : 0.3) * localAdaptStrength
+        );
+        const baseScale = baseBoost > 1.0
+            ? Math.min(baseBoost / (maxContentBoost * (reverseToneMapVersion === 'v2' ? 0.6 : 0.5)), 1.0)
+            : (reverseToneMapVersion === 'v2' ? 0.4 : 0.5);
 
-        // Modulate boost by local adaptation: highlights in dark regions get extra boost
-        // while highlights in already-bright regions are more restrained
-        const localBoostMod = Math.pow(adaptRatio, 0.3 * localAdaptStrength);
-
-        // Final boost: blend between 1.0 (no boost) and the full calculated boost
         let boost;
-        if (lum <= shadowCutoff) {
-            boost = 1.0; // No boost in deep shadows
+        if (reverseToneMapVersion === 'v1') {
+            if (lum <= legacyShadowCutoff) {
+                boost = 1.0;
+            } else {
+                boost = 1.0 + (maxContentBoost - 1.0) * highlightWeight * localBoostMod * baseScale;
+            }
         } else {
-            boost = 1.0 + (maxContentBoost - 1.0) * highlightWeight * localBoostMod *
-                (baseBoost > 1.0 ? Math.min(baseBoost / (maxContentBoost * 0.5), 1.0) : 0.5);
+            let rawBoost = 1.0 + (maxContentBoost - 1.0) * highlightWeight * localBoostMod * baseScale;
+
+            const maxChannel = Math.max(linR[i], linG[i], linB[i]);
+            const nearClip = smoothstep(0.96, 0.995, maxChannel);
+            const localContrast = Math.abs(lum - localDetailLum[i]);
+            const plateau = 1.0 - smoothstep(0.01, 0.08, localContrast);
+            const clipMask = nearClip * plateau;
+            if (clipMask > 0) {
+                const clipBoost = 1.0 + clipMask * (maxContentBoost - 1.0);
+                rawBoost = Math.max(rawBoost, clipBoost);
+            }
+
+            const highlightShare = smoothstep(Math.max(0, Math.min(1, p75Lum)), 1.0, lum);
+            const midtoneScale = 1.0 - (1.0 - midtoneGuard) * (1.0 - highlightShare);
+            rawBoost = 1.0 + (rawBoost - 1.0) * midtoneScale;
+            if (midtoneGuard < 1.0 && highlightShare > 0) {
+                const recovered = (1.0 - midtoneGuard) * 0.35 * highlightShare;
+                rawBoost = rawBoost + recovered * (maxContentBoost - rawBoost);
+            }
+
+            const lowLumaWeight = smoothstep(0.03, 0.12, lum);
+            boost = 1.0 + (rawBoost - 1.0) * lowLumaWeight;
         }
 
-        // Clamp boost to valid range
         boost = Math.max(1.0, Math.min(maxContentBoost, boost));
 
-        // ─── Stage 5: Desaturation Compensation ───
-        // High-boost areas tend to look washed out; increase saturation proportionally
-        const boostRatio = (boost - 1.0) / (maxContentBoost - 1.0); // 0–1 normalized
-        const satBoost = 1.0 + 0.15 * boostRatio; // subtle 0–15% saturation increase
+        const satBoostStrength = reverseToneMapVersion === 'v2'
+            ? (brightnessIntent === 'vibrant' ? 0.14 : brightnessIntent === 'balanced' ? 0.1 : 0.06)
+            : 0.15;
+        const boostRatio = clamp01((boost - 1.0) / Math.max(1e-6, maxContentBoost - 1.0));
+        const satBoost = 1.0 + satBoostStrength * boostRatio;
 
-        // Apply boost to each channel, using luminance-ratio method to preserve hue
-        // hdrChannel = lum * boost * (channel / lum) * satBoost_adjustment
-        // Simplifies to: channel * boost, with saturation compensation
         const lumSafe = Math.max(lum, logDelta);
         const rRatio = linR[i] / lumSafe;
         const gRatio = linG[i] / lumSafe;
         const bRatio = linB[i] / lumSafe;
-
-        // Apply saturation boost: push ratios away from 1.0
         const rRatSat = 1.0 + (rRatio - 1.0) * satBoost;
         const gRatSat = 1.0 + (gRatio - 1.0) * satBoost;
         const bRatSat = 1.0 + (bRatio - 1.0) * satBoost;
+        const minChannelRatio = reverseToneMapVersion === 'v2' ? 0.65 : 0.5;
+        const minChannelBoost = reverseToneMapVersion === 'v2'
+            ? 1.0 + (boost - 1.0) * 0.35
+            : 1.0;
 
-        // Per-channel boost preserving hue (via luminance ratios)
-        const rBoost = Math.max(1.0, Math.min(maxContentBoost, boost * Math.max(0.5, rRatSat)));
-        const gBoost = Math.max(1.0, Math.min(maxContentBoost, boost * Math.max(0.5, gRatSat)));
-        const bBoost = Math.max(1.0, Math.min(maxContentBoost, boost * Math.max(0.5, bRatSat)));
+        const rBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, rRatSat))));
+        const gBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, gRatSat))));
+        const bBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, bRatSat))));
 
-        // ─── Stage 6: Log2 Gain Encoding ───
-        const rEncoded = Math.max(0, Math.min(1, Math.log2(rBoost) / log2MaxBoost));
-        const gEncoded = Math.max(0, Math.min(1, Math.log2(gBoost) / log2MaxBoost));
-        const bEncoded = Math.max(0, Math.min(1, Math.log2(bBoost) / log2MaxBoost));
+        const rEncoded = canEncodeGain ? clamp01(Math.log2(rBoost) / log2MaxBoost) : 0;
+        const gEncoded = canEncodeGain ? clamp01(Math.log2(gBoost) / log2MaxBoost) : 0;
+        const bEncoded = canEncodeGain ? clamp01(Math.log2(bBoost) / log2MaxBoost) : 0;
 
         gainMapData[idx] = Math.round(rEncoded * 255);
         gainMapData[idx + 1] = Math.round(gEncoded * 255);
@@ -901,8 +1066,7 @@ export function generateGainMapData(imageData, options) {
     reportProgress(100, 'Gain map ready');
 
     const gainMapImageData = new ImageData(gainMapData, width, height);
-
-    // Construct metadata (unchanged format for full backward compatibility)
+    const parsedMaxBoost = canEncodeGain ? log2MaxBoost : 0;
     const metadata = {
         gainMapMin: [1.0, 1.0, 1.0],
         gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
@@ -912,12 +1076,12 @@ export function generateGainMapData(imageData, options) {
         hdrCapacityMin: 1.0,
         hdrCapacityMax: maxContentBoost,
         parsedGainMapMin: [0, 0, 0],
-        parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
+        parsedGainMapMax: [parsedMaxBoost, parsedMaxBoost, parsedMaxBoost],
         parsedGamma: [1.0, 1.0, 1.0],
         parsedOffsetSdr: [0, 0, 0],
         parsedOffsetHdr: [0, 0, 0],
         parsedHdrCapacityMin: 0,
-        parsedHdrCapacityMax: log2MaxBoost
+        parsedHdrCapacityMax: parsedMaxBoost
     };
 
     return { gainMapImageData, metadata };

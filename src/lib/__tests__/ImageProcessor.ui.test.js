@@ -85,6 +85,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.click(screen.getByTestId('floating-gear'));
     await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
     expect(screen.getByTestId('advanced-settings')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
   });
 
   it('shows export-only mobile action bar and export sheet with selection guidance', async () => {
@@ -122,6 +123,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByTestId('mobile-tab-bar')).not.toBeInTheDocument();
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /^settings$/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
     expect(screen.queryByRole('button', { name: /settings/i })).not.toBeInTheDocument();

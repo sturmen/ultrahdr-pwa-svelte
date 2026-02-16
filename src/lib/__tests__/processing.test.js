@@ -22,7 +22,6 @@ describe('generateGainMapData function', () => {
     const options = {
       maxContentBoost: 2.0,
       highlightExponent: 2.0,
-      shadowCutoff: 0.05,
     };
 
     const result = generateGainMapData(imageData, options);
@@ -60,7 +59,6 @@ describe('generateGainMapData function', () => {
     const options = {
       maxContentBoost: 4.0,
       highlightExponent: 2.0,
-      shadowCutoff: 0.0,
     };
 
     const result = generateGainMapData(imageData, options);
@@ -69,24 +67,21 @@ describe('generateGainMapData function', () => {
     expect(result.gainMapImageData.data[0]).toBeGreaterThan(100);
   });
 
-  it('should respect shadow cutoff', () => {
-    // Create pixel below shadow cutoff
+  it('keeps deep shadows near neutral in conservative v2', () => {
     const imageData = new ImageData(
       new Uint8ClampedArray([10, 10, 10, 255]), // Very dark
       1,
       1
     );
 
-    const options = {
+    const result = generateGainMapData(imageData, {
       maxContentBoost: 4.0,
-      highlightExponent: 2.0,
-      shadowCutoff: 0.5, // 50% cutoff - this pixel is well below
-    };
+      reverseToneMapVersion: 'v2',
+      brightnessIntent: 'conservative'
+    });
 
-    const result = generateGainMapData(imageData, options);
-
-    // Below cutoff means no boost, so gain map should be 0
-    expect(result.gainMapImageData.data[0]).toBe(0);
+    // Conservative mode should keep very dark regions close to no gain.
+    expect(result.gainMapImageData.data[0]).toBeLessThanOrEqual(18);
   });
 
   it('should produce monotonically increasing gain for brighter pixels', () => {
@@ -107,7 +102,6 @@ describe('generateGainMapData function', () => {
     const options = {
       maxContentBoost: 4.0,
       highlightExponent: 2.0,
-      shadowCutoff: 0.01,
     };
 
     const darkResult = generateGainMapData(darkPixel, options);
@@ -117,6 +111,110 @@ describe('generateGainMapData function', () => {
     // Brighter pixels should consistently get more gain
     expect(brightResult.gainMapImageData.data[0]).toBeGreaterThan(midResult.gainMapImageData.data[0]);
     expect(midResult.gainMapImageData.data[0]).toBeGreaterThan(darkResult.gainMapImageData.data[0]);
+  });
+
+  it('ignores shadowCutoff in v2 and warns once per session', () => {
+    delete globalThis.__ultrahdrDeprecationWarnings;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const imageData = new ImageData(
+      new Uint8ClampedArray([180, 180, 180, 255]),
+      1,
+      1
+    );
+
+    const resultA = generateGainMapData(imageData, {
+      maxContentBoost: 3.0,
+      reverseToneMapVersion: 'v2',
+      shadowCutoff: 0.0
+    });
+    const resultB = generateGainMapData(imageData, {
+      maxContentBoost: 3.0,
+      reverseToneMapVersion: 'v2',
+      shadowCutoff: 0.8
+    });
+
+    expect(Array.from(resultA.gainMapImageData.data)).toEqual(
+      Array.from(resultB.gainMapImageData.data)
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain('processing.shadowCutoff.deprecated');
+    warnSpy.mockRestore();
+  });
+
+  it('gives clipped highlights more gain than non-clipped near-whites in v2', () => {
+    const imageData = new ImageData(
+      new Uint8ClampedArray([
+        255, 255, 255, 255,
+        245, 245, 245, 255
+      ]),
+      2,
+      1
+    );
+
+    const result = generateGainMapData(imageData, {
+      maxContentBoost: 4.0,
+      reverseToneMapVersion: 'v2',
+      brightnessIntent: 'conservative'
+    });
+
+    expect(result.gainMapImageData.data[0]).toBeGreaterThan(result.gainMapImageData.data[4]);
+  });
+
+  it('caps midtone lift in conservative v2', () => {
+    const imageData = new ImageData(
+      new Uint8ClampedArray([128, 128, 128, 255]),
+      1,
+      1
+    );
+
+    const result = generateGainMapData(imageData, {
+      maxContentBoost: 4.0,
+      reverseToneMapVersion: 'v2',
+      brightnessIntent: 'conservative'
+    });
+
+    // Conservative intent should avoid aggressive midtone gain.
+    expect(result.gainMapImageData.data[0]).toBeLessThanOrEqual(95);
+  });
+
+  it('produces finite gain map values across maxContentBoost range 1.0-4.0', () => {
+    const imageData = new ImageData(
+      new Uint8ClampedArray([200, 120, 40, 255]),
+      1,
+      1
+    );
+
+    for (const maxContentBoost of [1.0, 2.0, 3.0, 4.0]) {
+      const result = generateGainMapData(imageData, {
+        maxContentBoost,
+        reverseToneMapVersion: 'v2'
+      });
+      for (let c = 0; c < 3; c++) {
+        expect(Number.isFinite(result.gainMapImageData.data[c])).toBe(true);
+        expect(result.gainMapImageData.data[c]).toBeGreaterThanOrEqual(0);
+        expect(result.gainMapImageData.data[c]).toBeLessThanOrEqual(255);
+      }
+    }
+  });
+
+  it('keeps channel gains bounded for highly saturated colors in v2', () => {
+    const imageData = new ImageData(
+      new Uint8ClampedArray([240, 40, 40, 255]),
+      1,
+      1
+    );
+
+    const result = generateGainMapData(imageData, {
+      maxContentBoost: 4.0,
+      reverseToneMapVersion: 'v2'
+    });
+
+    const r = result.gainMapImageData.data[0];
+    const g = result.gainMapImageData.data[1];
+    const b = result.gainMapImageData.data[2];
+    expect(r).toBeGreaterThanOrEqual(g);
+    expect(r).toBeGreaterThanOrEqual(b);
+    expect(Math.min(g, b)).toBeGreaterThan(0);
   });
 
   it('should produce correct metadata structure', () => {
@@ -162,7 +260,6 @@ describe('generateGainMapData function', () => {
     const options = {
       maxContentBoost: 4.0,
       highlightExponent: 2.0,
-      shadowCutoff: 0.01,
       localAdaptationStrength: 0.8,
     };
 

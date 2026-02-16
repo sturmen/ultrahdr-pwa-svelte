@@ -390,7 +390,11 @@ function extractHeicGainMapJpeg(heicPath, tempDir) {
 
 function extractUltraHdrGainMapJpeg(ultraHdrPath, tempDir) {
     const gainMapOut = path.join(tempDir, 'output-gainmap.jpg');
-    const bytes = execFileSync('exiftool', ['-b', '-MPImage2', ultraHdrPath], { stdio: 'pipe' });
+    const bytes = execFileSync('exiftool', ['-b', '-MPImage2', ultraHdrPath], {
+        stdio: 'pipe',
+        // MPImage2 can be several MB; default Node execFileSync maxBuffer can overflow.
+        maxBuffer: 64 * 1024 * 1024
+    });
     if (!bytes || bytes.length === 0) {
         throw new Error('Failed to extract MPImage2 gain map from output UltraHDR JPEG');
     }
@@ -525,6 +529,28 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Should contain gain map XMP metadata (UltraHDR marker)
             expect(hasGainMapXMP(jpegData)).toBe(true);
+        });
+
+        test('should generate gain map at quarter-pixel resolution for SDR inputs', async ({ page, browserName }) => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-scale-${browserName}-`));
+            try {
+                await page.goto('/');
+                await uploadFiles(page, [SDR_IMAGE]);
+                await waitForProcessing(page);
+
+                const outputBuffer = await downloadFirstResult(page);
+                const outputJpegPath = path.join(tempDir, 'output-ultrahdr.jpg');
+                fs.writeFileSync(outputJpegPath, outputBuffer);
+
+                const outputGainMapPath = extractUltraHdrGainMapJpeg(outputJpegPath, tempDir);
+                const sourceBitmap = await loadBitmap(SDR_IMAGE);
+                const outputGainMapBitmap = await loadBitmap(outputGainMapPath);
+
+                expect(outputGainMapBitmap.width).toBe(Math.max(1, Math.floor(sourceBitmap.width * 0.5)));
+                expect(outputGainMapBitmap.height).toBe(Math.max(1, Math.floor(sourceBitmap.height * 0.5)));
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
         });
     });
 
@@ -978,7 +1004,6 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             // Verify all controls are present
             await expect(page.locator('#boost')).toBeVisible();
             await expect(page.locator('#boost')).toHaveValue('2.3');
-            await expect(page.locator('#shadowCutoff')).toBeVisible();
             await expect(page.locator('#quality')).toBeVisible();
 
             // Verify toggle switches
