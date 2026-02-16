@@ -24,6 +24,7 @@ describe('App shell and navigation frame', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     consumeSharedFilesFromLaunch.mockResolvedValue([]);
+    window.history.replaceState({}, '', '/');
   });
 
   it('renders the mobile-native shell and trust indicators', async () => {
@@ -58,5 +59,17 @@ describe('App shell and navigation frame', () => {
 
     await screen.findByTestId('upload-drop-zone');
     expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
+  });
+
+  it('auto-triggers file picker for launch shortcut action=pick', async () => {
+    window.history.replaceState({}, '', '/?action=pick');
+    const inputClickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
+
+    render(App);
+
+    await screen.findByTestId('upload-drop-zone');
+    await waitFor(() => {
+      expect(inputClickSpy).toHaveBeenCalled();
+    });
   });
 });

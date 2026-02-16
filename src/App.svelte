@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import DropZone from "./lib/DropZone.svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
   import { consumeSharedFilesFromLaunch } from "./lib/share-target-launch.js";
@@ -11,6 +11,7 @@
   let shareLaunchChecked = false;
   let launchSource = "regular";
   let restoreNotice = null;
+  let launchIntent = { action: null, tab: null };
 
   function handleFiles(event) {
     files = Array.from(event.detail);
@@ -19,9 +20,32 @@
   function handleReset() {
     files = [];
     launchSource = "regular";
+    launchIntent = { action: null, tab: null };
+  }
+
+  function parseLaunchIntent(search) {
+    const params = new URLSearchParams(search || "");
+    const action = params.get("action");
+    const tab = params.get("tab");
+    return {
+      action: action || null,
+      tab: tab || null,
+    };
+  }
+
+  async function maybeAutoPickImages() {
+    if (launchIntent.action !== "pick" || files.length > 0) return;
+    await tick();
+    const input = document.getElementById("file-upload");
+    if (input && typeof input.click === "function") {
+      input.click();
+    }
   }
 
   onMount(async () => {
+    launchIntent = parseLaunchIntent(
+      typeof window !== "undefined" ? window.location.search : "",
+    );
     const sharedFiles = await consumeSharedFilesFromLaunch();
     if (sharedFiles.length > 0) {
       files = sharedFiles;
@@ -38,6 +62,7 @@
       }
     }
     shareLaunchChecked = true;
+    await maybeAutoPickImages();
   });
 </script>
 
@@ -66,7 +91,7 @@
         {/if}
       </div>
     {:else}
-      <ImageProcessor {files} {launchSource} on:reset={handleReset} />
+      <ImageProcessor {files} {launchSource} {launchIntent} on:reset={handleReset} />
     {/if}
   </section>
 

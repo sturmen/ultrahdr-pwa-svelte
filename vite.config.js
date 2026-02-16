@@ -20,6 +20,26 @@ export default defineConfig({
         short_name: 'UltraHDR',
         description: 'Convert images to UltraHDR gain maps offline',
         theme_color: '#ffffff',
+        shortcuts: [
+          {
+            name: 'Pick Images',
+            short_name: 'Pick',
+            description: 'Import images and start a conversion queue',
+            url: './?action=pick'
+          },
+          {
+            name: 'Open Results',
+            short_name: 'Results',
+            description: 'Jump to converted images',
+            url: './?tab=results'
+          },
+          {
+            name: 'Resume Queue',
+            short_name: 'Resume',
+            description: 'Resume paused conversions',
+            url: './?action=resume'
+          }
+        ],
         icons: [
           {
             src: 'pwa-192x192.png',

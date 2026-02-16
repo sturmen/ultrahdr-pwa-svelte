@@ -19,9 +19,11 @@
     WORKFLOW_STATES,
     transitionWorkflow,
   } from "./workflow-state.js";
+  import { clearQueueBadge, setQueueBadge } from "./badge.js";
 
   export let files = [];
   export let launchSource = "regular";
+  export let launchIntent = { action: null, tab: null };
 
   let maxContentBoost = 2.3;
   let shadowCutoff = 0.05;
@@ -53,9 +55,12 @@
   let processingRunId = 0;
   let queueLoopActive = false;
   let pauseRequested = false;
+  let resumeRequestedFromLaunch = false;
   let cancelCurrentRequested = false;
   let currentQueueId = null;
   let wakeLockSentinel = null;
+  let launchIntentConsumed = false;
+  let lastBadgeCount = null;
 
   let activeMobileTab = "convert";
   let activeDesktopTab = "all";
@@ -159,6 +164,21 @@
   }
   $: if (!keepScreenAwake) {
     void releaseWakeLock();
+  }
+  $: if (resumeRequestedFromLaunch && canResumeQueue) {
+    resumeRequestedFromLaunch = false;
+    resumeQueue();
+  }
+  $: {
+    const badgeCount = queuePendingCount > 0 ? queuePendingCount : 0;
+    if (badgeCount !== lastBadgeCount) {
+      lastBadgeCount = badgeCount;
+      if (badgeCount > 0) {
+        void setQueueBadge(badgeCount);
+      } else {
+        void clearQueueBadge();
+      }
+    }
   }
 
   function formatMs(ms) {
@@ -302,6 +322,33 @@
     activeMobileTab = tab;
     openSheet = "none";
     isFabOpen = false;
+  }
+
+  function consumeLaunchIntent() {
+    if (launchIntentConsumed) return;
+    launchIntentConsumed = true;
+
+    const tab = String(launchIntent?.tab || "").toLowerCase();
+    const action = String(launchIntent?.action || "").toLowerCase();
+
+    if (tab === "results") {
+      setActiveTab("results");
+    }
+
+    if (action === "pick") {
+      const picker = document.getElementById("add-files");
+      if (picker && typeof picker.click === "function") {
+        picker.click();
+      }
+    }
+
+    if (action === "resume") {
+      if (canResumeQueue) {
+        resumeQueue();
+      } else {
+        resumeRequestedFromLaunch = true;
+      }
+    }
   }
 
   function toggleFab() {
@@ -1039,6 +1086,7 @@
       }
 
       initializeQueueFromFiles(files);
+      consumeLaunchIntent();
     })();
 
     return () => {

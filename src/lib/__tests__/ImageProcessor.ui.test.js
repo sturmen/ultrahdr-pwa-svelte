@@ -52,6 +52,24 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.matchMedia = createMatchMedia(false);
+    Object.defineProperty(window.navigator, 'setAppBadge', {
+      configurable: true,
+      value: vi.fn(async () => {}),
+    });
+    Object.defineProperty(window.navigator, 'clearAppBadge', {
+      configurable: true,
+      value: vi.fn(async () => {}),
+    });
+  });
+
+  it('honors launch intent tab=results on initial render', async () => {
+    render(ImageProcessor, {
+      props: { files: makeFiles(1), launchIntent: { tab: 'results' } },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
+    });
   });
 
   it('shows only Convert/Results mobile tabs and opens settings from floating gear', async () => {
@@ -243,5 +261,14 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('share-out-cta')).toBeInTheDocument();
+  });
+
+  it('updates app badge during queue work and clears badge when queue completes', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(window.navigator.setAppBadge).toHaveBeenCalled();
+      expect(window.navigator.clearAppBadge).toHaveBeenCalled();
+    });
   });
 });
