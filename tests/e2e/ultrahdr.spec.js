@@ -1019,7 +1019,9 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Verify the drop zone is visible
             await expect(page.getByTestId('upload-drop-zone')).toBeVisible();
-            await expect(page.getByText('Pick Images')).toBeVisible();
+            await expect(
+                page.getByText(/drag and drop images, or click to upload|tap to upload images/i),
+            ).toBeVisible();
         });
 
         test('should show supported formats', async ({ page }) => {

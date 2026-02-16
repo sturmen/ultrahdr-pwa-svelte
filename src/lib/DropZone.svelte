@@ -1,8 +1,9 @@
 <script>
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
 
   const dispatch = createEventDispatcher();
   let isDragOver = false;
+  let isDesktopLayout = false;
 
   // Eligible image extensions (lowercase)
   const ELIGIBLE_EXTENSIONS = [
@@ -174,6 +175,35 @@
       dispatch("files", e.target.files);
     }
   }
+
+  onMount(() => {
+    let mediaQuery = null;
+    let handleMediaChange = null;
+
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+      mediaQuery = window.matchMedia("(min-width: 1024px)");
+      handleMediaChange = (event) => {
+        isDesktopLayout = event.matches;
+      };
+      isDesktopLayout = mediaQuery.matches;
+
+      if (typeof mediaQuery.addEventListener === "function") {
+        mediaQuery.addEventListener("change", handleMediaChange);
+      } else if (typeof mediaQuery.addListener === "function") {
+        mediaQuery.addListener(handleMediaChange);
+      }
+    }
+
+    return () => {
+      if (mediaQuery && handleMediaChange) {
+        if (typeof mediaQuery.removeEventListener === "function") {
+          mediaQuery.removeEventListener("change", handleMediaChange);
+        } else if (typeof mediaQuery.removeListener === "function") {
+          mediaQuery.removeListener(handleMediaChange);
+        }
+      }
+    };
+  });
 </script>
 
 <div
@@ -184,7 +214,7 @@
   on:drop={handleDrop}
   role="button"
   tabindex="0"
-  aria-label="Upload images"
+  aria-label={isDesktopLayout ? "Drag and drop or upload images" : "Upload images"}
   data-testid="upload-drop-zone"
 >
   <input
@@ -196,27 +226,19 @@
     hidden
   />
   <label for="file-upload" class="drop-label" aria-label="Pick Images">
-    <div class="drop-head">
-      <div class="icon">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke-width="1.5"
-          stroke="currentColor"
-          class="w-6 h-6"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
-          />
-        </svg>
-      </div>
-      <span class="cta">Pick Images</span>
+    <div class="primary-invite">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+        />
+      </svg>
+      <span>
+        {isDesktopLayout ? "Drag and drop images, or click to upload." : "Tap to upload images."}
+      </span>
     </div>
     <p class="headline">Convert one photo or batch process many at once.</p>
-    <p class="support">Drag and drop is also supported.</p>
     <p class="sub-text">Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF</p>
   </label>
 </div>
@@ -245,38 +267,27 @@
     gap: 0.75rem;
   }
 
-  .drop-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  .cta {
+  .primary-invite {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    gap: 0.6rem;
     min-height: 44px;
-    padding: 0.55rem 1rem;
-    border-radius: 999px;
+    width: fit-content;
+    padding: 0.55rem 0.9rem;
+    border-radius: 0.85rem;
     background: var(--primary-color);
     color: var(--text-on-primary);
     font-weight: 700;
     letter-spacing: 0.01em;
   }
 
-  .icon {
-    width: 40px;
-    height: 40px;
-    color: var(--primary-color);
-    padding: 0.4rem;
-    border-radius: 0.75rem;
-    background: var(--surface-muted);
+  .primary-invite svg {
+    width: 20px;
+    height: 20px;
   }
 
-  .icon svg {
-    width: 100%;
-    height: 100%;
+  .primary-invite span {
+    line-height: 1.35;
   }
 
   p {
@@ -287,11 +298,6 @@
   .headline {
     font-weight: 600;
     font-size: 1rem;
-  }
-
-  .support {
-    color: var(--text-secondary);
-    font-size: 0.95rem;
   }
 
   .sub-text {
