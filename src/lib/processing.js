@@ -13,6 +13,11 @@ const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const DEFAULT_REVERSE_TONEMAP_VERSION = 'v2';
 const DEFAULT_BRIGHTNESS_INTENT = 'conservative';
 const SHADOW_CUTOFF_DEPRECATION_KEY = 'processing.shadowCutoff.deprecated';
+const GAIN_MAP_GAMMA_LINEAR = 1.0;
+const GAIN_MAP_GAMMA_COMPANDED = 1 / 2.2;
+const GAIN_MAP_OFFSET_SDR_LINEAR = 0.0;
+const GAIN_MAP_OFFSET_SDR_COMPANDED = 1 / 64;
+const SUPPORTED_REVERSE_TONEMAP_VERSIONS = new Set(['v1', 'v2', 'v3', 'v4']);
 
 const DEFAULT_PROCESS_OPTIONS = {
     maxContentBoost: DEFAULT_MAX_CONTENT_BOOST,
@@ -57,13 +62,79 @@ function smoothstep(edge0, edge1, x) {
     return t * t * (3 - 2 * t);
 }
 
-function percentile(sortedValues, p) {
-    if (!sortedValues.length) {
-        return 0;
+function resolveReverseToneMapVersion(version) {
+    if (typeof version === 'string' && SUPPORTED_REVERSE_TONEMAP_VERSIONS.has(version)) {
+        return version;
     }
-    const clampedP = clamp01(p);
-    const index = Math.floor((sortedValues.length - 1) * clampedP);
-    return sortedValues[index];
+    return DEFAULT_REVERSE_TONEMAP_VERSION;
+}
+
+function isModernReverseToneMapVersion(reverseToneMapVersion) {
+    return reverseToneMapVersion === 'v2' || reverseToneMapVersion === 'v3' || reverseToneMapVersion === 'v4';
+}
+
+function isCompandedGainMapVersion(reverseToneMapVersion) {
+    return reverseToneMapVersion === 'v3' || reverseToneMapVersion === 'v4';
+}
+
+function getGainMapEncodingParameters(reverseToneMapVersion) {
+    if (isCompandedGainMapVersion(reverseToneMapVersion)) {
+        return {
+            gamma: GAIN_MAP_GAMMA_COMPANDED,
+            offsetSdr: GAIN_MAP_OFFSET_SDR_COMPANDED
+        };
+    }
+    return {
+        gamma: GAIN_MAP_GAMMA_LINEAR,
+        offsetSdr: GAIN_MAP_OFFSET_SDR_LINEAR
+    };
+}
+
+function estimatePercentiles(values, percentiles, bins = 256) {
+    if (!values?.length) {
+        return percentiles.map(() => 0);
+    }
+
+    const histogram = new Uint32Array(bins);
+    const maxBinIndex = bins - 1;
+    for (let i = 0; i < values.length; i++) {
+        const v = clamp01(values[i]);
+        const bin = Math.min(maxBinIndex, Math.floor(v * maxBinIndex));
+        histogram[bin]++;
+    }
+
+    const targets = percentiles.map((p) => Math.floor((values.length - 1) * clamp01(p)));
+    const results = new Array(percentiles.length).fill(0);
+    let cumulative = 0;
+    let targetIndex = 0;
+
+    for (let bin = 0; bin < bins && targetIndex < targets.length; bin++) {
+        cumulative += histogram[bin];
+        while (targetIndex < targets.length && cumulative > targets[targetIndex]) {
+            results[targetIndex] = bin / maxBinIndex;
+            targetIndex++;
+        }
+    }
+
+    while (targetIndex < targets.length) {
+        results[targetIndex] = 1;
+        targetIndex++;
+    }
+
+    return results;
+}
+
+function linearToPqNormalized(linear) {
+    const m1 = 2610 / 16384;
+    const m2 = 2523 / 32;
+    const c1 = 3424 / 4096;
+    const c2 = 2413 / 128;
+    const c3 = 2392 / 128;
+    const clamped = clamp01(linear);
+    const lm1 = Math.pow(clamped, m1);
+    const numerator = c1 + c2 * lm1;
+    const denominator = 1 + c3 * lm1;
+    return Math.pow(numerator / denominator, m2);
 }
 
 function createAbortError() {
@@ -149,24 +220,27 @@ async function ensureWasmLoaded() {
     console.log('[WASM] libultrahdr WASM module loaded');
 }
 
-function buildGainMapMetadata(maxContentBoost) {
+function buildGainMapMetadata(maxContentBoost, reverseToneMapVersion = DEFAULT_REVERSE_TONEMAP_VERSION) {
     const safeMaxContentBoost = Number.isFinite(maxContentBoost) && maxContentBoost > 0
         ? maxContentBoost
         : DEFAULT_MAX_CONTENT_BOOST;
     const normalizedMaxContentBoost = Math.max(1.0, safeMaxContentBoost);
     const log2MaxBoost = Math.log2(normalizedMaxContentBoost);
+    const normalizedReverseToneMapVersion = resolveReverseToneMapVersion(reverseToneMapVersion);
+    const { gamma, offsetSdr } = getGainMapEncodingParameters(normalizedReverseToneMapVersion);
+
     return {
         gainMapMin: [1.0, 1.0, 1.0],
         gainMapMax: [normalizedMaxContentBoost, normalizedMaxContentBoost, normalizedMaxContentBoost],
-        gamma: [1.0, 1.0, 1.0],
-        offsetSdr: [0, 0, 0],
+        gamma: [gamma, gamma, gamma],
+        offsetSdr: [offsetSdr, offsetSdr, offsetSdr],
         offsetHdr: [0, 0, 0],
         hdrCapacityMin: 1.0,
         hdrCapacityMax: normalizedMaxContentBoost,
         parsedGainMapMin: [0, 0, 0],
         parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
-        parsedGamma: [1.0, 1.0, 1.0],
-        parsedOffsetSdr: [0, 0, 0],
+        parsedGamma: [gamma, gamma, gamma],
+        parsedOffsetSdr: [offsetSdr, offsetSdr, offsetSdr],
         parsedOffsetHdr: [0, 0, 0],
         parsedHdrCapacityMin: 0,
         parsedHdrCapacityMax: log2MaxBoost
@@ -183,9 +257,9 @@ function buildGainMapMetadata(maxContentBoost) {
  * @param {boolean} options.discardGainMap - Whether to discard existing gain map and regenerate.
  * @param {boolean} options.stripExif - Whether to strip EXIF data.
  * @param {number} options.highlightExponent - Exponent for highlight boost curve.
- * @param {"v1" | "v2"} [options.reverseToneMapVersion] - Reverse tonemap mode. Defaults to "v2".
- * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent] - Brightness profile for v2 mode.
- * @param {number} [options.shadowCutoff] - Deprecated in v2 (accepted as no-op for compatibility).
+ * @param {"v1" | "v2" | "v3" | "v4"} [options.reverseToneMapVersion] - Reverse tonemap mode. Defaults to "v2".
+ * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent] - Brightness profile for v2+ modes.
+ * @param {number} [options.shadowCutoff] - Deprecated in v2+ (accepted as no-op for compatibility).
  * @param {(event: Object) => void} [options.onProgress] - Optional telemetry callback.
  * @param {number} [options.fileIndex] - Optional file index in current batch.
  * @param {number} [options.totalFiles] - Optional total files in current batch.
@@ -276,8 +350,8 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
             const metadata = file.gainMapMetadata
                 || (Number.isFinite(file.gainMapHeadroom) && file.gainMapHeadroom > 0
-                    ? buildGainMapMetadata(file.gainMapHeadroom)
-                    : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST));
+                    ? buildGainMapMetadata(file.gainMapHeadroom, mergedOptions.reverseToneMapVersion)
+                    : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST, mergedOptions.reverseToneMapVersion));
 
             if (mergedOptions.safeMode) {
                 const constrainedDimensions = getConstrainedDimensions(
@@ -621,34 +695,67 @@ function getPreservedGainMapConstrainedDimensions(gainMapImageData, sdrImageData
  * @returns {Float32Array} Filtered output
  */
 function boxFilter(src, w, h, r) {
+    const radius = Math.max(0, Math.floor(Number(r) || 0));
+    if (radius === 0) {
+        return src.slice();
+    }
+
+    const temp = new Float32Array(w * h);
     const out = new Float32Array(w * h);
-    // Separable box filter: horizontal pass then vertical pass
-    const rowBuf = new Float32Array(w);
+
+    // Horizontal pass with running window sum.
     for (let y = 0; y < h; y++) {
         const rowOff = y * w;
-        for (let x = 0; x < w; x++) {
-            const x0 = Math.max(0, x - r);
-            const x1 = Math.min(w - 1, x + r);
-            const count = x1 - x0 + 1;
-            let s = 0;
-            for (let xx = x0; xx <= x1; xx++) s += src[rowOff + xx];
-            rowBuf[x] = s / count;
+        const initialEnd = Math.min(w - 1, radius);
+        let sum = 0;
+
+        for (let x = 0; x <= initialEnd; x++) {
+            sum += src[rowOff + x];
         }
-        for (let x = 0; x < w; x++) out[rowOff + x] = rowBuf[x];
+        temp[rowOff] = sum / (initialEnd + 1);
+
+        for (let x = 1; x < w; x++) {
+            const addX = x + radius;
+            const subX = x - radius - 1;
+            if (addX < w) {
+                sum += src[rowOff + addX];
+            }
+            if (subX >= 0) {
+                sum -= src[rowOff + subX];
+            }
+
+            const x0 = Math.max(0, x - radius);
+            const x1 = Math.min(w - 1, x + radius);
+            temp[rowOff + x] = sum / (x1 - x0 + 1);
+        }
     }
-    // Vertical pass on the horizontally-filtered result
-    const colBuf = new Float32Array(h);
+
+    // Vertical pass with running window sum.
     for (let x = 0; x < w; x++) {
-        for (let y = 0; y < h; y++) {
-            const y0 = Math.max(0, y - r);
-            const y1 = Math.min(h - 1, y + r);
-            const count = y1 - y0 + 1;
-            let s = 0;
-            for (let yy = y0; yy <= y1; yy++) s += out[yy * w + x];
-            colBuf[y] = s / count;
+        const initialEnd = Math.min(h - 1, radius);
+        let sum = 0;
+
+        for (let y = 0; y <= initialEnd; y++) {
+            sum += temp[y * w + x];
         }
-        for (let y = 0; y < h; y++) out[y * w + x] = colBuf[y];
+        out[x] = sum / (initialEnd + 1);
+
+        for (let y = 1; y < h; y++) {
+            const addY = y + radius;
+            const subY = y - radius - 1;
+            if (addY < h) {
+                sum += temp[addY * w + x];
+            }
+            if (subY >= 0) {
+                sum -= temp[subY * w + x];
+            }
+
+            const y0 = Math.max(0, y - radius);
+            const y1 = Math.min(h - 1, y + radius);
+            out[y * w + x] = sum / (y1 - y0 + 1);
+        }
     }
+
     return out;
 }
 
@@ -805,6 +912,12 @@ function acesHillInverse(y, maxIter = 8) {
  *  - Conservative APL/midtone guardrails
  *  - Continuous low-luma regularization (no hard shadow cutoff)
  *
+ * v3:
+ *  - v2 behavior plus gain-map companding metadata and near-clip chroma desaturation
+ *
+ * v4:
+ *  - v3 behavior with a PQ working-space luminance analysis path
+ *
  * v1:
  *  - Legacy single-scale adaptation and hard shadow cutoff behavior.
  *
@@ -812,9 +925,9 @@ function acesHillInverse(y, maxIter = 8) {
  * @param {Object} [options]
  * @param {number} [options.maxContentBoost=2.3] - Maximum HDR boost factor.
  * @param {number} [options.highlightExponent=2.0] - Controls highlight expansion aggressiveness.
- * @param {"v1" | "v2"} [options.reverseToneMapVersion="v2"] - Reverse tonemapping mode.
- * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent="conservative"] - Brightness profile for v2.
- * @param {number} [options.shadowCutoff] - Deprecated in v2 (accepted as no-op).
+ * @param {"v1" | "v2" | "v3" | "v4"} [options.reverseToneMapVersion="v2"] - Reverse tonemapping mode.
+ * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent="conservative"] - Brightness profile for v2+ modes.
+ * @param {number} [options.shadowCutoff] - Deprecated in v2+ (accepted as no-op).
  * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation.
  * @param {number} [options.localAdaptationRadius] - Guided filter radius (auto if not set).
  * @param {(progress: number, note?: string) => void} [options.onStageProgress] - Optional granular progress callback.
@@ -828,20 +941,22 @@ export function generateGainMapData(imageData, options = {}) {
     const height = imageData.height;
     const pixelCount = width * height;
 
-    const reverseToneMapVersion = options.reverseToneMapVersion === 'v1'
-        ? 'v1'
-        : DEFAULT_REVERSE_TONEMAP_VERSION;
+    const reverseToneMapVersion = resolveReverseToneMapVersion(options.reverseToneMapVersion);
+    const isV1 = reverseToneMapVersion === 'v1';
+    const isV2Family = isModernReverseToneMapVersion(reverseToneMapVersion);
+    const isV3Plus = isCompandedGainMapVersion(reverseToneMapVersion);
+    const isV4 = reverseToneMapVersion === 'v4';
     const brightnessIntent = ['conservative', 'balanced', 'vibrant'].includes(options.brightnessIntent)
         ? options.brightnessIntent
         : DEFAULT_BRIGHTNESS_INTENT;
 
     if (
-        reverseToneMapVersion === 'v2' &&
+        isV2Family &&
         Object.prototype.hasOwnProperty.call(options, 'shadowCutoff')
     ) {
         warnDeprecationOnce(
             SHADOW_CUTOFF_DEPRECATION_KEY,
-            'shadowCutoff is deprecated and ignored in v2; remove it from callers.'
+            'shadowCutoff is deprecated and ignored in v2+; remove it from callers.'
         );
     }
 
@@ -877,6 +992,7 @@ export function generateGainMapData(imageData, options = {}) {
     const log2MaxBoost = Math.log2(maxContentBoost);
     const canEncodeGain = log2MaxBoost > 0;
     const logDelta = 1e-6;
+    const { gamma: gainMapGamma, offsetSdr: gainMapOffsetSdr } = getGainMapEncodingParameters(reverseToneMapVersion);
 
     const toLinear = (v) => {
         v /= 255;
@@ -887,6 +1003,7 @@ export function generateGainMapData(imageData, options = {}) {
     const linG = new Float32Array(pixelCount);
     const linB = new Float32Array(pixelCount);
     const luminance = new Float32Array(pixelCount);
+    const analysisLuminance = isV4 ? new Float32Array(pixelCount) : luminance;
     const reportInterval = Math.max(2048, Math.floor(pixelCount / 24));
 
     reportProgress(0, 'Preparing source pixels');
@@ -903,6 +1020,9 @@ export function generateGainMapData(imageData, options = {}) {
         linG[i] = g;
         linB[i] = b;
         luminance[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if (isV4) {
+            analysisLuminance[i] = linearToPqNormalized(luminance[i]);
+        }
 
         if (i % reportInterval === 0 || i === pixelCount - 1) {
             const stageProgress = (i / Math.max(1, pixelCount - 1)) * 40;
@@ -914,9 +1034,9 @@ export function generateGainMapData(imageData, options = {}) {
 
     let localLum;
     let localDetailLum;
-    if (reverseToneMapVersion === 'v2') {
-        const localSmall = guidedFilter(luminance, width, height, localRadiusSmall, guidedEps);
-        const localLarge = guidedFilter(luminance, width, height, localRadiusLarge, guidedEps * 1.5);
+    if (isV2Family) {
+        const localSmall = guidedFilter(analysisLuminance, width, height, localRadiusSmall, guidedEps);
+        const localLarge = guidedFilter(analysisLuminance, width, height, localRadiusLarge, guidedEps * 1.5);
         localLum = new Float32Array(pixelCount);
         localDetailLum = localSmall;
         for (let i = 0; i < pixelCount; i++) {
@@ -925,7 +1045,7 @@ export function generateGainMapData(imageData, options = {}) {
             localLum[i] = localLarge[i] * (1 - edgeWeight) + localSmall[i] * edgeWeight;
         }
     } else {
-        localLum = guidedFilter(luminance, width, height, localRadius, guidedEps);
+        localLum = guidedFilter(analysisLuminance, width, height, localRadius, guidedEps);
         localDetailLum = localLum;
     }
 
@@ -933,16 +1053,14 @@ export function generateGainMapData(imageData, options = {}) {
 
     let logSum = 0;
     for (let i = 0; i < pixelCount; i++) {
-        logSum += Math.log(luminance[i] + logDelta);
+        logSum += Math.log(analysisLuminance[i] + logDelta);
     }
     const globalAvgLum = Math.exp(logSum / pixelCount);
 
-    const sortedLuminance = Array.from(luminance).sort((a, b) => a - b);
-    const medianLum = percentile(sortedLuminance, 0.5);
-    const p75Lum = percentile(sortedLuminance, 0.75);
+    const [medianLum, p75Lum] = estimatePercentiles(analysisLuminance, [0.5, 0.75]);
 
-    const toneForward = reverseToneMapVersion === 'v2' ? acesHillForward : acesNarkowiczForward;
-    const toneInverse = reverseToneMapVersion === 'v2' ? acesHillInverse : acesNarkowiczInverse;
+    const toneForward = isV2Family ? acesHillForward : acesNarkowiczForward;
+    const toneInverse = isV2Family ? acesHillInverse : acesNarkowiczInverse;
     const acesAt1 = toneForward(1.0);
     const medianNorm = clamp01(medianLum);
     const medianSceneLinear = toneInverse(medianNorm * acesAt1);
@@ -957,7 +1075,7 @@ export function generateGainMapData(imageData, options = {}) {
         : brightnessIntent === 'balanced'
             ? 1.16
             : 1.08;
-    const midtoneGuard = reverseToneMapVersion === 'v2'
+    const midtoneGuard = isV2Family
         ? Math.min(1.0, Math.max(0, (medianLiftCap - 1.0) / Math.max(1e-5, estimatedMedianRawBoost - 1.0)))
         : 1.0;
 
@@ -968,32 +1086,33 @@ export function generateGainMapData(imageData, options = {}) {
             throwIfAborted(options?.abortSignal);
         }
         const lum = luminance[i];
+        const lumForAnalysis = isV4 ? analysisLuminance[i] : lum;
         const idx = i * 4;
 
         const adaptedAvg = localAdaptStrength > 0
             ? globalAvgLum * (1 - localAdaptStrength) + localLum[i] * localAdaptStrength
             : globalAvgLum;
-        const adaptRatio = (lum + logDelta) / (adaptedAvg + logDelta);
+        const adaptRatio = (lumForAnalysis + logDelta) / (adaptedAvg + logDelta);
 
         const sdrNorm = clamp01(lum);
         const acesInput = sdrNorm * acesAt1;
         const sceneLinear = toneInverse(acesInput);
         const baseBoost = lum > logDelta ? sceneLinear / lum : 1.0;
 
-        const lumNorm = reverseToneMapVersion === 'v1'
+        const lumNorm = isV1
             ? Math.max(0, (lum - legacyShadowCutoff) / (1 - legacyShadowCutoff + logDelta))
-            : clamp01(lum);
+            : clamp01(lumForAnalysis);
         const highlightWeight = Math.pow(Math.min(1, lumNorm), highlightExponent);
         const localBoostMod = Math.pow(
             Math.max(0.6, adaptRatio),
-            (reverseToneMapVersion === 'v2' ? 0.22 : 0.3) * localAdaptStrength
+            (isV2Family ? 0.22 : 0.3) * localAdaptStrength
         );
         const baseScale = baseBoost > 1.0
-            ? Math.min(baseBoost / (maxContentBoost * (reverseToneMapVersion === 'v2' ? 0.6 : 0.5)), 1.0)
-            : (reverseToneMapVersion === 'v2' ? 0.4 : 0.5);
+            ? Math.min(baseBoost / (maxContentBoost * (isV2Family ? 0.6 : 0.5)), 1.0)
+            : (isV2Family ? 0.4 : 0.5);
 
         let boost;
-        if (reverseToneMapVersion === 'v1') {
+        if (isV1) {
             if (lum <= legacyShadowCutoff) {
                 boost = 1.0;
             } else {
@@ -1004,7 +1123,7 @@ export function generateGainMapData(imageData, options = {}) {
 
             const maxChannel = Math.max(linR[i], linG[i], linB[i]);
             const nearClip = smoothstep(0.96, 0.995, maxChannel);
-            const localContrast = Math.abs(lum - localDetailLum[i]);
+            const localContrast = Math.abs(lumForAnalysis - localDetailLum[i]);
             const plateau = 1.0 - smoothstep(0.01, 0.08, localContrast);
             const clipMask = nearClip * plateau;
             if (clipMask > 0) {
@@ -1012,7 +1131,7 @@ export function generateGainMapData(imageData, options = {}) {
                 rawBoost = Math.max(rawBoost, clipBoost);
             }
 
-            const highlightShare = smoothstep(Math.max(0, Math.min(1, p75Lum)), 1.0, lum);
+            const highlightShare = smoothstep(Math.max(0, Math.min(1, p75Lum)), 1.0, lumForAnalysis);
             const midtoneScale = 1.0 - (1.0 - midtoneGuard) * (1.0 - highlightShare);
             rawBoost = 1.0 + (rawBoost - 1.0) * midtoneScale;
             if (midtoneGuard < 1.0 && highlightShare > 0) {
@@ -1020,17 +1139,32 @@ export function generateGainMapData(imageData, options = {}) {
                 rawBoost = rawBoost + recovered * (maxContentBoost - rawBoost);
             }
 
-            const lowLumaWeight = smoothstep(0.03, 0.12, lum);
+            const lowLumaWeight = smoothstep(0.03, 0.12, lumForAnalysis);
             boost = 1.0 + (rawBoost - 1.0) * lowLumaWeight;
+        }
+
+        if (isV4) {
+            // Keep v4 perceptual lift smooth while protecting dark regions from over-expansion.
+            const perceptualWeight = smoothstep(0.01, 0.65, lum);
+            boost = 1.0 + (boost - 1.0) * perceptualWeight;
         }
 
         boost = Math.max(1.0, Math.min(maxContentBoost, boost));
 
-        const satBoostStrength = reverseToneMapVersion === 'v2'
+        const satBoostStrength = isV2Family
             ? (brightnessIntent === 'vibrant' ? 0.14 : brightnessIntent === 'balanced' ? 0.1 : 0.06)
             : 0.15;
         const boostRatio = clamp01((boost - 1.0) / Math.max(1e-6, maxContentBoost - 1.0));
-        const satBoost = 1.0 + satBoostStrength * boostRatio;
+        let satBoost = 1.0 + satBoostStrength * boostRatio;
+        if (isV3Plus) {
+            const clipDesatStrength = brightnessIntent === 'vibrant'
+                ? 0.45
+                : brightnessIntent === 'balanced'
+                    ? 0.55
+                    : 0.6;
+            const clipDesatWeight = smoothstep(0.85, 1.0, boostRatio);
+            satBoost *= Math.max(0.35, 1.0 - clipDesatStrength * clipDesatWeight);
+        }
 
         const lumSafe = Math.max(lum, logDelta);
         const rRatio = linR[i] / lumSafe;
@@ -1039,8 +1173,8 @@ export function generateGainMapData(imageData, options = {}) {
         const rRatSat = 1.0 + (rRatio - 1.0) * satBoost;
         const gRatSat = 1.0 + (gRatio - 1.0) * satBoost;
         const bRatSat = 1.0 + (bRatio - 1.0) * satBoost;
-        const minChannelRatio = reverseToneMapVersion === 'v2' ? 0.65 : 0.5;
-        const minChannelBoost = reverseToneMapVersion === 'v2'
+        const minChannelRatio = isV2Family ? 0.65 : 0.5;
+        const minChannelBoost = isV2Family
             ? 1.0 + (boost - 1.0) * 0.35
             : 1.0;
 
@@ -1048,9 +1182,12 @@ export function generateGainMapData(imageData, options = {}) {
         const gBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, gRatSat))));
         const bBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, bRatSat))));
 
-        const rEncoded = canEncodeGain ? clamp01(Math.log2(rBoost) / log2MaxBoost) : 0;
-        const gEncoded = canEncodeGain ? clamp01(Math.log2(gBoost) / log2MaxBoost) : 0;
-        const bEncoded = canEncodeGain ? clamp01(Math.log2(bBoost) / log2MaxBoost) : 0;
+        const rLinearEncoded = canEncodeGain ? clamp01(Math.log2(rBoost) / log2MaxBoost) : 0;
+        const gLinearEncoded = canEncodeGain ? clamp01(Math.log2(gBoost) / log2MaxBoost) : 0;
+        const bLinearEncoded = canEncodeGain ? clamp01(Math.log2(bBoost) / log2MaxBoost) : 0;
+        const rEncoded = gainMapGamma === 1.0 ? rLinearEncoded : Math.pow(rLinearEncoded, gainMapGamma);
+        const gEncoded = gainMapGamma === 1.0 ? gLinearEncoded : Math.pow(gLinearEncoded, gainMapGamma);
+        const bEncoded = gainMapGamma === 1.0 ? bLinearEncoded : Math.pow(bLinearEncoded, gainMapGamma);
 
         gainMapData[idx] = Math.round(rEncoded * 255);
         gainMapData[idx + 1] = Math.round(gEncoded * 255);
@@ -1070,15 +1207,15 @@ export function generateGainMapData(imageData, options = {}) {
     const metadata = {
         gainMapMin: [1.0, 1.0, 1.0],
         gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
-        gamma: [1.0, 1.0, 1.0],
-        offsetSdr: [0, 0, 0],
+        gamma: [gainMapGamma, gainMapGamma, gainMapGamma],
+        offsetSdr: [gainMapOffsetSdr, gainMapOffsetSdr, gainMapOffsetSdr],
         offsetHdr: [0, 0, 0],
         hdrCapacityMin: 1.0,
         hdrCapacityMax: maxContentBoost,
         parsedGainMapMin: [0, 0, 0],
         parsedGainMapMax: [parsedMaxBoost, parsedMaxBoost, parsedMaxBoost],
-        parsedGamma: [1.0, 1.0, 1.0],
-        parsedOffsetSdr: [0, 0, 0],
+        parsedGamma: [gainMapGamma, gainMapGamma, gainMapGamma],
+        parsedOffsetSdr: [gainMapOffsetSdr, gainMapOffsetSdr, gainMapOffsetSdr],
         parsedOffsetHdr: [0, 0, 0],
         parsedHdrCapacityMin: 0,
         parsedHdrCapacityMax: parsedMaxBoost
@@ -1103,7 +1240,7 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
     const wasmQuality = Math.round(quality * 100);
     const rotation = ((options.rotation || 0) % 360 + 360) % 360;
     const maxContentBoost = options.maxContentBoost ?? DEFAULT_MAX_CONTENT_BOOST;
-    const gainMapMetadata = metadata || buildGainMapMetadata(maxContentBoost);
+    const gainMapMetadata = metadata || buildGainMapMetadata(maxContentBoost, options.reverseToneMapVersion);
     const compressedMetadata = {
         gainMapMin: gainMapMetadata.gainMapMin,
         gainMapMax: gainMapMetadata.gainMapMax,
