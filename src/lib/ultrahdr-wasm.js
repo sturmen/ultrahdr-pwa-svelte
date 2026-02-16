@@ -9,6 +9,17 @@
 let _wasmModule = null;
 let _wasmLoaded = false;
 let _wasmLoadError = null;
+const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 'string'
+    ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
+    : '';
+
+function appendVersionQuery(url) {
+    if (!WASM_ASSET_VERSION) {
+        return url;
+    }
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(WASM_ASSET_VERSION)}`;
+}
 
 /**
  * Load the WASM module factory by injecting a script tag
@@ -25,7 +36,7 @@ async function loadWasmFactory() {
     if (!baseUrl.endsWith('/')) {
         baseUrl += '/';
     }
-    const wasmJsPath = `${baseUrl}assets/ultrahdr_wasm.js`;
+    const wasmJsPath = appendVersionQuery(`${baseUrl}assets/ultrahdr_wasm.js`);
     console.log('[WASM] Loading from:', wasmJsPath);
 
     return new Promise((resolve, reject) => {
@@ -91,7 +102,7 @@ async function loadWasmModule() {
         if (!baseUrl.endsWith('/')) {
             baseUrl += '/';
         }
-        const wasmBinaryPath = `${baseUrl}assets/ultrahdr_wasm.wasm`;
+        const wasmBinaryPath = appendVersionQuery(`${baseUrl}assets/ultrahdr_wasm.wasm`);
         console.log('[WASM] WASM binary path:', wasmBinaryPath);
 
         // Pre-fetch the WASM binary to avoid Emscripten's sync fetch error
@@ -117,6 +128,7 @@ async function loadWasmModule() {
 
         _wasmLoaded = true;
         console.log('[WASM] libultrahdr module initialized');
+        console.log('[WASM] Asset version token:', WASM_ASSET_VERSION || '(none)');
         console.log('[WASM] Module keys:', Object.keys(_wasmModule));
         console.log('[WASM] Module.HEAPU8 type:', typeof _wasmModule.HEAPU8);
         console.log('[WASM] Module.buffer type:', typeof _wasmModule.buffer);

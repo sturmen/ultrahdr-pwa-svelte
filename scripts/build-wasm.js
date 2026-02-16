@@ -12,7 +12,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +24,7 @@ const wasmWrapperDir = path.join(rootDir, 'ultrahdr-wasm');
 const emsdkDir = path.join(rootDir, 'emsdk');
 const outputDir = path.join(rootDir, 'public', 'assets');
 const buildDir = path.join(wasmWrapperDir, 'build');
+const wasmVersionMetadataPath = path.join(rootDir, '.wasm-version.json');
 
 // Create output directory if it doesn't exist
 if (!fs.existsSync(outputDir)) {
@@ -35,6 +37,16 @@ console.log(`WASM wrapper directory: ${wasmWrapperDir}`);
 console.log(`emsdk directory: ${emsdkDir}`);
 console.log(`Build directory: ${buildDir}`);
 console.log(`Output directory: ${outputDir}`);
+
+function isTruthyEnvValue(value) {
+    return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
+}
+
+export function isStrictBuildMode(env = process.env) {
+    return isTruthyEnvValue(env.WASM_BUILD_STRICT)
+        || isTruthyEnvValue(env.CI)
+        || String(env.NODE_ENV || '').toLowerCase() === 'production';
+}
 
 /**
  * Run a command with logging
@@ -104,6 +116,52 @@ function buildWasm() {
 function hasExistingAssets() {
     const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm'];
     return requiredFiles.every((file) => fs.existsSync(path.join(outputDir, file)));
+}
+
+export function resolveBuildFailureStrategy({ strictMode, hasAssets }) {
+    if (!strictMode && hasAssets) {
+        return 'fallback';
+    }
+    return 'throw';
+}
+
+export function computeWasmAssetVersionFromFiles(files) {
+    const hash = createHash('sha256');
+    const normalizedFiles = [...files].sort();
+    for (const filePath of normalizedFiles) {
+        hash.update(path.basename(filePath));
+        hash.update(fs.readFileSync(filePath));
+    }
+    return hash.digest('hex').slice(0, 16);
+}
+
+export function computeWasmAssetVersion(outputDirectory = outputDir) {
+    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm'];
+    const filePaths = requiredFiles.map((file) => path.join(outputDirectory, file));
+
+    for (const filePath of filePaths) {
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Cannot compute WASM asset version; missing file: ${filePath}`);
+        }
+    }
+
+    return computeWasmAssetVersionFromFiles(filePaths);
+}
+
+export function writeWasmVersionMetadata(
+    outputDirectory = outputDir,
+    metadataPath = wasmVersionMetadataPath
+) {
+    const wasmAssetVersion = computeWasmAssetVersion(outputDirectory);
+    const metadata = {
+        wasmAssetVersion,
+        generatedAt: new Date().toISOString(),
+        files: ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm']
+    };
+    fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+    console.log(`WASM asset version metadata written: ${metadataPath}`);
+    console.log(`WASM asset version: ${wasmAssetVersion}`);
+    return metadata;
 }
 
 /**
@@ -202,22 +260,35 @@ function verifyOutput() {
  */
 function main() {
     try {
+        const strictBuildMode = isStrictBuildMode();
+        console.log(`Strict WASM build mode: ${strictBuildMode ? 'enabled' : 'disabled'}`);
+
         checkEmsdk();
         try {
             buildWasm();
             copyAssets();
         } catch (buildError) {
-            if (!hasExistingAssets()) {
+            const failureStrategy = resolveBuildFailureStrategy({
+                strictMode: strictBuildMode,
+                hasAssets: hasExistingAssets()
+            });
+            if (failureStrategy === 'throw') {
                 throw buildError;
             }
+            // Development-only fallback: this path exists primarily because AI/LLM sandbox
+            // environments can block Emscripten/CMake rebuilds during local agent-driven development.
+            // Do not rely on this path for CI or production releases; CI/production must fail
+            // on rebuild errors.
             console.warn('\n=== WASM rebuild failed; using existing public/assets artifacts ===');
             console.warn(buildError.message);
         }
 
         verifyOutput();
+        writeWasmVersionMetadata();
 
         console.log('\n=== Build complete ===');
         console.log(`WASM files available at: ${outputDir}`);
+        console.log(`WASM version metadata available at: ${wasmVersionMetadataPath}`);
         console.log('\nTo use the WASM module, ensure your dev server serves files from public/assets');
         console.log('Run: npm run dev');
     } catch (e) {
@@ -226,4 +297,9 @@ function main() {
     }
 }
 
-main();
+const isDirectExecution = process.argv[1]
+    && pathToFileURL(process.argv[1]).href === import.meta.url;
+
+if (isDirectExecution) {
+    main();
+}

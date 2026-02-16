@@ -2,12 +2,74 @@ import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { VitePWA } from 'vite-plugin-pwa'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import packageJson from './package.json' with { type: 'json' }
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const wasmVersionMetadataPath = path.join(__dirname, '.wasm-version.json')
+
+function isTruthyEnvValue(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase())
+}
+
+function isStrictBuildMode() {
+  return isTruthyEnvValue(process.env.WASM_BUILD_STRICT)
+    || isTruthyEnvValue(process.env.CI)
+    || String(process.env.NODE_ENV || '').toLowerCase() === 'production'
+}
+
+function isValidWasmAssetVersion(version) {
+  return /^[a-f0-9]{16}$/.test(version)
+}
+
+function loadWasmAssetVersion() {
+  if (!fs.existsSync(wasmVersionMetadataPath)) {
+    return null
+  }
+
+  try {
+    const metadataRaw = fs.readFileSync(wasmVersionMetadataPath, 'utf8')
+    const metadata = JSON.parse(metadataRaw)
+    const version = typeof metadata.wasmAssetVersion === 'string' ? metadata.wasmAssetVersion.trim() : ''
+    if (!version) {
+      return null
+    }
+    if (!isValidWasmAssetVersion(version)) {
+      const message = `Invalid WASM asset version in ${wasmVersionMetadataPath}: "${version}"`
+      if (isStrictBuildMode()) {
+        throw new Error(message)
+      }
+      console.warn(message)
+      return null
+    }
+    return version
+  } catch (error) {
+    if (isStrictBuildMode()) {
+      throw error
+    }
+    console.warn(`Failed to parse WASM version metadata at ${wasmVersionMetadataPath}:`, error)
+    return null
+  }
+}
+
+const wasmAssetVersion = loadWasmAssetVersion()
+if (isStrictBuildMode() && !wasmAssetVersion) {
+  throw new Error(
+    `Missing WASM asset version metadata at ${wasmVersionMetadataPath}. ` +
+    'Run `npm run build:wasm` successfully before building in CI/production.'
+  )
+}
+
+const resolvedWasmAssetVersion = wasmAssetVersion || 'dev-unversioned'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version),
+    'import.meta.env.VITE_WASM_ASSET_VERSION': JSON.stringify(resolvedWasmAssetVersion),
   },
   base: process.env.NODE_ENV === 'production' ? '/ultrahdr-pwa-svelte/' : '/',
   plugins: [
@@ -72,6 +134,9 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
+      injectManifest: {
+        globIgnores: ['**/assets/ultrahdr_wasm.js', '**/assets/ultrahdr_wasm.wasm']
+      }
     }),
     viteStaticCopy({
       targets: [

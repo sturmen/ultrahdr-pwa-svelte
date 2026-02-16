@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 describe('WASM Encoder JavaScript Bindings', () => {
   let originalFetch;
+  let originalUHDREncoderModule;
 
   beforeEach(() => {
     originalFetch = global.fetch;
@@ -14,12 +15,17 @@ describe('WASM Encoder JavaScript Bindings', () => {
         arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
       })
     );
+    originalUHDREncoderModule = global.window.UHDREncoderModule;
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     vi.resetModules();
-    delete global.window.UHDREncoderModule;
+    if (originalUHDREncoderModule) {
+      global.window.UHDREncoderModule = originalUHDREncoderModule;
+    } else {
+      delete global.window.UHDREncoderModule;
+    }
   });
 
   it('should check WASM module availability', async () => {
@@ -29,12 +35,52 @@ describe('WASM Encoder JavaScript Bindings', () => {
       HEAPU8: new Uint8Array(1024),
       buffer: new ArrayBuffer(1024),
     };
+    let moduleFactoryOptions;
 
-    global.window.UHDREncoderModule = vi.fn(() => Promise.resolve(mockModule));
+    global.window.UHDREncoderModule = vi.fn((options) => {
+      moduleFactoryOptions = options;
+      return Promise.resolve(mockModule);
+    });
 
     const { isAvailable } = await import('../ultrahdr-wasm.js');
     const available = await isAvailable();
     expect(available).toBe(true);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/assets/ultrahdr_wasm.wasm?v=test-wasm-version')
+    );
+    expect(typeof moduleFactoryOptions?.locateFile).toBe('function');
+    expect(moduleFactoryOptions.locateFile('ultrahdr_wasm.wasm')).toContain(
+      '/assets/ultrahdr_wasm.wasm?v=test-wasm-version'
+    );
+    expect(moduleFactoryOptions.locateFile('not-wasm.data')).toBe('not-wasm.data');
+  });
+
+  it('loads versioned WASM wrapper script URL when factory is not preloaded', async () => {
+    const scriptElements = [];
+    const headAppendSpy = vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      scriptElements.push(node);
+      global.window.UHDREncoderModule = vi.fn(() =>
+        Promise.resolve({
+          _malloc: vi.fn(),
+          _free: vi.fn(),
+          _wasm_create_encoder: vi.fn(() => 1),
+          _wasm_release_encoder: vi.fn(),
+          HEAPU8: new Uint8Array(4096),
+          buffer: new ArrayBuffer(4096),
+        })
+      );
+      setTimeout(() => node.onload?.(), 0);
+      return node;
+    });
+
+    delete global.window.UHDREncoderModule;
+    const { isAvailable } = await import('../ultrahdr-wasm.js');
+    const available = await isAvailable();
+
+    expect(available).toBe(true);
+    expect(scriptElements).toHaveLength(1);
+    expect(scriptElements[0].src).toContain('/assets/ultrahdr_wasm.js?v=test-wasm-version');
+    headAppendSpy.mockRestore();
   });
 
   it('should cleanup WASM module state', async () => {

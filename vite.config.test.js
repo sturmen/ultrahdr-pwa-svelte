@@ -2,6 +2,11 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_WASM_ASSET_VERSION': JSON.stringify(
+      process.env.VITE_WASM_ASSET_VERSION || 'test-wasm-version'
+    ),
+  },
   resolve: {
     conditions: ['browser'],
   },
@@ -16,7 +21,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.js'],
-    include: ['src/**/*.test.js', 'src/**/*.test.svelte'],
+    include: ['src/**/*.test.js', 'src/**/*.test.svelte', 'scripts/**/*.test.js'],
     exclude: ['node_modules/', 'dist/', '.history/', '**/vite.config.test.js'],
     coverage: {
       provider: 'istanbul',

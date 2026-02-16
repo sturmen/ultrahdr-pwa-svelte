@@ -13,14 +13,43 @@ clientsClaim();
 
 const MAX_SHARED_FILES = 32;
 const MAX_SHARED_TOTAL_BYTES = 300 * 1024 * 1024;
+const WASM_ASSET_CACHE = 'uhdr-wasm-assets';
+const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 'string'
+    ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
+    : '';
+
+function isUltraHdrWasmAssetUrl(url) {
+    return /\/assets\/ultrahdr_wasm\.(js|wasm)$/.test(url.pathname);
+}
+
+async function pruneOutdatedWasmAssets() {
+    if (!WASM_ASSET_VERSION) {
+        return;
+    }
+    const cache = await caches.open(WASM_ASSET_CACHE);
+    const cachedRequests = await cache.keys();
+    await Promise.all(cachedRequests.map(async (request) => {
+        const requestUrl = new URL(request.url);
+        if (!isUltraHdrWasmAssetUrl(requestUrl)) {
+            return;
+        }
+        if (requestUrl.searchParams.get('v') !== WASM_ASSET_VERSION) {
+            await cache.delete(request);
+        }
+    }));
+}
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(pruneOutdatedWasmAssets());
+});
 
 registerRoute(
-    ({ url }) => url.pathname.endsWith('.wasm'),
+    ({ url }) => isUltraHdrWasmAssetUrl(url),
     new CacheFirst({
-        cacheName: 'uhdr-wasm-assets',
+        cacheName: WASM_ASSET_CACHE,
         plugins: [
             new ExpirationPlugin({
-                maxEntries: 6,
+                maxEntries: 12,
                 maxAgeSeconds: 30 * 24 * 60 * 60
             })
         ]
@@ -28,11 +57,13 @@ registerRoute(
 );
 
 registerRoute(
-    ({ request }) =>
-        request.mode === 'navigate' ||
-        request.destination === 'script' ||
-        request.destination === 'style' ||
-        request.destination === 'image',
+    ({ request, url }) =>
+        !isUltraHdrWasmAssetUrl(url) && (
+            request.mode === 'navigate' ||
+            request.destination === 'script' ||
+            request.destination === 'style' ||
+            request.destination === 'image'
+        ),
     new StaleWhileRevalidate({
         cacheName: 'uhdr-runtime'
     })

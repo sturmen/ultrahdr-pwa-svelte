@@ -969,8 +969,9 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         });
 
         test('should show error when WASM fails to load', async ({ page }) => {
-            // Intercept .wasm requests and abort them
-            await page.route('**/*.wasm', route => route.abort());
+            // Intercept UltraHDR WASM wrapper requests (including versioned query strings) and abort them.
+            await page.route('**/ultrahdr_wasm.wasm*', route => route.abort());
+            await page.route('**/ultrahdr_wasm.js*', route => route.abort());
 
             await page.goto('/');
 

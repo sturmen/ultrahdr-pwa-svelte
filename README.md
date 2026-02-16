@@ -79,6 +79,13 @@ The default gain-map generator is now a deterministic reverse-tonemapping pipeli
 - Desktop regression: `npm run test:e2e`
 - Mobile emulation (iOS + Android): `npm run test:e2e:mobile`
 
+## WASM Build Safety
+
+- Build command: `npm run build:wasm && npm run build`
+- The fallback behavior in `scripts/build-wasm.js` (using existing `public/assets` artifacts when rebuild fails) is a **development-only convenience** for AI/LLM sandbox environments where Emscripten/CMake rebuilds may be blocked.
+- Do **not** rely on fallback behavior for production or CI releases.
+- In CI/production, WASM rebuild failures are treated as fatal and the build must fail (no silent fallback).
+
 ## Features
 
 - Free and open source (MIT license)
