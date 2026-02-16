@@ -6,7 +6,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:app-version && vite build",
+    "build:app-version": "node scripts/build-app-version.js",
     "build:wasm": "node scripts/build-wasm.js",
     "preview": "vite preview",
     "deploy": "gh-pages -d dist",

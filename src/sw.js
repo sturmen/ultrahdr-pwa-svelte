@@ -13,34 +13,75 @@ clientsClaim();
 
 const MAX_SHARED_FILES = 32;
 const MAX_SHARED_TOTAL_BYTES = 300 * 1024 * 1024;
-const WASM_ASSET_CACHE = 'uhdr-wasm-assets';
+const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
+    ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
+    : '';
 const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 'string'
     ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
     : '';
+const RESOLVED_APP_ASSET_VERSION = APP_ASSET_VERSION || 'dev-unversioned-app';
+const RUNTIME_CACHE_PREFIX = 'uhdr-runtime';
+const WASM_ASSET_CACHE_PREFIX = 'uhdr-wasm-assets';
+const LIBHEIF_ASSET_CACHE_PREFIX = 'uhdr-libheif-assets';
+const RUNTIME_CACHE = `${RUNTIME_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
+const WASM_ASSET_CACHE = `${WASM_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
+const LIBHEIF_ASSET_CACHE = `${LIBHEIF_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 
 function isUltraHdrWasmAssetUrl(url) {
     return /\/assets\/ultrahdr_wasm\.(js|wasm)$/.test(url.pathname);
 }
 
-async function pruneOutdatedWasmAssets() {
-    if (!WASM_ASSET_VERSION) {
-        return;
-    }
-    const cache = await caches.open(WASM_ASSET_CACHE);
-    const cachedRequests = await cache.keys();
-    await Promise.all(cachedRequests.map(async (request) => {
-        const requestUrl = new URL(request.url);
-        if (!isUltraHdrWasmAssetUrl(requestUrl)) {
+function isLibheifWasmAssetUrl(url) {
+    return /\/assets\/libheif\.wasm$/.test(url.pathname);
+}
+
+function isVersionedCacheName(cacheName, cachePrefix) {
+    return cacheName === cachePrefix || cacheName.startsWith(`${cachePrefix}-`);
+}
+
+async function pruneOutdatedVersionedCaches() {
+    const cacheNames = await caches.keys();
+    const expectedCacheNames = new Set([RUNTIME_CACHE, WASM_ASSET_CACHE, LIBHEIF_ASSET_CACHE]);
+    const managedPrefixes = [RUNTIME_CACHE_PREFIX, WASM_ASSET_CACHE_PREFIX, LIBHEIF_ASSET_CACHE_PREFIX];
+    await Promise.all(cacheNames.map(async (cacheName) => {
+        const managed = managedPrefixes.some((prefix) => isVersionedCacheName(cacheName, prefix));
+        if (!managed) {
             return;
         }
-        if (requestUrl.searchParams.get('v') !== WASM_ASSET_VERSION) {
-            await cache.delete(request);
+        if (!expectedCacheNames.has(cacheName)) {
+            await caches.delete(cacheName);
+        }
+    }));
+}
+
+async function pruneOutdatedBinaryAssets() {
+    const wasmCache = await caches.open(WASM_ASSET_CACHE);
+    const libheifCache = await caches.open(LIBHEIF_ASSET_CACHE);
+    const [wasmRequests, libheifRequests] = await Promise.all([wasmCache.keys(), libheifCache.keys()]);
+
+    await Promise.all(wasmRequests.map(async (request) => {
+        if (!WASM_ASSET_VERSION) {
+            return;
+        }
+        const requestUrl = new URL(request.url);
+        if (isUltraHdrWasmAssetUrl(requestUrl) && requestUrl.searchParams.get('v') !== WASM_ASSET_VERSION) {
+            await wasmCache.delete(request);
+        }
+    }));
+
+    await Promise.all(libheifRequests.map(async (request) => {
+        if (!APP_ASSET_VERSION) {
+            return;
+        }
+        const requestUrl = new URL(request.url);
+        if (isLibheifWasmAssetUrl(requestUrl) && requestUrl.searchParams.get('v') !== APP_ASSET_VERSION) {
+            await libheifCache.delete(request);
         }
     }));
 }
 
 self.addEventListener('activate', (event) => {
-    event.waitUntil(pruneOutdatedWasmAssets());
+    event.waitUntil(Promise.all([pruneOutdatedVersionedCaches(), pruneOutdatedBinaryAssets()]));
 });
 
 registerRoute(
@@ -57,15 +98,28 @@ registerRoute(
 );
 
 registerRoute(
+    ({ url }) => isLibheifWasmAssetUrl(url),
+    new CacheFirst({
+        cacheName: LIBHEIF_ASSET_CACHE,
+        plugins: [
+            new ExpirationPlugin({
+                maxEntries: 4,
+                maxAgeSeconds: 30 * 24 * 60 * 60
+            })
+        ]
+    })
+);
+
+registerRoute(
     ({ request, url }) =>
-        !isUltraHdrWasmAssetUrl(url) && (
+        !isUltraHdrWasmAssetUrl(url) && !isLibheifWasmAssetUrl(url) && (
             request.mode === 'navigate' ||
             request.destination === 'script' ||
             request.destination === 'style' ||
             request.destination === 'image'
         ),
     new StaleWhileRevalidate({
-        cacheName: 'uhdr-runtime'
+        cacheName: RUNTIME_CACHE
     })
 );
 

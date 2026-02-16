@@ -86,6 +86,13 @@ The default gain-map generator is now a deterministic reverse-tonemapping pipeli
 - Do **not** rely on fallback behavior for production or CI releases.
 - In CI/production, WASM rebuild failures are treated as fatal and the build must fail (no silent fallback).
 
+## App Cache Versioning
+
+- The app uses an app-wide asset version token (`VITE_APP_ASSET_VERSION`) to namespace runtime caches and prune old cache namespaces during service worker activation.
+- Update checks run proactively at app startup, when focus/visibility is regained, every 30 minutes while online, and immediately after reconnecting.
+- Update application is idle-safe: a new version is never force-applied mid-queue; users can apply it once processing is idle.
+- Offline-first behavior remains the default. Network checks are opportunistic and do not block local processing.
+
 ## Features
 
 - Free and open source (MIT license)

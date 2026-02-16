@@ -10,6 +10,7 @@ import packageJson from './package.json' with { type: 'json' }
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const wasmVersionMetadataPath = path.join(__dirname, '.wasm-version.json')
+const appVersionMetadataPath = path.join(__dirname, '.app-version.json')
 
 function isTruthyEnvValue(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase())
@@ -21,7 +22,7 @@ function isStrictBuildMode() {
     || String(process.env.NODE_ENV || '').toLowerCase() === 'production'
 }
 
-function isValidWasmAssetVersion(version) {
+function isValidAssetVersion(version) {
   return /^[a-f0-9]{16}$/.test(version)
 }
 
@@ -37,7 +38,7 @@ function loadWasmAssetVersion() {
     if (!version) {
       return null
     }
-    if (!isValidWasmAssetVersion(version)) {
+    if (!isValidAssetVersion(version)) {
       const message = `Invalid WASM asset version in ${wasmVersionMetadataPath}: "${version}"`
       if (isStrictBuildMode()) {
         throw new Error(message)
@@ -65,10 +66,51 @@ if (isStrictBuildMode() && !wasmAssetVersion) {
 
 const resolvedWasmAssetVersion = wasmAssetVersion || 'dev-unversioned'
 
+function loadAppAssetVersion() {
+  if (!fs.existsSync(appVersionMetadataPath)) {
+    return null
+  }
+
+  try {
+    const metadataRaw = fs.readFileSync(appVersionMetadataPath, 'utf8')
+    const metadata = JSON.parse(metadataRaw)
+    const version = typeof metadata.appAssetVersion === 'string' ? metadata.appAssetVersion.trim() : ''
+    if (!version) {
+      return null
+    }
+    if (!isValidAssetVersion(version)) {
+      const message = `Invalid app asset version in ${appVersionMetadataPath}: "${version}"`
+      if (isStrictBuildMode()) {
+        throw new Error(message)
+      }
+      console.warn(message)
+      return null
+    }
+    return version
+  } catch (error) {
+    if (isStrictBuildMode()) {
+      throw error
+    }
+    console.warn(`Failed to parse app version metadata at ${appVersionMetadataPath}:`, error)
+    return null
+  }
+}
+
+const appAssetVersion = loadAppAssetVersion()
+if (isStrictBuildMode() && !appAssetVersion) {
+  throw new Error(
+    `Missing app asset version metadata at ${appVersionMetadataPath}. ` +
+    'Run `npm run build:app-version` successfully before building in CI/production.'
+  )
+}
+
+const resolvedAppAssetVersion = appAssetVersion || 'dev-unversioned-app'
+
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version),
+    'import.meta.env.VITE_APP_ASSET_VERSION': JSON.stringify(resolvedAppAssetVersion),
     'import.meta.env.VITE_WASM_ASSET_VERSION': JSON.stringify(resolvedWasmAssetVersion),
   },
   base: process.env.NODE_ENV === 'production' ? '/ultrahdr-pwa-svelte/' : '/',
@@ -135,7 +177,7 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.js',
       injectManifest: {
-        globIgnores: ['**/assets/ultrahdr_wasm.js', '**/assets/ultrahdr_wasm.wasm']
+        globIgnores: ['**/assets/ultrahdr_wasm.js', '**/assets/ultrahdr_wasm.wasm', '**/assets/libheif.wasm']
       }
     }),
     viteStaticCopy({

@@ -21,3 +21,4 @@ emsdk/
 .last-run.json
 test-results/
 .wasm-version.json
+.app-version.json

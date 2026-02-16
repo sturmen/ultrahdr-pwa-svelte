@@ -61,6 +61,7 @@
   let wakeLockSentinel = null;
   let launchIntentConsumed = false;
   let lastBadgeCount = null;
+  let lastReportedProcessingBusy = null;
 
   let activeMobileTab = "convert";
   let activeDesktopTab = "all";
@@ -170,6 +171,19 @@
   $: if (resumeRequestedFromLaunch && canResumeQueue) {
     resumeRequestedFromLaunch = false;
     resumeQueue();
+  }
+  $: {
+    const isProcessingBusy =
+      workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
+      workflowState === WORKFLOW_STATES.PROCESSING_PAUSING ||
+      currentQueueId !== null;
+    if (isProcessingBusy !== lastReportedProcessingBusy) {
+      lastReportedProcessingBusy = isProcessingBusy;
+      dispatch("processingbusychange", {
+        busy: isProcessingBusy,
+        workflowState,
+      });
+    }
   }
   $: {
     const badgeCount = queuePendingCount > 0 ? queuePendingCount : 0;

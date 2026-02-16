@@ -73,6 +73,9 @@ describe('heic-processing.js', () => {
       const result = await processHeic(mockFile);
 
       expect(result).toBeInstanceOf(File);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/assets/libheif.wasm?v=test-app-version')
+      );
     });
 
     it('should discard gain map when option is set', async () => {

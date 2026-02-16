@@ -4,6 +4,7 @@
   import ImageProcessor from "./lib/ImageProcessor.svelte";
   import { consumeSharedFilesFromLaunch } from "./lib/share-target-launch.js";
   import { loadQueueState } from "./lib/share-store.js";
+  import { createDefaultPwaUpdateState, createPwaUpdateCoordinator } from "./lib/pwa-updater.js";
 
   const version = import.meta.env.VITE_APP_VERSION || 'dev';
 
@@ -13,6 +14,9 @@
   let restoreNotice = null;
   let launchIntent = { action: null, tab: null };
   let activeView = "converter";
+  let isProcessingBusy = false;
+  let pwaUpdateState = createDefaultPwaUpdateState();
+  let pwaUpdateCoordinator = null;
 
   function handleFiles(event) {
     files = Array.from(event.detail);
@@ -22,6 +26,7 @@
     files = [];
     launchSource = "regular";
     launchIntent = { action: null, tab: null };
+    isProcessingBusy = false;
   }
 
   function openAbout() {
@@ -51,27 +56,50 @@
     }
   }
 
-  onMount(async () => {
-    launchIntent = parseLaunchIntent(
-      typeof window !== "undefined" ? window.location.search : "",
-    );
-    const sharedFiles = await consumeSharedFilesFromLaunch();
-    if (sharedFiles.length > 0) {
-      files = sharedFiles;
-      launchSource = "share-target";
-    } else {
-      launchSource = "regular";
-      try {
-        const persistedQueue = await loadQueueState();
-        if (persistedQueue?.hasPending) {
-          restoreNotice = "Previous queue could not be restored. Please re-add files.";
+  function handleProcessingBusyChange(event) {
+    isProcessingBusy = Boolean(event.detail?.busy);
+    pwaUpdateCoordinator?.setBusy(isProcessingBusy);
+  }
+
+  async function applyAppUpdate() {
+    await pwaUpdateCoordinator?.applyUpdate();
+  }
+
+  onMount(() => {
+    pwaUpdateCoordinator = createPwaUpdateCoordinator({
+      onStateChange: (nextState) => {
+        pwaUpdateState = nextState;
+      },
+      isBusy: () => isProcessingBusy,
+    });
+
+    (async () => {
+      launchIntent = parseLaunchIntent(
+        typeof window !== "undefined" ? window.location.search : "",
+      );
+      const sharedFiles = await consumeSharedFilesFromLaunch();
+      if (sharedFiles.length > 0) {
+        files = sharedFiles;
+        launchSource = "share-target";
+      } else {
+        launchSource = "regular";
+        try {
+          const persistedQueue = await loadQueueState();
+          if (persistedQueue?.hasPending) {
+            restoreNotice = "Previous queue could not be restored. Please re-add files.";
+          }
+        } catch (e) {
+          console.warn("[App] Unable to load persisted queue state:", e);
         }
-      } catch (e) {
-        console.warn("[App] Unable to load persisted queue state:", e);
       }
-    }
-    shareLaunchChecked = true;
-    await maybeAutoPickImages();
+      shareLaunchChecked = true;
+      await maybeAutoPickImages();
+    })();
+
+    return () => {
+      pwaUpdateCoordinator?.dispose();
+      pwaUpdateCoordinator = null;
+    };
   });
 </script>
 
@@ -128,7 +156,13 @@
           {/if}
         </div>
       {:else}
-        <ImageProcessor {files} {launchSource} {launchIntent} on:reset={handleReset} />
+        <ImageProcessor
+          {files}
+          {launchSource}
+          {launchIntent}
+          on:reset={handleReset}
+          on:processingbusychange={handleProcessingBusyChange}
+        />
       {/if}
     {/if}
   </section>
@@ -141,6 +175,27 @@
       <button class="footer-link" type="button" on:click={openConverter}>Back to Converter</button>
     {:else}
       <button class="footer-link" type="button" on:click={openAbout}>About</button>
+    {/if}
+    {#if pwaUpdateState.updateAvailable}
+      {#if pwaUpdateState.pendingUntilIdle}
+        <span class="footer-update" data-testid="pwa-update-pending">
+          Update downloaded. It can be applied when processing is idle.
+        </span>
+      {:else}
+        <span class="footer-update" data-testid="pwa-update-available">
+          A newer version is ready.
+          <button
+            class="footer-link footer-update-action"
+            type="button"
+            on:click={applyAppUpdate}
+            disabled={pwaUpdateState.applying}
+          >
+            {pwaUpdateState.applying ? "Updating..." : "Update now"}
+          </button>
+        </span>
+      {/if}
+    {:else if pwaUpdateState.checking}
+      <span class="footer-update" data-testid="pwa-update-checking">Checking for updates...</span>
     {/if}
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a>
     <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
@@ -266,6 +321,18 @@
 
   .footer-link:hover {
     text-decoration: underline;
+  }
+
+  .footer-update {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    color: var(--text-secondary);
+  }
+
+  .footer-update-action:disabled {
+    opacity: 0.65;
+    cursor: progress;
   }
 
   .footer a:hover {

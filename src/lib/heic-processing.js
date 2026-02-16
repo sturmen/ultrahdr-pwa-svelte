@@ -1,13 +1,24 @@
 import libheifFactory from 'libheif-js/libheif-wasm/libheif.js';
 
 let libheif = null;
+const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
+    ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
+    : '';
+
+function appendVersionQuery(url) {
+    if (!APP_ASSET_VERSION) {
+        return url;
+    }
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(APP_ASSET_VERSION)}`;
+}
 
 async function initLibHeif() {
     if (libheif) return libheif;
     console.log('[HEIC] Initializing libheif...');
 
     // Manually fetch the WASM binary to avoid sync fetching issues
-    const wasmUrl = (import.meta.env.BASE_URL || '/') + 'assets/libheif.wasm';
+    const wasmUrl = appendVersionQuery((import.meta.env.BASE_URL || '/') + 'assets/libheif.wasm');
     console.log('[HEIC] Fetching WASM from:', wasmUrl);
 
     const response = await fetch(wasmUrl);

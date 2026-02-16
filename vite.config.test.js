@@ -3,6 +3,9 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
   define: {
+    'import.meta.env.VITE_APP_ASSET_VERSION': JSON.stringify(
+      process.env.VITE_APP_ASSET_VERSION || 'test-app-version'
+    ),
     'import.meta.env.VITE_WASM_ASSET_VERSION': JSON.stringify(
       process.env.VITE_WASM_ASSET_VERSION || 'test-wasm-version'
     ),
