@@ -107,6 +107,23 @@ EMSCRIPTEN_KEEPALIVE int wasm_enc_set_gainmap(uhdr_wasm_encoder_t enc,
                                               const float* metadata);
 
 /**
+ * Set EXIF APP1 payload bytes for encoding.
+ *
+ * The input must be EXIF APP1 payload bytes (starts with "Exif\0\0"),
+ * without the JPEG APP1 marker and length.
+ *
+ * \param enc encoder handle
+ * \param data pointer to EXIF payload bytes
+ * \param size number of bytes in the payload
+ * \param capacity allocated payload capacity in bytes
+ * \return 0 on success, negative error code on failure
+ */
+EMSCRIPTEN_KEEPALIVE int wasm_enc_set_exif_data(uhdr_wasm_encoder_t enc,
+                                                 const uint8_t* data,
+                                                 int size,
+                                                 int capacity);
+
+/**
  * Encode images to UltraHDR JPEG
  *
  * \param enc encoder handle

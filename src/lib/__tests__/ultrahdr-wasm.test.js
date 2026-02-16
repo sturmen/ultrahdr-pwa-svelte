@@ -62,6 +62,7 @@ describe('UHDREncoder Class', () => {
       _wasm_create_encoder: vi.fn(() => mockEncoderHandle),
       _wasm_release_encoder: vi.fn(),
       _wasm_enc_set_compressed_base_image: vi.fn(() => 0),
+      _wasm_enc_set_exif_data: vi.fn(() => 0),
       _wasm_enc_set_gainmap: vi.fn(() => 0),
       _wasm_encode: vi.fn(() => 0),
       _wasm_get_encoded_data: vi.fn(() => 0),
@@ -154,5 +155,29 @@ describe('UHDREncoder Class', () => {
 
     const errorMsg = encoder.getErrorMessage();
     expect(typeof errorMsg).toBe('string');
+  });
+
+  it('should set EXIF payload on encoder', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    mockModule._malloc.mockReturnValueOnce(0x1000);
+    const exifPayload = new Uint8Array([0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0x49, 0x49, 0x2a, 0x00]);
+
+    encoder.setExifData(exifPayload);
+
+    expect(mockModule._wasm_enc_set_exif_data).toHaveBeenCalledWith(
+      mockEncoderHandle,
+      0x1000,
+      exifPayload.length,
+      exifPayload.length
+    );
+  });
+
+  it('should throw when setExifData is called before init', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    expect(() => encoder.setExifData(new Uint8Array([1, 2, 3]))).toThrow('Encoder not initialized');
   });
 });

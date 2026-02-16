@@ -6,15 +6,26 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createCanvas, loadImage } from 'canvas';
+import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SDR_IMAGE = path.resolve(__dirname, '../../media/test_sdr.jpg');
 const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/test_sdr2.jpg');
-const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
+const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/exif_matrix.jpg');
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
+const EXIF_MATRIX_FIXTURES = [
+    path.resolve(__dirname, '../../media/exif_matrix.jpg'),
+    path.resolve(__dirname, '../../media/exif_matrix.jpeg'),
+    path.resolve(__dirname, '../../media/exif_matrix.png'),
+    path.resolve(__dirname, '../../media/exif_matrix.webp'),
+    path.resolve(__dirname, '../../media/exif_matrix.heic'),
+    path.resolve(__dirname, '../../media/exif_matrix.heif'),
+    path.resolve(__dirname, '../../media/exif_matrix.tif'),
+    path.resolve(__dirname, '../../media/exif_matrix.tiff')
+];
 
 // Timeouts for processing diagnostics.
 const PROCESSING_TIMEOUT = 180_000;
@@ -106,6 +117,18 @@ async function waitForReprocessing(page) {
         }
     }
     await waitForProcessing(page, 1);
+}
+
+async function setStripExifToggle(page, enabled) {
+    await page.evaluate((nextValue) => {
+        const label = Array.from(document.querySelectorAll('.switch-label'))
+            .find((el) => el.textContent?.includes('Strip EXIF data'));
+        const container = label?.closest('.control-group.switch-group');
+        const checkbox = container?.querySelector('input[type="checkbox"]');
+        if (!checkbox) throw new Error('Strip EXIF toggle not found');
+        checkbox.checked = nextValue;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    }, enabled);
 }
 
 /**
@@ -272,6 +295,56 @@ function normalizeExifForComparison(tags) {
     return normalized;
 }
 
+const TIFF_STRUCTURAL_EXIF_KEYS = new Set([
+    'IFD0:ImageWidth',
+    'IFD0:ImageHeight',
+    'IFD0:BitsPerSample',
+    'IFD0:Compression',
+    'IFD0:PhotometricInterpretation',
+    'IFD0:FillOrder',
+    'IFD0:StripOffsets',
+    'IFD0:SamplesPerPixel',
+    'IFD0:RowsPerStrip',
+    'IFD0:StripByteCounts',
+    'IFD0:PlanarConfiguration',
+    'IFD0:XPosition',
+    'IFD0:YPosition',
+    'IFD0:PageNumber',
+    'IFD0:TileWidth',
+    'IFD0:TileLength',
+    'IFD0:TileOffsets',
+    'IFD0:TileByteCounts',
+    'IFD0:JPEGInterchangeFormat',
+    'IFD0:JPEGInterchangeFormatLength',
+    'IFD0:PreviewImage',
+    'IFD0:PreviewImageStart',
+    'IFD0:PreviewImageLength',
+]);
+
+function normalizeTiffExifForComparison(tags, { removeOrientation = false } = {}) {
+    const normalized = {};
+    for (const [key, value] of Object.entries(tags || {})) {
+        if (TIFF_STRUCTURAL_EXIF_KEYS.has(key)) {
+            continue;
+        }
+        if (removeOrientation && key.endsWith(':Orientation')) {
+            continue;
+        }
+        normalized[key] = value;
+    }
+    return normalized;
+}
+
+function isJpegFixture(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return ext === '.jpg' || ext === '.jpeg';
+}
+
+function isTiffFixture(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return ext === '.tif' || ext === '.tiff';
+}
+
 function readExifOrientation(filePath) {
     const output = execFileSync(
         'exiftool',
@@ -283,6 +356,11 @@ function readExifOrientation(filePath) {
         throw new Error(`Unable to parse Orientation value for ${filePath}: "${output}"`);
     }
     return orientation;
+}
+
+function readCanonicalSourceExifPayload(filePath) {
+    const sourceBytes = new Uint8Array(fs.readFileSync(filePath));
+    return extractExifApp1PayloadFromInput(sourceBytes, path.basename(filePath), '');
 }
 
 /**
@@ -705,76 +783,116 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     });
 
     test.describe('EXIF Handling', () => {
-        test('should preserve EXIF data by default', async ({ page }) => {
-            await page.goto('/');
-
-            // Upload EXIF-rich image
-            await uploadFiles(page, [EXIF_RICH_IMAGE]);
-            await waitForProcessing(page);
-
-            const result = await downloadFirstResult(page);
-
-            const sourceData = fs.readFileSync(EXIF_RICH_IMAGE);
-            const sourceExif = extractExifSegmentBytes(sourceData);
-            expect(sourceExif, 'EXIF fixture is missing APP1 EXIF data').not.toBeNull();
-
-            const outputExif = extractExifSegmentBytes(result);
-            expect(outputExif, 'Output is missing APP1 EXIF data').not.toBeNull();
-
-            expect(Buffer.compare(outputExif, sourceExif)).toBe(0);
-        });
-
-        test('should strip EXIF data when "Strip EXIF data" is enabled', async ({ page }) => {
-            test.setTimeout(120_000); // Re-processing takes time
-            await page.goto('/');
-
-            // Upload EXIF-rich image
-            await uploadFiles(page, [EXIF_RICH_IMAGE]);
-            await waitForProcessing(page);
-
-            const sourceData = fs.readFileSync(EXIF_RICH_IMAGE);
-            expect(extractExifSegmentBytes(sourceData), 'EXIF fixture is missing APP1 EXIF data').not.toBeNull();
-
-            // Enable "Strip EXIF data" toggle by label text.
-            await page.evaluate(() => {
-                const label = Array.from(document.querySelectorAll('.switch-label'))
-                    .find((el) => el.textContent?.includes('Strip EXIF data'));
-                const container = label?.closest('.control-group.switch-group');
-                const checkbox = container?.querySelector('input[type="checkbox"]');
-                if (!checkbox) throw new Error('Strip EXIF toggle not found');
-                checkbox.checked = true;
-                checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-            });
-
-            await waitForReprocessing(page);
-
-            // Download the re-processed result
-            const result = await downloadFirstResult(page);
-
-            // EXIF should be stripped
-            expect(extractExifSegmentBytes(result)).toBeNull();
-            expect(hasExifData(result)).toBe(false);
-        });
-
-        test('should normalize EXIF Orientation to 1 when user rotation is applied', async ({ page, browserName }) => {
-            test.setTimeout(120_000); // Re-processing takes time
-            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-exif-rotation-${browserName}-`));
+        test('should preserve EXIF metadata by default across all supported input formats', async ({ page, browserName }) => {
+            test.setTimeout(600_000);
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-exif-matrix-default-${browserName}-`));
 
             try {
-                await page.goto('/');
-                await uploadFiles(page, [EXIF_RICH_IMAGE]);
-                await waitForProcessing(page);
+                for (const fixturePath of EXIF_MATRIX_FIXTURES) {
+                    const fixtureName = path.basename(fixturePath);
+                    await page.goto('/');
+                    await uploadFiles(page, [fixturePath]);
+                    await waitForProcessing(page);
 
-                // Apply 90 degree clockwise rotation
-                await page.click('button[title="Rotate Right"]');
-                await waitForReprocessing(page);
+                    const result = await downloadFirstResult(page);
+                    const outputExif = extractExifSegmentBytes(result);
+                    expect(outputExif, `${fixtureName}: output is missing APP1 EXIF payload`).not.toBeNull();
 
-                const rotatedResult = await downloadFirstResult(page);
-                const rotatedPath = writeTempJpeg(rotatedResult, tempDir, 'rotated-output.jpg');
-                expect(readExifOrientation(rotatedPath)).toBe(1);
+                    if (isTiffFixture(fixturePath)) {
+                        const outputPath = writeTempJpeg(result, tempDir, `${fixtureName}-default-output.jpg`);
+                        const sourceTags = normalizeTiffExifForComparison(readExifTags(fixturePath));
+                        const outputTags = normalizeTiffExifForComparison(readExifTags(outputPath));
+                        expect(Object.keys(sourceTags).length, `${fixtureName}: source TIFF EXIF tags were empty`).toBeGreaterThan(0);
+                        expect(outputTags).toEqual(sourceTags);
+                        continue;
+                    }
+
+                    const sourceExif = isJpegFixture(fixturePath)
+                        ? extractExifSegmentBytes(fs.readFileSync(fixturePath))
+                        : readCanonicalSourceExifPayload(fixturePath);
+                    expect(sourceExif, `${fixtureName}: source fixture is missing canonical EXIF payload`).not.toBeNull();
+                    expect(Buffer.compare(outputExif, sourceExif)).toBe(0);
+                }
             } finally {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }
+        });
+
+        test('should strip EXIF metadata across all supported input formats', async ({ page }) => {
+            test.setTimeout(600_000);
+            for (const fixturePath of EXIF_MATRIX_FIXTURES) {
+                const fixtureName = path.basename(fixturePath);
+                await page.goto('/');
+                await uploadFiles(page, [fixturePath]);
+                await waitForProcessing(page);
+
+                if (isTiffFixture(fixturePath)) {
+                    const sourceTags = normalizeTiffExifForComparison(readExifTags(fixturePath));
+                    expect(Object.keys(sourceTags).length, `${fixtureName}: source TIFF EXIF tags were empty`).toBeGreaterThan(0);
+                } else {
+                    const sourceExif = isJpegFixture(fixturePath)
+                        ? extractExifSegmentBytes(fs.readFileSync(fixturePath))
+                        : readCanonicalSourceExifPayload(fixturePath);
+                    expect(sourceExif, `${fixtureName}: source fixture is missing canonical EXIF payload`).not.toBeNull();
+                }
+
+                await setStripExifToggle(page, true);
+                await waitForReprocessing(page);
+
+                const strippedResult = await downloadFirstResult(page);
+                expect(extractExifSegmentBytes(strippedResult), `${fixtureName}: output still contains APP1 EXIF payload`).toBeNull();
+                expect(hasExifData(strippedResult), `${fixtureName}: output still reports EXIF APP1 marker`).toBe(false);
+            }
+        });
+
+        test('should normalize EXIF Orientation=1 when rotation is applied for all supported input formats', async ({ page, browserName }) => {
+            test.setTimeout(600_000);
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-exif-matrix-rotation-${browserName}-`));
+
+            try {
+                for (const fixturePath of EXIF_MATRIX_FIXTURES) {
+                    const fixtureName = path.basename(fixturePath);
+                    await page.goto('/');
+                    await uploadFiles(page, [fixturePath]);
+                    await waitForProcessing(page);
+
+                    await page.click('button[title="Rotate Right"]');
+                    await waitForReprocessing(page);
+
+                    const rotatedResult = await downloadFirstResult(page);
+                    const outputPath = writeTempJpeg(rotatedResult, tempDir, `${fixtureName}-rotated-output.jpg`);
+                    expect(readExifOrientation(outputPath), `${fixtureName}: rotated output orientation should be 1`).toBe(1);
+
+                    if (isTiffFixture(fixturePath)) {
+                        const sourceTags = normalizeTiffExifForComparison(readExifTags(fixturePath), { removeOrientation: true });
+                        const outputTags = normalizeTiffExifForComparison(readExifTags(outputPath), { removeOrientation: true });
+                        expect(outputTags).toEqual(sourceTags);
+                        continue;
+                    }
+
+                    const sourceTags = normalizeExifForComparison(readExifTags(fixturePath));
+                    const outputTags = normalizeExifForComparison(readExifTags(outputPath));
+                    expect(outputTags).toEqual(sourceTags);
+                }
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        test('HEIC regression: default processing should preserve canonical EXIF payload', async ({ page }) => {
+            await page.goto('/');
+            const heicFixture = path.resolve(__dirname, '../../media/exif_matrix.heic');
+            await uploadFiles(page, [heicFixture]);
+            await waitForProcessing(page);
+
+            const result = await downloadFirstResult(page);
+            const outputExif = extractExifSegmentBytes(result);
+            expect(outputExif, 'HEIC output is missing APP1 EXIF payload').not.toBeNull();
+
+            const sourceExif = readCanonicalSourceExifPayload(heicFixture);
+            expect(sourceExif, 'HEIC source fixture is missing canonical EXIF payload').not.toBeNull();
+
+            expect(Buffer.compare(outputExif, sourceExif)).toBe(0);
         });
 
         test('should preserve all EXIF tags except orientation for a source with Orientation=6', async ({ page, browserName }) => {

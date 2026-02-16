@@ -3,11 +3,11 @@ import { createPipelineTelemetry } from './pipeline-telemetry.js';
 import { processTiff } from './tiff-processing.js';
 import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, getStatus, isUhdrImage } from './ultrahdr-wasm.js';
 import {
-    extractExifPayloadFromJpeg,
-    stripExifSegments,
     insertExifSegment,
+    stripExifSegments,
     normalizeExifOrientationTo1
 } from './exif-utils.js';
+import { extractExifApp1PayloadFromInput } from './input-exif.js';
 
 const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 
@@ -148,6 +148,8 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
     const mergedOptions = { ...DEFAULT_PROCESS_OPTIONS, ...(options || {}) };
     console.log('[Process] Starting processing for:', file.name);
     throwIfAborted(mergedOptions.abortSignal);
+    const sourceInputFile = file;
+    let sourceInputBytes = null;
 
     const telemetry = createPipelineTelemetry({
         fileName: file.name,
@@ -163,6 +165,18 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             await ensureWasmLoaded();
         });
 
+        const sourceExifBytes = await telemetry.runStage('extract-source-exif', async () => {
+            if (mergedOptions.stripExif || !(sourceInputFile instanceof Blob)) {
+                return null;
+            }
+            sourceInputBytes = await blobToUint8Array(sourceInputFile);
+            return extractExifApp1PayloadFromInput(
+                sourceInputBytes,
+                sourceInputFile.name || '',
+                sourceInputFile.type || ''
+            );
+        });
+
         file = await telemetry.runStage('preprocess-file', async () => {
             throwIfAborted(mergedOptions.abortSignal);
             return preprocessFile(file, mergedOptions);
@@ -173,7 +187,9 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         if (!mergedOptions.discardGainMap && file instanceof File) {
             try {
                 const fileBuffer = await telemetry.runStage('read-source-buffer', async () =>
-                    new Uint8Array(await file.arrayBuffer())
+                    sourceInputBytes && file === sourceInputFile
+                        ? sourceInputBytes
+                        : new Uint8Array(await file.arrayBuffer())
                 );
                 throwIfAborted(mergedOptions.abortSignal);
 
@@ -181,9 +197,8 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                 if (isUhdr) {
                     if (mergedOptions.rotation === 0) {
                         console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
-                        const exifBytes = extractExifPayloadFromJpeg(fileBuffer);
                         const blob = await telemetry.runStage('finalize-preserved', async () =>
-                            finalizeUltraHDR({}, fileBuffer, new Uint8Array(0), exifBytes, mergedOptions.stripExif)
+                            finalizeUltraHDR({}, fileBuffer, new Uint8Array(0), mergedOptions.stripExif)
                         );
                         telemetry.complete({ outputBytes: blob.size, mode: 'preserve' });
                         return blob;
@@ -191,7 +206,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
                     console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
                     const blob = await telemetry.runStage('rotate-preserved-ultrahdr', async () =>
-                        processUhdrWithRotation(file, fileBuffer, mergedOptions, telemetry)
+                        processUhdrWithRotation(file, fileBuffer, mergedOptions, telemetry, sourceExifBytes)
                     );
                     telemetry.complete({ outputBytes: blob.size, mode: 'preserve-with-rotation' });
                     return blob;
@@ -245,20 +260,19 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             }
 
             const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
-                compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry)
+                compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes)
             );
             const blob = await telemetry.runStage('finalize-output', async () =>
-                finalizeUltraHDR(metadata, sdr, gainMap, null, mergedOptions.stripExif)
+                finalizeUltraHDR(metadata, sdr, gainMap, mergedOptions.stripExif)
             );
 
             telemetry.complete({ outputBytes: blob.size, mode: 'pre-decoded-components' });
             return blob;
         }
 
-        // Load Data & EXIF
+        // Load Data
         const dataUrl = await telemetry.runStage('read-input-data-url', async () => readFileAsDataURL(file));
-        const exifBytes = await telemetry.runStage('extract-exif', async () => extractExif(file));
-        console.log('[Process] File loaded and EXIF extracted');
+        console.log('[Process] File loaded and EXIF extraction complete');
         throwIfAborted(mergedOptions.abortSignal);
 
         // Load image pixels
@@ -316,13 +330,13 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         // Compress and encode to UltraHDR
         const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
-            compressImages(workingImageData, gainMapImageData, mergedOptions, metadata, telemetry)
+            compressImages(workingImageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes)
         );
         console.log('[Process] Compression complete');
 
         // Finalize UltraHDR
         const blob = await telemetry.runStage('finalize-output', async () =>
-            finalizeUltraHDR(metadata, sdr, gainMap, exifBytes, mergedOptions.stripExif)
+            finalizeUltraHDR(metadata, sdr, gainMap, mergedOptions.stripExif)
         );
         console.log('[Process] Processing complete, returning Blob');
 
@@ -343,7 +357,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
  * @param {Object} options - Processing options (rotation, quality, stripExif)
  * @returns {Promise<Blob>} - The rotated UltraHDR JPEG
  */
-async function processUhdrWithRotation(file, fileBuffer, options, telemetry = null) {
+async function processUhdrWithRotation(file, fileBuffer, options, telemetry = null, sourceExifBytes = null) {
     const decoder = new UHDRDecoder();
     if (telemetry) {
         await telemetry.runStage('rotation-init-decoder', async () => decoder.init());
@@ -377,7 +391,7 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
 
         const quality = options.quality !== undefined ? options.quality : 0.95;
         const rotation = ((options.rotation || 0) % 360 + 360) % 360;
-        const exifBytes = options.stripExif ? null : await extractExif(file);
+        const exifBytes = options.stripExif ? null : sourceExifBytes;
 
         // Effects on compressed inputs are not supported by libultrahdr. Decode both
         // compressed components to ImageData, rotate in JS, then re-encode with the
@@ -396,7 +410,8 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
                     gainMapImageData,
                     { ...options, quality, rotation },
                     gainMapMetadata,
-                    telemetry
+                    telemetry,
+                    exifBytes
                 )
             )
             : await compressImages(
@@ -404,11 +419,12 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
                 gainMapImageData,
                 { ...options, quality, rotation },
                 gainMapMetadata,
-                null
+                null,
+                exifBytes
             );
 
         // 3. Finalize (handle EXIF)
-        return await finalizeUltraHDR({}, sdr, gainMap, exifBytes, options.stripExif);
+        return await finalizeUltraHDR({}, sdr, gainMap, options.stripExif);
     } finally {
         decoder.destroy();
     }
@@ -448,22 +464,6 @@ async function preprocessFile(file, options) {
         }
     }
     return file;
-}
-
-/**
- * Extracts EXIF APP1 payload bytes from a JPEG source file.
- * @param {File} file 
- * @returns {Promise<Uint8Array|null>}
- */
-async function extractExif(file) {
-    try {
-        if (file && (file.type === 'image/jpeg' || file.type === 'image/jpg')) {
-            return extractExifPayloadFromJpeg(new Uint8Array(await file.arrayBuffer()));
-        }
-    } catch (e) {
-        console.warn('Could not extract EXIF:', e);
-    }
-    return null;
 }
 
 /**
@@ -930,9 +930,10 @@ export function generateGainMapData(imageData, options) {
  * @param {Object} options
  * @param {Object} metadata
  * @param {Object|null} telemetry
+ * @param {Uint8Array|null} exifPayload
  * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
  */
-async function compressImages(sdrImageData, gainMapImageData, options, metadata = null, telemetry = null) {
+async function compressImages(sdrImageData, gainMapImageData, options, metadata = null, telemetry = null, exifPayload = null) {
     // Convert quality 0-1 to 0-100
     const quality = options.quality !== undefined ? options.quality : 0.95;
     const wasmQuality = Math.round(quality * 100);
@@ -978,16 +979,40 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
             ? await telemetry.runStage('encode-gain-map-to-jpeg', async () => imageDataToJpegBytes(rotatedGainMapImageData, quality))
             : await imageDataToJpegBytes(rotatedGainMapImageData, quality);
 
+        let finalExifPayload = exifPayload;
+        if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
+            finalExifPayload = normalizeExifOrientationTo1(finalExifPayload);
+            if (finalExifPayload.length + 2 > 0xffff) {
+                console.warn('Skipping EXIF insertion: payload exceeds JPEG APP1 segment size limit');
+                finalExifPayload = null;
+            }
+        }
+
+        const baseJpegForEncoder =
+            !options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0
+                ? insertExifSegment(sdrJpegBytes, finalExifPayload)
+                : sdrJpegBytes;
+
         if (telemetry) {
             await telemetry.runStage('encode-set-base-image', async () => {
-                encoder.setCompressedBaseImage(sdrJpegBytes);
+                encoder.setCompressedBaseImage(baseJpegForEncoder);
             });
             await telemetry.runStage('encode-set-gain-map-image', async () => {
                 encoder.setCompressedGainMapImage(gainMapJpegBytes, compressedMetadata);
             });
         } else {
-            encoder.setCompressedBaseImage(sdrJpegBytes);
+            encoder.setCompressedBaseImage(baseJpegForEncoder);
             encoder.setCompressedGainMapImage(gainMapJpegBytes, compressedMetadata);
+        }
+
+        if (!options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
+            if (telemetry) {
+                await telemetry.runStage('encode-set-exif', async () => {
+                    encoder.setExifData(finalExifPayload);
+                });
+            } else {
+                encoder.setExifData(finalExifPayload);
+            }
         }
 
         // Encode to UltraHDR JPEG.
@@ -1127,24 +1152,16 @@ function readBlobAsDataURL(blob) {
  * @param {Object} metadata
  * @param {Uint8Array} sdr - The UltraHDR JPEG from WASM encoder
  * @param {Uint8Array} gainMap - Unused (kept for API compatibility)
- * @param {Uint8Array|null} exifBytes
  * @param {boolean} stripExif
  * @returns {Promise<Blob>}
  */
-async function finalizeUltraHDR(metadata, sdr, gainMap, exifBytes, stripExif) {
+async function finalizeUltraHDR(metadata, sdr, gainMap, stripExif) {
     // The WASM encoder embeds metadata directly in the JPEG
-    // We just need to handle EXIF preservation
+    // We only strip metadata when requested.
     let finalJpeg = sdr;
 
     if (stripExif) {
         finalJpeg = stripExifSegments(finalJpeg);
-    } else if (exifBytes) {
-        try {
-            const normalizedExif = normalizeExifOrientationTo1(exifBytes);
-            finalJpeg = insertExifSegment(finalJpeg, normalizedExif);
-        } catch (e) {
-            console.warn('Could not re-insert EXIF:', e);
-        }
     }
 
     return new Blob([finalJpeg], { type: 'image/jpeg' });

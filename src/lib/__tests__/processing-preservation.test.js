@@ -40,6 +40,14 @@ const gainMapMetadata = {
     hdrCapacityMin: 1.0,
     hdrCapacityMax: defaultMaxContentBoost
 };
+const extractedExifPayload = new Uint8Array([
+    0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+    0x01, 0x00,
+    0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+]);
 
 const decoderInstance = {
     init: vi.fn(async () => { }),
@@ -55,6 +63,7 @@ const encoderInstance = {
     init: vi.fn(async () => { }),
     setSDRImage: vi.fn(),
     setCompressedBaseImage: vi.fn(),
+    setExifData: vi.fn(),
     setCompressedGainMapImage: vi.fn(),
     setGainMapImage: vi.fn(),
     addEffectRotate: vi.fn(),
@@ -74,6 +83,10 @@ vi.mock('../heic-processing.js', () => ({
 
 vi.mock('../tiff-processing.js', () => ({
     processTiff: vi.fn(async (file) => file)
+}));
+
+vi.mock('../input-exif.js', () => ({
+    extractExifApp1PayloadFromInput: vi.fn(() => extractedExifPayload)
 }));
 
 vi.mock('../ultrahdr-wasm.js', () => ({
@@ -115,6 +128,7 @@ describe('processImage UltraHDR preservation path', () => {
         );
 
         expect(encoderInstance.encode).toHaveBeenCalledWith(95);
+        expect(encoderInstance.setExifData).not.toHaveBeenCalled();
         expect(encoderInstance.setSDRImage).not.toHaveBeenCalled();
         expect(encoderInstance.setGainMapImage).not.toHaveBeenCalled();
         expect(encoderInstance.addEffectRotate).not.toHaveBeenCalled();
@@ -355,5 +369,22 @@ describe('processImage UltraHDR preservation path', () => {
         expect(result).toBeInstanceOf(Blob);
         expect(result.type).toBe('image/jpeg');
         expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
+    });
+
+    it('passes extracted HEIC EXIF payload to encoder when stripExif=false', async () => {
+        const { processImage } = await import('../processing.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: false
+        });
+
+        expect(encoderInstance.setExifData).toHaveBeenCalledTimes(1);
+        expect(encoderInstance.setExifData).toHaveBeenCalledWith(extractedExifPayload);
     });
 });

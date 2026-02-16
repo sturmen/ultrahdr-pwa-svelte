@@ -261,6 +261,46 @@ wasm_enc_set_compressed_base_image(uhdr_wasm_encoder_t enc, const uint8_t *data,
 }
 
 /**
+ * Set EXIF APP1 payload bytes for encoding.
+ */
+EMSCRIPTEN_KEEPALIVE int wasm_enc_set_exif_data(uhdr_wasm_encoder_t enc,
+                                                const uint8_t *data, int size,
+                                                int capacity) {
+  if (enc == nullptr || data == nullptr) {
+    if (enc != nullptr) {
+      std::strncpy(static_cast<WasmEncoderState *>(enc)->error_message,
+                   "null pointer provided",
+                   sizeof(static_cast<WasmEncoderState *>(enc)->error_message));
+    }
+    return ERR_NULL_PTR;
+  }
+
+  if (size <= 0 || capacity < size) {
+    std::strncpy(static_cast<WasmEncoderState *>(enc)->error_message,
+                 "invalid EXIF size/capacity",
+                 sizeof(static_cast<WasmEncoderState *>(enc)->error_message));
+    return ERR_INVALID_FORMAT;
+  }
+
+  WasmEncoderState *state = static_cast<WasmEncoderState *>(enc);
+
+  uhdr_mem_block_t exif = {};
+  exif.data = const_cast<uint8_t *>(data);
+  exif.data_sz = static_cast<size_t>(size);
+  exif.capacity = static_cast<size_t>(capacity);
+
+  uhdr_error_info_t status = uhdr_enc_set_exif_data(state->enc, &exif);
+  if (status.error_code != UHDR_CODEC_OK) {
+    std::snprintf(state->error_message, sizeof(state->error_message),
+                  "failed to set EXIF data: %s",
+                  status.has_detail ? status.detail : "unknown error");
+    return ERR_INVALID_FORMAT;
+  }
+
+  return ERR_OK;
+}
+
+/**
  * Set pre-computed gain map image with metadata
  */
 EMSCRIPTEN_KEEPALIVE int wasm_enc_set_gainmap(uhdr_wasm_encoder_t enc,

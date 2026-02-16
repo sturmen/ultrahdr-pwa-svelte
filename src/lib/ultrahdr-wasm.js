@@ -249,6 +249,42 @@ export class UHDREncoder {
     }
 
     /**
+     * Set EXIF APP1 payload bytes.
+     * @param {Uint8Array} exifPayload - EXIF APP1 payload bytes ("Exif\\0\\0" + TIFF)
+     * @returns {void}
+     */
+    setExifData(exifPayload) {
+        if (!this._initialized) {
+            throw new Error('Encoder not initialized. Call init() first.');
+        }
+        if (!(exifPayload instanceof Uint8Array) || exifPayload.length === 0) {
+            return;
+        }
+
+        const Module = getWasmModule();
+        const size = exifPayload.length;
+        const ptr = Module._malloc(size);
+        if (!ptr) {
+            throw new Error(`Failed to allocate ${size} bytes for EXIF payload`);
+        }
+
+        const heap = new Uint8Array(Module.HEAPU8.buffer);
+        heap.set(exifPayload, ptr);
+
+        try {
+            const result = Module._wasm_enc_set_exif_data(
+                this._encoder,
+                ptr,
+                size,
+                size
+            );
+            this._checkResult(result, 'Failed to set EXIF payload');
+        } finally {
+            Module._free(ptr);
+        }
+    }
+
+    /**
      * Set HDR (optional) image for encoding
      * @param {ImageData|Uint8Array} data - Image data (ImageData or flat Uint8Array)
      * @param {number} width - Image width
