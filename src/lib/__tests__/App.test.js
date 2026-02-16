@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import App from '../../App.svelte';
 import { consumeSharedFilesFromLaunch } from '../share-target-launch.js';
 
@@ -27,15 +27,28 @@ describe('App shell and navigation frame', () => {
     window.history.replaceState({}, '', '/');
   });
 
-  it('renders the mobile-native shell and trust indicators', async () => {
+  it('renders a minimal header and keeps trust messaging on the About page', async () => {
     render(App);
 
-    await screen.findByRole('heading', { name: /UltraHDR Image Enhancer/i });
+    await screen.findByRole('heading', { name: /UltraHDR Converter/i });
 
     expect(screen.getByTestId('app-shell')).toBeInTheDocument();
-    expect(screen.getByText(/private processing/i)).toBeInTheDocument();
-    expect(screen.getByText(/works offline/i)).toBeInTheDocument();
+    expect(screen.queryByText(/private processing/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/works offline/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no cloud upload/i)).not.toBeInTheDocument();
+  });
+
+  it('opens About page from footer and shows technical explanation with feature taglines', async () => {
+    render(App);
+
+    await screen.findByTestId('upload-drop-zone');
+    await fireEvent.click(screen.getByRole('button', { name: /about/i }));
+
+    expect(screen.getByRole('heading', { name: /About UltraHDR Converter/i })).toBeInTheDocument();
     expect(screen.getByText(/no cloud upload/i)).toBeInTheDocument();
+    expect(screen.getByText(/works offline/i)).toBeInTheDocument();
+    expect(screen.getByText(/private processing/i)).toBeInTheDocument();
+    expect(screen.getByText(/the app is a progressive web app/i)).toBeInTheDocument();
   });
 
   it('shows loading state while share-target launch files are being checked', async () => {

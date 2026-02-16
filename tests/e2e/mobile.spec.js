@@ -85,9 +85,9 @@ test.describe('Mobile smoke tests', () => {
     await page.getByTestId('tab-results').click();
     await waitForProcessing(page, 1);
 
-    await page.getByRole('button', { name: /select all/i }).click();
     await page.getByTestId('mobile-action-bar').getByRole('button', { name: /export/i }).click();
     await expect(page.getByTestId('export-sheet')).toBeVisible();
+    await expect(page.getByText(/1 item\(s\) selected/i)).toBeVisible();
     await expect(page.locator('.share-btn')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /^Download/i })).toBeVisible();
   });

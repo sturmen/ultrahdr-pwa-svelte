@@ -862,7 +862,6 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await expect(page.locator('#boost')).toHaveValue('2.3');
             await expect(page.locator('#shadowCutoff')).toBeVisible();
             await expect(page.locator('#quality')).toBeVisible();
-            await expect(page.locator('text=Existing input gain maps are preserved as-is')).toBeVisible();
 
             // Verify toggle switches
             await expect(page.locator('.switch-label').filter({ hasText: 'Discard existing gain map(s)' })).toBeVisible();
@@ -876,8 +875,8 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await expect(page.locator('text=Add Images')).toBeVisible();
             await expect(page.locator('text=Start Over')).toHaveCount(0);
             await page.getByTestId('floating-gear').click();
-            await page.getByRole('button', { name: /^More$/i }).click();
-            await expect(page.getByTestId('utility-sheet').getByRole('button', { name: /Start Over/i })).toBeVisible();
+            await expect(page.getByRole('button', { name: /Settings/i })).toHaveCount(0);
+            await expect(page.getByRole('button', { name: /Start Over/i })).toBeVisible();
         });
 
         test('should display JPEG quality options', async ({ page }) => {

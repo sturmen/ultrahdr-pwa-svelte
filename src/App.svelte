@@ -12,6 +12,7 @@
   let launchSource = "regular";
   let restoreNotice = null;
   let launchIntent = { action: null, tab: null };
+  let activeView = "converter";
 
   function handleFiles(event) {
     files = Array.from(event.detail);
@@ -21,6 +22,14 @@
     files = [];
     launchSource = "regular";
     launchIntent = { action: null, tab: null };
+  }
+
+  function openAbout() {
+    activeView = "about";
+  }
+
+  function openConverter() {
+    activeView = "converter";
   }
 
   function parseLaunchIntent(search) {
@@ -68,30 +77,59 @@
 
 <main class="app-shell" data-testid="app-shell">
   <header class="app-header">
-    <p class="eyebrow">UltraHDR Converter</p>
-    <h1>UltraHDR Image Enhancer</h1>
-    <p class="subtitle">Convert your images to UltraHDR directly on your device.</p>
-    <div class="trust-strip" role="list" aria-label="Trust and privacy indicators">
-      <span role="listitem">Private Processing</span>
-      <span role="listitem">Works Offline</span>
-      <span role="listitem">No Cloud Upload</span>
-    </div>
+    <h1>UltraHDR Converter</h1>
   </header>
 
   <section class="content-area" aria-live="polite">
-    {#if !shareLaunchChecked}
+    {#if activeView === "about"}
+      <article class="about-page" data-testid="about-page">
+        <h2>About UltraHDR Converter</h2>
+        <p>
+          UltraHDR Converter turns your existing photos into UltraHDR images directly in your browser.
+          Your files stay on your device, and output images are generated locally.
+        </p>
+
+        <div class="about-taglines" role="list" aria-label="UltraHDR Converter advantages">
+          <span role="listitem">No Cloud Upload</span>
+          <span role="listitem">Works Offline</span>
+          <span role="listitem">Private Processing</span>
+          <span role="listitem">Share In and Share Out</span>
+        </div>
+
+        <div class="about-copy">
+          <h3>How This PWA Works</h3>
+          <p>
+            The app is a Progressive Web App (PWA), which means it can install like a mobile app while
+            still running web technology under the hood. On supported browsers, its interface and assets
+            are cached so it can launch and run even without a network connection.
+          </p>
+          <p>
+            When you pick or share photos into the app, conversion runs in your browser using a local
+            WebAssembly encoder. The queue processes each file on-device, updates progress in real time,
+            and then lets you export by Share or Download when each result is ready.
+          </p>
+          <p>
+            Because processing is local, performance depends on your device and browser. Newer phones and
+            desktops complete batches faster, while older devices may pause background tabs more
+            aggressively to save power.
+          </p>
+        </div>
+      </article>
+    {:else if !shareLaunchChecked}
       <div class="drop-container">
         <p class="share-loading">Loading shared images...</p>
       </div>
-    {:else if files.length === 0}
-      <div class="drop-container">
-        <DropZone on:files={handleFiles} />
-        {#if restoreNotice}
-          <p class="restore-notice">{restoreNotice}</p>
-        {/if}
-      </div>
     {:else}
-      <ImageProcessor {files} {launchSource} {launchIntent} on:reset={handleReset} />
+      {#if files.length === 0}
+        <div class="drop-container">
+          <DropZone on:files={handleFiles} />
+          {#if restoreNotice}
+            <p class="restore-notice">{restoreNotice}</p>
+          {/if}
+        </div>
+      {:else}
+        <ImageProcessor {files} {launchSource} {launchIntent} on:reset={handleReset} />
+      {/if}
     {/if}
   </section>
 
@@ -99,6 +137,11 @@
     <p class="footer-compatibility">
       <b>Try Google Chrome on Windows/macOS if you run into issues.</b>
     </p>
+    {#if activeView === "about"}
+      <button class="footer-link" type="button" on:click={openConverter}>Back to Converter</button>
+    {:else}
+      <button class="footer-link" type="button" on:click={openAbout}>About</button>
+    {/if}
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a>
     <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
     <span>Version {version}</span>
@@ -112,44 +155,12 @@
   }
 
   .app-header {
-    display: grid;
-    gap: 0.75rem;
-  }
-
-  .eyebrow {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    font-weight: 600;
+    padding-top: 0.25rem;
   }
 
   h1 {
     margin: 0;
-  }
-
-  .subtitle {
-    font-size: 1rem;
-    color: var(--text-secondary);
-    margin: 0;
-    max-width: 48ch;
-  }
-
-  .trust-strip {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .trust-strip span {
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-muted);
-    color: var(--text-muted);
-    border-radius: 999px;
-    padding: 0.25rem 0.7rem;
-    font-size: 0.8rem;
-    font-weight: 600;
+    font-size: clamp(1.3rem, 2.2vw, 1.8rem);
   }
 
   .content-area {
@@ -173,6 +184,54 @@
     font-size: 0.9rem;
   }
 
+  .about-page {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 0.4rem 0.1rem 0.6rem;
+    display: grid;
+    gap: 0.9rem;
+  }
+
+  .about-page h2,
+  .about-page h3,
+  .about-page p {
+    margin: 0;
+  }
+
+  .about-page h2 {
+    font-size: clamp(1.1rem, 2.4vw, 1.4rem);
+  }
+
+  .about-page h3 {
+    font-size: 1rem;
+  }
+
+  .about-page p {
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+
+  .about-taglines {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .about-taglines span {
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-muted);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .about-copy {
+    display: grid;
+    gap: 0.7rem;
+  }
+
   .footer {
     display: flex;
     flex-wrap: wrap;
@@ -194,6 +253,21 @@
     text-decoration: none;
   }
 
+  .footer-link {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: var(--text-link);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .footer-link:hover {
+    text-decoration: underline;
+  }
+
   .footer a:hover {
     text-decoration: underline;
   }
@@ -203,8 +277,8 @@
       gap: 1.25rem;
     }
 
-    .subtitle {
-      font-size: 1.1rem;
+    .about-page {
+      gap: 1rem;
     }
   }
 </style>

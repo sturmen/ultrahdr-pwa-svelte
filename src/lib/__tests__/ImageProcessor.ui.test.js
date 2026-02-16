@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte';
 import ImageProcessor from '../ImageProcessor.svelte';
 import { processImage } from '../processing';
 
@@ -79,6 +79,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(convertTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
     expect(screen.queryByTestId('tab-settings')).not.toBeInTheDocument();
+    expect(screen.queryByText(/existing input gain maps are preserved as-is/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/completed,\s*\d+\s*pending/i)).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
     await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
@@ -100,8 +102,11 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByRole('button', { name: /^export/i })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
-    expect(screen.getByTestId('export-sheet')).toBeInTheDocument();
-    expect(screen.getByText(/select at least one result to export/i)).toBeInTheDocument();
+    const exportSheet = screen.getByTestId('export-sheet');
+    expect(exportSheet).toBeInTheDocument();
+    expect(screen.getByText(/1 item\(s\) selected/i)).toBeInTheDocument();
+    expect(within(exportSheet).queryByRole('button', { name: /select all/i })).not.toBeInTheDocument();
+    expect(within(exportSheet).queryByRole('button', { name: /clear selection/i })).not.toBeInTheDocument();
   });
 
   it('renders two-pane desktop layout and hides mobile tab bar', async () => {
@@ -117,6 +122,39 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByTestId('mobile-tab-bar')).not.toBeInTheDocument();
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /^settings$/i })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    expect(screen.queryByRole('button', { name: /settings/i })).not.toBeInTheDocument();
+  });
+
+  it('shows clear multi-download choices with tooltip info in export sheet', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(2) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
+    });
+
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
+
+    const exportSheet = screen.getByTestId('export-sheet');
+    const separateButton = within(exportSheet).getByRole('button', {
+      name: /download as separate files/i,
+    });
+    const zipButton = within(exportSheet).getByRole('button', {
+      name: /download as single zip file/i,
+    });
+
+    expect(separateButton).toBeInTheDocument();
+    expect(zipButton).toHaveClass('primary');
+    expect(
+      within(exportSheet).getByRole('button', { name: /about separate file downloads/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(exportSheet).getByText(
+        /not all browsers allow downloading multiple separate files simultaneously/i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('renders granular progress details from stage-progress telemetry updates', async () => {
@@ -210,8 +248,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/pause queue/i);
     await fireEvent.click(screen.getByTestId('floating-gear'));
-    await fireEvent.click(screen.getByRole('button', { name: /more/i }));
-    expect(screen.getByTestId('utility-sheet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /start over/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /cancel current/i })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('queue-smart-control'));
@@ -261,6 +299,14 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('share-out-cta')).toBeInTheDocument();
+  });
+
+  it('renders floating gear as icon-only control instead of text label', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    const gearButton = screen.getByTestId('floating-gear');
+    expect(gearButton.querySelector('svg')).toBeTruthy();
+    expect(gearButton).not.toHaveTextContent(/^Gear$/);
   });
 
   it('updates app badge during queue work and clears badge when queue completes', async () => {

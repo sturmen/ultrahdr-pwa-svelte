@@ -32,7 +32,7 @@
   let discardGainMap = false;
   let stripExif = false;
   let performanceMode = "auto";
-  let keepScreenAwake = false;
+  let keepScreenAwake = true;
 
   let processing = false;
   let results = [];
@@ -365,11 +365,6 @@
     isFabOpen = false;
   }
 
-  function openUtilitySheet() {
-    openSheet = "utility";
-    isFabOpen = false;
-  }
-
   function openExportSheet() {
     openSheet = "export";
     isFabOpen = false;
@@ -518,13 +513,17 @@
     };
 
     const existingIndex = results.findIndex((result) => result.queueId === queueItem.id);
+    const nextSelection = new Set(selectedIndices);
     if (existingIndex >= 0) {
       URL.revokeObjectURL(results[existingIndex].url);
       results = results.map((result, index) => (index === existingIndex ? resultRecord : result));
+      nextSelection.add(existingIndex);
     } else {
+      const newIndex = results.length;
       results = [...results, resultRecord];
+      nextSelection.add(newIndex);
     }
-    selectedIndices = new Set(selectedIndices);
+    selectedIndices = nextSelection;
   }
 
   function startQueue() {
@@ -750,6 +749,16 @@
     if (!canCancelCurrent) return;
     cancelCurrentRequested = true;
     abortActiveProcessing();
+  }
+
+  function cancelCurrentFromFab() {
+    cancelCurrent();
+    isFabOpen = false;
+  }
+
+  function startOverFromFab() {
+    isFabOpen = false;
+    void reset();
   }
 
   function selectedStaleQueueIds() {
@@ -1000,7 +1009,7 @@
     discardGainMap = false;
     stripExif = false;
     performanceMode = "auto";
-    keepScreenAwake = false;
+    keepScreenAwake = true;
 
     notice = null;
     error = null;
@@ -1214,14 +1223,6 @@
               </button>
             {/if}
           </div>
-
-          <p class="help-text">
-            Queue: {queueCompletedCount}/{queue.length} completed, {queuePendingCount} pending.
-          </p>
-          <p class="help-text">
-            Existing input gain maps are preserved as-is unless
-            &ldquo;Discard existing gain map(s)&rdquo; is enabled.
-          </p>
 
           {#if processing || latestPipelineEvent}
             <div
@@ -1540,8 +1541,13 @@
   <div class="fab-layer">
     {#if isFabOpen}
       <div class="fab-menu">
-        <button class="secondary small" on:click={openSettingsSurface}>Settings</button>
-        <button class="secondary small" on:click={openUtilitySheet}>More</button>
+        {#if !isDesktopLayout}
+          <button class="secondary small" on:click={openSettingsSurface}>Settings</button>
+        {/if}
+        {#if canCancelCurrent}
+          <button class="secondary small" on:click={cancelCurrentFromFab}>Cancel Current</button>
+        {/if}
+        <button class="secondary small" on:click={startOverFromFab}>Start Over</button>
       </div>
     {/if}
     <button
@@ -1549,9 +1555,16 @@
       type="button"
       data-testid="floating-gear"
       aria-expanded={isFabOpen}
+      aria-label="Open actions menu"
       on:click={toggleFab}
     >
-      Gear
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M19.43 12.98c.04-.32.07-.65.07-.98s-.03-.66-.08-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.03 7.03 0 0 0-1.7-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.62.24-1.19.56-1.7.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.05.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.31.62.22l2.49-1c.51.42 1.08.74 1.7.98l.38 2.65c.04.24.25.42.49.42h4c.24 0 .45-.18.49-.42l.38-2.65c.62-.24 1.19-.56 1.7-.98l2.49 1c.23.09.49 0 .62-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"
+        />
+      </svg>
+      <span class="sr-only">Open actions menu</span>
     </button>
   </div>
 
@@ -1638,22 +1651,6 @@
     </div>
   {/if}
 
-  {#if openSheet === "utility"}
-    <div class="sheet-card" data-testid="utility-sheet">
-      <div class="sheet-header">
-        <h3>More</h3>
-        <button class="text-btn" on:click={closeSheet}>Done</button>
-      </div>
-
-      <div class="sheet-actions">
-        {#if canCancelCurrent}
-          <button class="secondary" on:click={cancelCurrent}>Cancel Current</button>
-        {/if}
-        <button class="secondary" on:click={reset}>Start Over</button>
-      </div>
-    </div>
-  {/if}
-
   {#if openSheet === "export"}
     <div class="sheet-card" data-testid="export-sheet">
       <div class="sheet-header">
@@ -1670,14 +1667,29 @@
       </p>
 
       <div class="sheet-actions">
-        <button class="secondary" on:click={toggleSelectionSet}>
-          {selectionToggleState === "all" ? "Clear Selection" : "Select All"}
-        </button>
-        <button class="primary" on:click={() => downloadSelected(false)} disabled={selectedIndices.size === 0}>
-          Download
-        </button>
         {#if selectedIndices.size > 1}
-          <button class="secondary" on:click={() => downloadSelected(true)}>Download ZIP</button>
+          <div class="download-separate-action">
+            <button
+              class="primary"
+              on:click={() => downloadSelected(false)}
+              disabled={selectedIndices.size === 0}
+            >
+              Download as separate files
+            </button>
+            <span class="download-tooltip-anchor">
+              <button class="info-icon" type="button" aria-label="About separate file downloads">i</button>
+              <span class="download-tooltip" role="tooltip">
+                Not all browsers allow downloading multiple separate files simultaneously.
+              </span>
+            </span>
+          </div>
+        {:else}
+          <button class="primary" on:click={() => downloadSelected(false)} disabled={selectedIndices.size === 0}>
+            Download
+          </button>
+        {/if}
+        {#if selectedIndices.size > 1}
+          <button class="primary" on:click={() => downloadSelected(true)}>Download as single ZIP file</button>
         {/if}
         {#if hasShareCapability}
           <button
@@ -2098,7 +2110,9 @@
   .share-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 0.45rem;
+    width: 100%;
     white-space: nowrap;
   }
 
@@ -2370,14 +2384,33 @@
   }
 
   .floating-gear {
-    min-width: 56px;
-    min-height: 56px;
+    width: 56px;
+    height: 56px;
     border-radius: 999px;
     border: 1px solid transparent;
     background: var(--primary-color);
     color: var(--text-on-primary);
-    font-weight: 700;
     box-shadow: var(--shadow-lg);
+    display: grid;
+    place-items: center;
+    padding: 0;
+  }
+
+  .floating-gear svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .sheet-backdrop {
@@ -2423,6 +2456,59 @@
   .sheet-actions {
     display: grid;
     gap: 0.55rem;
+  }
+
+  .download-separate-action {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.45rem;
+    align-items: center;
+  }
+
+  .download-tooltip-anchor {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+
+  .info-icon {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-muted);
+    color: var(--text-color);
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .download-tooltip {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.4rem);
+    width: min(280px, 70vw);
+    padding: 0.5rem 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+    color: var(--text-color);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    box-shadow: var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    z-index: 5;
+  }
+
+  .download-tooltip-anchor:hover .download-tooltip,
+  .download-tooltip-anchor:focus-within .download-tooltip {
+    opacity: 1;
+    transform: translateY(0);
   }
 
   :global(button:focus-visible),
