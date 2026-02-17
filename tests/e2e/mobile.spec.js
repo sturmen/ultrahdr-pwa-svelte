@@ -43,23 +43,32 @@ test.describe('Mobile smoke tests', () => {
   test('processes one image, keeps mobile UI usable, and avoids horizontal overflow', async ({ page }) => {
     await page.goto('/');
     await uploadSingleFile(page, SDR_IMAGE);
-    await page.getByTestId('tab-results').click();
     await waitForProcessing(page, 1);
 
     await expect(page.getByTestId('tab-convert')).toBeVisible();
     await expect(page.getByTestId('tab-results')).toBeVisible();
+    await expect(page.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByTestId('floating-gear')).toBeVisible();
+    await expect(page.getByTestId('mobile-action-bar')).toBeVisible();
+    await expect(
+      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Export/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId('mobile-action-bar').getByRole('button', { name: /^Discard all$/i }),
+    ).toBeVisible();
+    await expect(page.getByTestId('mobile-results-tools')).toBeVisible();
+    await expect(page.getByTestId('results-rotate-left')).toBeVisible();
+    await expect(page.getByTestId('results-rotate-right')).toBeVisible();
+    await expect(page.getByTestId('results-reprocess-btn')).toHaveCount(0);
+    await page.getByTestId('results-rotate-right').click();
+    await expect(page.getByTestId('results-reprocess-btn')).toBeVisible();
 
     await page.getByTestId('tab-convert').click();
     await expect(page.getByRole('button', { name: 'Add Images' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Start Over' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Discard all$/i })).toHaveCount(0);
 
     await page.getByTestId('tab-results').click();
     await expect(page.locator('.result-card')).toHaveCount(1);
-    await expect(page.getByTestId('mobile-action-bar')).toBeVisible();
-    await expect(
-      page.getByTestId('mobile-action-bar').getByRole('button', { name: /Export/ }),
-    ).toBeVisible();
 
     const viewportFits = await page.evaluate(() => {
       const root = document.documentElement;
@@ -82,7 +91,6 @@ test.describe('Mobile smoke tests', () => {
 
     await page.goto('/');
     await uploadSingleFile(page, SDR_IMAGE);
-    await page.getByTestId('tab-results').click();
     await waitForProcessing(page, 1);
 
     await page.getByTestId('mobile-action-bar').getByRole('button', { name: /export/i }).click();

@@ -1018,9 +1018,10 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             // Verify action buttons
             await expect(page.locator('text=Add Images')).toBeVisible();
             await expect(page.locator('text=Start Over')).toHaveCount(0);
+            await expect(page.getByRole('button', { name: /Discard all/i })).toBeVisible();
             await page.getByTestId('floating-gear').click();
             await expect(page.getByRole('button', { name: /Settings/i })).toHaveCount(0);
-            await expect(page.getByRole('button', { name: /Start Over/i })).toBeVisible();
+            await expect(page.getByRole('button', { name: /Start Over/i })).toHaveCount(0);
         });
 
         test('should display JPEG quality options', async ({ page }) => {

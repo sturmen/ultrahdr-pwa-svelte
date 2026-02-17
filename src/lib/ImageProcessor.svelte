@@ -70,6 +70,9 @@
   let selectionToggleState = "none";
   let queueControlVisibility = "hidden";
   let isDesktopLayout = false;
+  let hasRotationStaleResults = false;
+  let showPipelineStatusCard = false;
+  let showPipelineCompleteSummary = false;
   let pipelineOverallProgress = 0;
   let pipelineCurrentFileProgress = 0;
   let pipelineStageProgress = 0;
@@ -159,6 +162,18 @@
         : "partial";
   $: hasShareCapability =
     typeof navigator !== "undefined" && typeof navigator.canShare === "function";
+  $: hasRotationStaleResults = results.some((result) => {
+    if (getQueueItemStatus(result.queueId) !== QUEUE_ITEM_STATES.STALE) {
+      return false;
+    }
+    return Number(result.rotation || 0) !== Number(rotation || 0);
+  });
+  $: showPipelineCompleteSummary =
+    workflowState === WORKFLOW_STATES.PROCESSING_DONE &&
+    !processing &&
+    queuePendingCount === 0 &&
+    queueCompletedCount > 0;
+  $: showPipelineStatusCard = processing || latestPipelineEvent || showPipelineCompleteSummary;
   $: if (showStalePrompt && staleCount === 0) {
     showStalePrompt = false;
   }
@@ -517,7 +532,7 @@
     return queue.find((item) => item.id === queueId)?.status || QUEUE_ITEM_STATES.COMPLETED;
   }
 
-  function upsertResult(queueItem, blob, appliedSettingsVersion) {
+  function upsertResult(queueItem, blob, appliedSettingsVersion, appliedRotation) {
     const resultRecord = {
       originalName: queueItem.name,
       blob,
@@ -526,6 +541,7 @@
       index: queueItem.id,
       queueId: queueItem.id,
       settingsVersion: appliedSettingsVersion,
+      rotation: appliedRotation,
     };
 
     const existingIndex = results.findIndex((result) => result.queueId === queueItem.id);
@@ -610,11 +626,20 @@
         if (!nextItem) {
           processing = false;
           pauseRequested = false;
+          const completedItemCount = queue.filter(
+            (item) =>
+              item.status === QUEUE_ITEM_STATES.COMPLETED ||
+              item.status === QUEUE_ITEM_STATES.STALE,
+          ).length;
 
-          if (queueCompletedCount > 0) {
+          if (completedItemCount > 0) {
             setWorkflow(WORKFLOW_EVENTS.QUEUE_DRAINED);
           } else {
             workflowState = WORKFLOW_STATES.ERROR_RECOVERABLE;
+          }
+
+          if (!isDesktopLayout && results.length > 0) {
+            activeMobileTab = "results";
           }
 
           if (launchSource === "share-target" && results.length > 0) {
@@ -638,6 +663,7 @@
         const controller = new AbortController();
         activeAbortController = controller;
         const activeSettingsVersion = settingsVersion;
+        const activeRotation = rotation;
         const queueIndex = queue.findIndex((item) => item.id === nextItem.id);
         updateQueueItem(nextItem.id, {
           status: QUEUE_ITEM_STATES.PROCESSING,
@@ -655,7 +681,7 @@
             return;
           }
 
-          upsertResult(nextItem, blob, activeSettingsVersion);
+          upsertResult(nextItem, blob, activeSettingsVersion, activeRotation);
           updateQueueItem(nextItem.id, {
             status: QUEUE_ITEM_STATES.COMPLETED,
             settingsVersion: activeSettingsVersion,
@@ -770,11 +796,6 @@
   function cancelCurrentFromFab() {
     cancelCurrent();
     isFabOpen = false;
-  }
-
-  function startOverFromFab() {
-    isFabOpen = false;
-    void reset();
   }
 
   function selectedStaleQueueIds() {
@@ -996,7 +1017,7 @@
       requireConfirm &&
       typeof window !== "undefined" &&
       typeof window.confirm === "function" &&
-      !window.confirm("Start over and clear queue/results?")
+      !window.confirm("Discard all files and results?")
     ) {
       return;
     }
@@ -1240,7 +1261,7 @@
             {/if}
           </div>
 
-          {#if processing || latestPipelineEvent}
+          {#if showPipelineStatusCard}
             <div
               class="pipeline-status"
               data-testid="pipeline-status"
@@ -1248,48 +1269,52 @@
               data-stage={latestPipelineEvent?.stage || ""}
               data-elapsed-ms={Math.round(latestPipelineEvent?.elapsedMs || 0)}
             >
-              <div class="pipeline-header-row">
-                <p class="pipeline-title">{pipelineStatusLabel}</p>
-                <p class="pipeline-percent">{Math.round(pipelineOverallProgress)}%</p>
-              </div>
+              {#if showPipelineCompleteSummary}
+                <p class="pipeline-title">Processing complete</p>
+              {:else}
+                <div class="pipeline-header-row">
+                  <p class="pipeline-title">{pipelineStatusLabel}</p>
+                  <p class="pipeline-percent">{Math.round(pipelineOverallProgress)}%</p>
+                </div>
 
-              {#if pipelineFileLabel}
-                <p class="help-text pipeline-file-label">{pipelineFileLabel}</p>
-              {/if}
+                {#if pipelineFileLabel}
+                  <p class="help-text pipeline-file-label">{pipelineFileLabel}</p>
+                {/if}
 
-              {#if pipelineFileName}
-                <p class="help-text pipeline-file-name" data-testid="pipeline-file-name">
-                  Processing: {pipelineFileName}
-                </p>
-              {/if}
+                {#if pipelineFileName}
+                  <p class="help-text pipeline-file-name" data-testid="pipeline-file-name">
+                    Processing: {pipelineFileName}
+                  </p>
+                {/if}
 
-              <div
-                class="progress-track"
-                data-testid="pipeline-progress"
-                role="progressbar"
-                aria-label="Encoding progress"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow={Math.round(pipelineOverallProgress)}
-              >
-                <span class="progress-fill" style={`width: ${Math.round(pipelineOverallProgress)}%`}></span>
-              </div>
+                <div
+                  class="progress-track"
+                  data-testid="pipeline-progress"
+                  role="progressbar"
+                  aria-label="Encoding progress"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={Math.round(pipelineOverallProgress)}
+                >
+                  <span class="progress-fill" style={`width: ${Math.round(pipelineOverallProgress)}%`}></span>
+                </div>
 
-              <div class="pipeline-meta-row">
-                <p class="help-text">
-                  Stage {Math.round(pipelineStageProgress)}% • {latestPipelineEvent?.stage || "pipeline"}
-                </p>
-                <p class="help-text">{formatMs(latestPipelineEvent?.elapsedMs)}</p>
-              </div>
+                <div class="pipeline-meta-row">
+                  <p class="help-text">
+                    Stage {Math.round(pipelineStageProgress)}% • {latestPipelineEvent?.stage || "pipeline"}
+                  </p>
+                  <p class="help-text">{formatMs(latestPipelineEvent?.elapsedMs)}</p>
+                </div>
 
-              {#if pipelineStatusNote}
-                <p class="help-text">{pipelineStatusNote}</p>
-              {/if}
+                {#if pipelineStatusNote}
+                  <p class="help-text">{pipelineStatusNote}</p>
+                {/if}
 
-              {#if latestPipelineEvent?.phase === "pipeline-complete"}
-                <p class="help-text">
-                  Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
-                </p>
+                {#if latestPipelineEvent?.phase === "pipeline-complete"}
+                  <p class="help-text">
+                    Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
+                  </p>
+                {/if}
               {/if}
             </div>
           {/if}
@@ -1456,6 +1481,15 @@
                   </button>
                   {#if isDesktopLayout}
                     <button
+                      class="secondary small"
+                      data-testid="results-discard-all"
+                      on:click={() => reset()}
+                    >
+                      Discard all
+                    </button>
+                  {/if}
+                  {#if isDesktopLayout}
+                    <button
                       class="primary small"
                       on:click={openExportSheet}
                       data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
@@ -1465,6 +1499,41 @@
                   {/if}
                 </div>
               </div>
+
+              {#if !isDesktopLayout}
+                <div class="results-tools" data-testid="mobile-results-tools">
+                  <div class="button-group results-rotation-controls">
+                    <button
+                      on:click={() => rotate(-90)}
+                      class="icon-btn"
+                      title="Rotate Left"
+                      data-testid="results-rotate-left"
+                    >
+                      Rotate Left
+                    </button>
+                    <button
+                      on:click={() => rotate(90)}
+                      class="icon-btn"
+                      title="Rotate Right"
+                      data-testid="results-rotate-right"
+                    >
+                      Rotate Right
+                    </button>
+                    <span class="value">{rotation}°</span>
+                  </div>
+                  {#if hasRotationStaleResults}
+                    <div class="stale-actions">
+                      <button
+                        class="secondary small"
+                        data-testid="results-reprocess-btn"
+                        on:click={openReprocessSheet}
+                      >
+                        Reprocess
+                      </button>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
 
               <div class="grid" data-testid="results-grid">
                 {#each results as result, i}
@@ -1544,6 +1613,9 @@
 
   {#if !isDesktopLayout && activeMobileTab === "results" && results.length > 0}
     <div class="mobile-action-bar" data-testid="mobile-action-bar">
+      <button class="secondary" data-testid="results-discard-all" on:click={() => reset()}>
+        Discard all
+      </button>
       <button
         class="primary"
         on:click={openExportSheet}
@@ -1563,7 +1635,6 @@
         {#if canCancelCurrent}
           <button class="secondary small" on:click={cancelCurrentFromFab}>Cancel Current</button>
         {/if}
-        <button class="secondary small" on:click={startOverFromFab}>Start Over</button>
       </div>
     {/if}
     <button
@@ -1596,15 +1667,6 @@
       </div>
 
       <div data-testid="advanced-settings">
-        <div class="control-group">
-          <span class="label">Rotation</span>
-          <div class="button-group">
-            <button on:click={() => rotate(-90)} class="icon-btn" title="Rotate Left">Left</button>
-            <button on:click={() => rotate(90)} class="icon-btn" title="Rotate Right">Right</button>
-            <span class="value">{rotation}°</span>
-          </div>
-        </div>
-
         <div class="control-group switch-group">
           <label class="switch">
             <input type="checkbox" bind:checked={discardGainMap} on:change={handleSettingChange} />
@@ -2229,6 +2291,19 @@
 
   .selection-controls.compact {
     gap: 0.5rem;
+  }
+
+  .results-tools {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .results-rotation-controls {
+    align-items: center;
+  }
+
+  .results-rotation-controls .value {
+    margin-left: auto;
   }
 
   .grid {

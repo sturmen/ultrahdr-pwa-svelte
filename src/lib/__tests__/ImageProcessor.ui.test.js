@@ -72,6 +72,15 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
   });
 
+  it('auto-switches to results tab after regular mobile queue completion', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+      expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
   it('shows only Convert/Results mobile tabs and opens settings from floating gear', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
@@ -88,19 +97,18 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
   });
 
-  it('shows export-only mobile action bar and export sheet with selection guidance', async () => {
+  it('shows mobile results action bar with export and discard controls', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+      expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
     });
 
-    expect(screen.queryByTestId('mobile-action-bar')).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByTestId('tab-results'));
     expect(screen.getByTestId('results-grid')).toBeInTheDocument();
     expect(screen.getByTestId('mobile-action-bar')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^export/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^discard all$/i })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
     const exportSheet = screen.getByTestId('export-sheet');
@@ -108,6 +116,26 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByText(/1 item\(s\) selected/i)).toBeInTheDocument();
     expect(within(exportSheet).queryByRole('button', { name: /select all/i })).not.toBeInTheDocument();
     expect(within(exportSheet).queryByRole('button', { name: /clear selection/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps rotation controls on mobile results and hides them in mobile settings sheet', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    const mobileResultsTools = screen.getByTestId('mobile-results-tools');
+    expect(mobileResultsTools).toBeInTheDocument();
+    expect(within(mobileResultsTools).getByTestId('results-rotate-left')).toBeInTheDocument();
+    expect(within(mobileResultsTools).getByTestId('results-rotate-right')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+    const settingsSheet = screen.getByTestId('settings-sheet');
+    expect(within(settingsSheet).queryByText(/^rotation$/i)).not.toBeInTheDocument();
+    expect(within(settingsSheet).queryByRole('button', { name: /^left$/i })).not.toBeInTheDocument();
+    expect(within(settingsSheet).queryByRole('button', { name: /^right$/i })).not.toBeInTheDocument();
   });
 
   it('renders two-pane desktop layout and hides mobile tab bar', async () => {
@@ -124,6 +152,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /^settings$/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('results-discard-all')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
     expect(screen.queryByRole('button', { name: /settings/i })).not.toBeInTheDocument();
@@ -160,6 +189,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('renders granular progress details from stage-progress telemetry updates', async () => {
+    const progressGate = createDeferred();
+
     vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
       const baseEvent = {
         elapsedMs: 12,
@@ -187,6 +218,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
         stageProgress: 42,
         note: 'Encoding gain map',
       });
+      await progressGate.promise;
 
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
@@ -201,6 +233,47 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByText(/photo-0.jpg/i)).toBeInTheDocument();
     expect(screen.getByText(/File 1 of 1/i)).toBeInTheDocument();
     expect(screen.getByText(/Stage 42%/i)).toBeInTheDocument();
+    progressGate.resolve();
+  });
+
+  it('shows only "Processing complete" in progress box after queue completion', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const baseEvent = {
+        elapsedMs: 12,
+        stageDurationsMs: { encode: 9 },
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        timestamp: Date.now(),
+      };
+
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'encode-ultrahdr',
+        stageProgress: 60,
+        note: 'Encoding output',
+      });
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'pipeline-complete',
+        stage: 'encode-ultrahdr',
+      });
+
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+    expect(screen.getByText(/^Processing complete$/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('pipeline-file-name')).not.toBeInTheDocument();
+    expect(screen.queryByText(/slowest stage:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/stage \d+%/i)).not.toBeInTheDocument();
   });
 
   it('pauses after the current file and resumes queued work only when resumed', async () => {
@@ -251,7 +324,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/pause queue/i);
     await fireEvent.click(screen.getByTestId('floating-gear'));
     expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /start over/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /start over/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /cancel current/i })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('queue-smart-control'));
@@ -275,6 +348,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
 
+    await fireEvent.click(screen.getByTestId('tab-convert'));
     await fireEvent.input(screen.getByLabelText(/max content boost/i), {
       target: { value: '4.0' },
     });
@@ -311,6 +385,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     await fireEvent.change(versionSelect, { target: { value: 'v2' } });
     expect(versionSelect).toHaveValue('v2');
+    await fireEvent.click(screen.getByTestId('tab-convert'));
 
     await waitFor(() => {
       expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
@@ -324,6 +399,23 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(vi.mocked(processImage).mock.calls[1][1]).toMatchObject({
       reverseToneMapVersion: 'v2',
     });
+  });
+
+  it('shows results reprocess button only after rotation makes results stale', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    expect(screen.queryByTestId('results-reprocess-btn')).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByTestId('results-rotate-right'));
+    await waitFor(() => {
+      expect(screen.getByTestId('results-reprocess-btn')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('results-reprocess-btn'));
+    expect(screen.getByTestId('reprocess-sheet')).toBeInTheDocument();
   });
 
   it('moves to results and emphasizes share-out action after share-target completion', async () => {
