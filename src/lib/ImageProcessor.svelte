@@ -30,7 +30,6 @@
   let quality = 0.95;
   let discardGainMap = false;
   let stripExif = false;
-  let reverseToneMapVersion = "v2";
   let performanceMode = "auto";
   let keepScreenAwake = true;
 
@@ -458,7 +457,6 @@
       quality,
       discardGainMap,
       stripExif,
-      reverseToneMapVersion,
       safeMode: performanceSettings.safeMode,
       maxOutputMegapixels: performanceSettings.maxOutputMegapixels,
       gainMapScale: performanceSettings.gainMapScale,
@@ -1044,7 +1042,6 @@
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
-    reverseToneMapVersion = "v2";
     performanceMode = "auto";
     keepScreenAwake = true;
 
@@ -1426,24 +1423,6 @@
               </div>
             {/if}
 
-            <details class="deep-settings">
-              <summary>Advanced algorithm controls</summary>
-              <div class="control-group horizontal">
-                <label for="reverse-tonemap-version">Reverse tone map version</label>
-                <div class="select-wrapper">
-                  <select
-                    id="reverse-tonemap-version"
-                    bind:value={reverseToneMapVersion}
-                    on:change={handleSettingChange}
-                  >
-                    <option value="v4">v4 (PQ working space)</option>
-                    <option value="v3">v3 (visual quality)</option>
-                    <option value="v2">v2 (legacy default)</option>
-                    <option value="v1">v1 (legacy compatibility)</option>
-                  </select>
-                </div>
-              </div>
-            </details>
           </div>
         </div>
       {/if}
@@ -1708,24 +1687,6 @@
           </div>
         {/if}
 
-        <details class="deep-settings">
-          <summary>Advanced algorithm controls</summary>
-          <div class="control-group horizontal">
-            <label for="reverse-tonemap-version-mobile">Reverse tone map version</label>
-            <div class="select-wrapper">
-              <select
-                id="reverse-tonemap-version-mobile"
-                bind:value={reverseToneMapVersion}
-                on:change={handleSettingChange}
-              >
-                <option value="v4">v4 (PQ working space)</option>
-                <option value="v3">v3 (visual quality)</option>
-                <option value="v2">v2 (legacy default)</option>
-                <option value="v1">v1 (legacy compatibility)</option>
-              </select>
-            </div>
-          </div>
-        </details>
       </div>
     </div>
   {/if}

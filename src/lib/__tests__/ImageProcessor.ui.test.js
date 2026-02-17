@@ -366,26 +366,24 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
   });
 
-  it('defaults to v4 and lets users switch reverse tone map version from advanced settings', async () => {
+  it('does not expose reverse tone map version controls and keeps processing fixed to v2 behavior', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     await waitFor(() => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
-    expect(vi.mocked(processImage).mock.calls[0][1]).toMatchObject({
-      reverseToneMapVersion: 'v4',
-    });
+    expect(vi.mocked(processImage).mock.calls[0][1]).not.toHaveProperty('reverseToneMapVersion');
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
     await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
+    expect(screen.queryByText(/advanced algorithm controls/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/reverse tone map version/i)).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByText(/advanced algorithm controls/i));
-    const versionSelect = screen.getByLabelText(/reverse tone map version/i);
-    expect(versionSelect).toHaveValue('v4');
-
-    await fireEvent.change(versionSelect, { target: { value: 'v2' } });
-    expect(versionSelect).toHaveValue('v2');
+    await fireEvent.click(screen.getByRole('button', { name: /done/i }));
     await fireEvent.click(screen.getByTestId('tab-convert'));
+    await fireEvent.input(screen.getByLabelText(/hdr strength/i), {
+      target: { value: '4.0' },
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
@@ -396,9 +394,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await waitFor(() => {
       expect(processImage).toHaveBeenCalledTimes(2);
     });
-    expect(vi.mocked(processImage).mock.calls[1][1]).toMatchObject({
-      reverseToneMapVersion: 'v2',
-    });
+    expect(vi.mocked(processImage).mock.calls[1][1]).not.toHaveProperty('reverseToneMapVersion');
   });
 
   it('shows results reprocess button only after rotation makes results stale', async () => {

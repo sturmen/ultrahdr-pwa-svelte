@@ -290,133 +290,34 @@ describe('generateGainMapData function', () => {
     expect(result.gainMapImageData.data[3]).toBe(255);
   });
 
-  // ---- Improvement 1: Non-zero offsetSdr ----
-
-  it('should set non-zero offsetSdr in metadata (1/64)', () => {
+  it('treats legacy reverseToneMapVersion values as v2-equivalent output', () => {
     const imageData = new ImageData(
-      new Uint8ClampedArray([128, 128, 128, 255]),
-      1, 1
+      new Uint8ClampedArray([
+        8, 8, 8, 255,
+        160, 120, 80, 255
+      ]),
+      2,
+      1
     );
 
-    const result = generateGainMapData(imageData, {
+    const baseline = generateGainMapData(imageData, {
       maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
-    });
-    const expected = 1 / 64;
-
-    expect(result.metadata.offsetSdr).toEqual([expected, expected, expected]);
-    expect(result.metadata.parsedOffsetSdr).toEqual([expected, expected, expected]);
-  });
-
-  it('should produce valid gain for near-black pixels with offsetSdr', () => {
-    // With offsetSdr > 0, even pure black should produce finite, stable gains
-    const imageData = new ImageData(
-      new Uint8ClampedArray([1, 1, 1, 255]),
-      1, 1
-    );
-
-    const result = generateGainMapData(imageData, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
+      reverseToneMapVersion: 'v2',
+      brightnessIntent: 'conservative'
     });
 
-    for (let c = 0; c < 3; c++) {
-      expect(Number.isFinite(result.gainMapImageData.data[c])).toBe(true);
-      expect(result.gainMapImageData.data[c]).toBeGreaterThanOrEqual(0);
-      expect(result.gainMapImageData.data[c]).toBeLessThanOrEqual(255);
+    for (const legacyVersion of ['v1', 'v3', 'v4']) {
+      const legacyResult = generateGainMapData(imageData, {
+        maxContentBoost: 4.0,
+        reverseToneMapVersion: legacyVersion,
+        brightnessIntent: 'conservative'
+      });
+
+      expect(Array.from(legacyResult.gainMapImageData.data)).toEqual(
+        Array.from(baseline.gainMapImageData.data)
+      );
+      expect(legacyResult.metadata).toEqual(baseline.metadata);
     }
-  });
-
-  // ---- Improvement 2: Gamma encoding ----
-
-  it('should use gamma < 1 in metadata for better quantization', () => {
-    const imageData = new ImageData(
-      new Uint8ClampedArray([128, 128, 128, 255]),
-      1, 1
-    );
-
-    const result = generateGainMapData(imageData, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
-    });
-    const gamma = result.metadata.gamma[0];
-
-    // Gamma should be approximately 1/2.2 ≈ 0.4545 (less than 1.0)
-    expect(gamma).toBeLessThan(1.0);
-    expect(gamma).toBeGreaterThan(0.3);
-    expect(gamma).toBeCloseTo(1 / 2.2, 2);
-
-    // All channels should have the same gamma
-    expect(result.metadata.gamma[1]).toBeCloseTo(gamma, 6);
-    expect(result.metadata.gamma[2]).toBeCloseTo(gamma, 6);
-  });
-
-  it('should gamma-encode gain values so midtone gains use more quantization levels', () => {
-    const midPixel = new ImageData(
-      new Uint8ClampedArray([160, 160, 160, 255]),
-      1, 1
-    );
-
-    const v2Result = generateGainMapData(midPixel, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v2'
-    });
-    const v3Result = generateGainMapData(midPixel, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
-    });
-
-    expect(v2Result.metadata.parsedGamma[0]).toBe(1.0);
-    expect(v3Result.metadata.parsedGamma[0]).toBeCloseTo(1 / 2.2, 2);
-    expect(v3Result.gainMapImageData.data[0]).toBeGreaterThan(v2Result.gainMapImageData.data[0]);
-  });
-
-  // ---- Improvement 3: Highlight chroma desaturation ----
-
-  it('should desaturate near-clip highlights more than mid-bright same-hue pixels', () => {
-    // Near-clip saturated highlight vs mid-bright same hue
-    const nearClipSaturated = new ImageData(
-      new Uint8ClampedArray([255, 200, 50, 255]),  // near-clip warm highlight
-      1, 1
-    );
-    const midBrightSaturated = new ImageData(
-      new Uint8ClampedArray([180, 140, 35, 255]),  // same hue, not clipped
-      1, 1
-    );
-
-    const clipResult = generateGainMapData(nearClipSaturated, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
-    });
-    const midResult = generateGainMapData(midBrightSaturated, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
-    });
-
-    // Per-channel gain spread: difference between max and min channel gain
-    const clipSpread = Math.max(
-      clipResult.gainMapImageData.data[0],
-      clipResult.gainMapImageData.data[1],
-      clipResult.gainMapImageData.data[2]
-    ) - Math.min(
-      clipResult.gainMapImageData.data[0],
-      clipResult.gainMapImageData.data[1],
-      clipResult.gainMapImageData.data[2]
-    );
-
-    const midSpread = Math.max(
-      midResult.gainMapImageData.data[0],
-      midResult.gainMapImageData.data[1],
-      midResult.gainMapImageData.data[2]
-    ) - Math.min(
-      midResult.gainMapImageData.data[0],
-      midResult.gainMapImageData.data[1],
-      midResult.gainMapImageData.data[2]
-    );
-
-    // Near-clip highlights should have LESS channel spread (more desaturated)
-    // than mid-bright pixels of the same hue
-    expect(clipSpread).toBeLessThan(midSpread);
   });
 
   // ---- Improvement 4: Histogram-based percentiles ----
@@ -489,55 +390,4 @@ describe('generateGainMapData function', () => {
     }
   });
 
-  // ---- Improvement 6: PQ working space (v4) ----
-
-  it('should support reverseToneMapVersion v4', () => {
-    const imageData = new ImageData(
-      new Uint8ClampedArray([180, 180, 180, 255]),
-      1, 1
-    );
-
-    const result = generateGainMapData(imageData, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v4'
-    });
-
-    expect(result).toHaveProperty('gainMapImageData');
-    expect(result).toHaveProperty('metadata');
-    expect(result.gainMapImageData.data[0]).toBeGreaterThan(0);
-    expect(result.gainMapImageData.data[0]).toBeLessThanOrEqual(255);
-  });
-
-  it('v4 should produce different gain from v3 for the same input due to PQ working space', () => {
-    const imageData = new ImageData(
-      new Uint8ClampedArray([160, 160, 160, 255]),
-      1, 1
-    );
-
-    const resultV3 = generateGainMapData(imageData, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v3'
-    });
-    const resultV4 = generateGainMapData(imageData, {
-      maxContentBoost: 4.0,
-      reverseToneMapVersion: 'v4'
-    });
-
-    // v4 should produce different (more perceptually uniform) values
-    expect(resultV4.gainMapImageData.data[0]).not.toBe(resultV3.gainMapImageData.data[0]);
-  });
-
-  it('v4 produces monotonically increasing gain for brighter pixels', () => {
-    const dark = new ImageData(new Uint8ClampedArray([64, 64, 64, 255]), 1, 1);
-    const mid = new ImageData(new Uint8ClampedArray([128, 128, 128, 255]), 1, 1);
-    const bright = new ImageData(new Uint8ClampedArray([240, 240, 240, 255]), 1, 1);
-
-    const opts = { maxContentBoost: 4.0, reverseToneMapVersion: 'v4' };
-    const darkR = generateGainMapData(dark, opts);
-    const midR = generateGainMapData(mid, opts);
-    const brightR = generateGainMapData(bright, opts);
-
-    expect(brightR.gainMapImageData.data[0]).toBeGreaterThan(midR.gainMapImageData.data[0]);
-    expect(midR.gainMapImageData.data[0]).toBeGreaterThan(darkR.gainMapImageData.data[0]);
-  });
 });
