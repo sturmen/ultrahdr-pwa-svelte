@@ -45,20 +45,23 @@ global.cancelIdleCallback = vi.fn();
 // Mock ResizeObserver if not available
 if (typeof ResizeObserver === 'undefined') {
   global.ResizeObserver = class ResizeObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
+    observe() { }
+    unobserve() { }
+    disconnect() { }
   };
 }
 
 // Mock getComputedStyle
-const originalGetComputedStyle = global.window.getComputedStyle;
-global.window.getComputedStyle = (elt) => {
-  const styles = originalGetComputedStyle(elt);
-  styles.display = 'block';
-  styles.visibility = 'visible';
-  return styles;
-};
+// Mock getComputedStyle
+if (global.window) {
+  const originalGetComputedStyle = global.window.getComputedStyle;
+  global.window.getComputedStyle = (elt) => {
+    const styles = originalGetComputedStyle ? originalGetComputedStyle(elt) : {};
+    styles.display = 'block';
+    styles.visibility = 'visible';
+    return styles;
+  };
+}
 
 // Mock console methods to reduce noise in tests
 global.console = {
@@ -72,4 +75,8 @@ global.console = {
 
 // Import canvas and set up ImageData on global
 import { ImageData as CanvasImageData } from 'canvas';
-window.ImageData = CanvasImageData;
+if (typeof window !== 'undefined') {
+  window.ImageData = CanvasImageData;
+} else {
+  global.ImageData = CanvasImageData;
+}

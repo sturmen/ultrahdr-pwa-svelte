@@ -10,7 +10,7 @@ Build instructions:
 `npm run build:wasm && npm run build`
 
 Test instrucitons:
-`npm run test && npm run test:e2e`
+`npm run test`
 
 Preview instructions:
 `npm run preview`
@@ -18,6 +18,6 @@ Preview instructions:
 Deploy instructions:
 `npm run deploy`
 
-To test every task completion, you must successfully run *all* build steps and unit tests, even the ones not affected by your changes.
+To test every task completion, you must successfully run *all* build steps and unit tests, even the ones not affected by your changes. However, always ask the user if you want to run E2E tests as those can take an extremely long time.
 
 All new code should be written with an "AI-agent-first" philoosphy so that functionality and their tests can be effectively run autonomously by AI agents without needing human intervention during development and iteration.

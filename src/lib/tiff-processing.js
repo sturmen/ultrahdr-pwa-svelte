@@ -1,4 +1,5 @@
 import UTIF from 'utif';
+import { canvasToBlob, createCanvasWithContext } from './canvas-runtime.js';
 
 /**
  * Processes a TIFF file and converts it to a PNG File object.
@@ -23,15 +24,16 @@ export async function processTiff(file) {
 
     console.log('[TIFF] Decoded image:', width, 'x', height);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
+    const { canvas, ctx } = createCanvasWithContext(
+        width,
+        height,
+        'Canvas not available for TIFF conversion'
+    );
 
     const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
     ctx.putImageData(imageData, 0, 0);
 
-    const pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    const pngBlob = await canvasToBlob(canvas, 'image/png');
     const pngFile = new File([pngBlob], file.name.replace(/\.(tif|tiff)$/i, '.png'), { type: 'image/png' });
 
     console.log('[TIFF] Converted to PNG:', pngFile.name);

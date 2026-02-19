@@ -83,6 +83,67 @@ describe('WASM Encoder JavaScript Bindings', () => {
     headAppendSpy.mockRestore();
   });
 
+  it('fails fast when WASM wrapper script never resolves', async () => {
+    vi.useFakeTimers();
+    delete global.window.UHDREncoderModule;
+
+    const headAppendSpy = vi.spyOn(document.head, 'appendChild').mockImplementation((node) => node);
+    const { isAvailable, getStatus } = await import('../ultrahdr-wasm.js');
+    const availabilityPromise = isAvailable();
+
+    await vi.advanceTimersByTimeAsync(3_500);
+    await expect(availabilityPromise).resolves.toBe(false);
+    expect(getStatus().error?.message).toMatch(/Timed out loading WASM script/);
+
+    headAppendSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('loads WASM factory via eval fallback in worker-like runtime when DOM is unavailable', async () => {
+    const originalDocument = global.document;
+    const originalImportScripts = global.importScripts;
+    const originalFetchForTest = global.fetch;
+
+    delete global.window.UHDREncoderModule;
+    delete global.document;
+    global.importScripts = vi.fn(() => {
+      throw new Error('importScripts should not be used');
+    });
+    global.fetch = vi.fn((url) => {
+      if (String(url).includes('ultrahdr_wasm.js')) {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              'globalThis.UHDREncoderModule = function UHDREncoderModule() {' +
+              'return Promise.resolve({' +
+              'HEAPU8: new Uint8Array(4096),' +
+              '_malloc: function(){ return 0; },' +
+              '_free: function(){}' +
+              '});' +
+              '};'
+            ),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+      });
+    });
+
+    try {
+      const { isAvailable } = await import('../ultrahdr-wasm.js');
+      const available = await isAvailable();
+      expect(available).toBe(true);
+      expect(global.importScripts).not.toHaveBeenCalled();
+    } finally {
+      global.document = originalDocument;
+      global.importScripts = originalImportScripts;
+      global.fetch = originalFetchForTest;
+      delete global.UHDREncoderModule;
+    }
+  });
+
   it('should cleanup WASM module state', async () => {
     const { cleanup, isWasmLoaded } = await import('../ultrahdr-wasm.js');
 

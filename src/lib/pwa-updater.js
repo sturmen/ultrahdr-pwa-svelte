@@ -11,11 +11,10 @@ function canUseServiceWorker() {
 }
 
 async function loadRegisterSwModule() {
-  const moduleId = 'virtual:' + 'pwa-register';
   if (typeof globalThis.__dynamicImport__ === 'function') {
-    return globalThis.__dynamicImport__(moduleId);
+    return globalThis.__dynamicImport__('virtual:pwa-register');
   }
-  return import(moduleId);
+  return import('virtual:pwa-register');
 }
 
 export function createDefaultPwaUpdateState() {

@@ -1,1 +1,0 @@
-if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/ultrahdr-pwa-svelte/sw.js', { scope: '/ultrahdr-pwa-svelte/' })})}

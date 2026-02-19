@@ -1,4 +1,5 @@
 import libheifFactory from 'libheif-js/libheif-wasm/libheif.js';
+import { canvasToBlob, createCanvasWithContext } from './canvas-runtime.js';
 
 let libheif = null;
 const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
@@ -109,10 +110,11 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
     }
 
     // Standard SDR Decoding (always decode the primary/first image)
-    const canvas = document.createElement('canvas');
-    canvas.width = primaryW;
-    canvas.height = primaryH;
-    const ctx = canvas.getContext('2d');
+    const { canvas, ctx } = createCanvasWithContext(
+        primaryW,
+        primaryH,
+        'Canvas not available for HEIC decoding'
+    );
     const imageData = ctx.createImageData(primaryW, primaryH);
 
     await new Promise((resolve, reject) => {
@@ -137,7 +139,7 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
 
     console.log('[HEIC] No gain map found (or discarded), falling back to ITM');
     ctx.putImageData(imageData, 0, 0);
-    const pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    const pngBlob = await canvasToBlob(canvas, 'image/png');
     const pngFile = new File([pngBlob], file.name.replace(/\.(heic|heif)$/i, '.png'), { type: 'image/png' });
 
     return pngFile;
@@ -217,10 +219,11 @@ async function _decodeHandleToImageData(heif, handle) {
     const h = heif.heif_image_handle_get_height(handle);
     const heifImage = new heif.HeifImage(handle);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
+    const { ctx } = createCanvasWithContext(
+        w,
+        h,
+        'Canvas not available for HEIC gain map decoding'
+    );
     const imageData = ctx.createImageData(w, h);
 
     await new Promise((resolve, reject) => {

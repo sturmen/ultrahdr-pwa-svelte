@@ -23,9 +23,11 @@ const RESOLVED_APP_ASSET_VERSION = APP_ASSET_VERSION || 'dev-unversioned-app';
 const RUNTIME_CACHE_PREFIX = 'uhdr-runtime';
 const WASM_ASSET_CACHE_PREFIX = 'uhdr-wasm-assets';
 const LIBHEIF_ASSET_CACHE_PREFIX = 'uhdr-libheif-assets';
+const AI_MODEL_CACHE_PREFIX = 'uhdr-ai-models';
 const RUNTIME_CACHE = `${RUNTIME_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const WASM_ASSET_CACHE = `${WASM_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const LIBHEIF_ASSET_CACHE = `${LIBHEIF_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
+const AI_MODEL_CACHE = `${AI_MODEL_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 
 function isUltraHdrWasmAssetUrl(url) {
     return /\/assets\/ultrahdr_wasm\.(js|wasm)$/.test(url.pathname);
@@ -35,14 +37,23 @@ function isLibheifWasmAssetUrl(url) {
     return /\/assets\/libheif\.wasm$/.test(url.pathname);
 }
 
+function isAiModelUrl(url) {
+    return /\/models\/.*\.onnx(\.data)?$/.test(url.pathname);
+}
+
+function isAiModelManifestUrl(url) {
+    return /\/models\/.*\.onnx$/.test(url.pathname);
+}
+
 function isVersionedCacheName(cacheName, cachePrefix) {
     return cacheName === cachePrefix || cacheName.startsWith(`${cachePrefix}-`);
 }
 
 async function pruneOutdatedVersionedCaches() {
     const cacheNames = await caches.keys();
-    const expectedCacheNames = new Set([RUNTIME_CACHE, WASM_ASSET_CACHE, LIBHEIF_ASSET_CACHE]);
-    const managedPrefixes = [RUNTIME_CACHE_PREFIX, WASM_ASSET_CACHE_PREFIX, LIBHEIF_ASSET_CACHE_PREFIX];
+    const ONNX_CACHE = 'uhdr-onnx-wasm-' + RESOLVED_APP_ASSET_VERSION;
+    const expectedCacheNames = new Set([RUNTIME_CACHE, WASM_ASSET_CACHE, LIBHEIF_ASSET_CACHE, AI_MODEL_CACHE, ONNX_CACHE]);
+    const managedPrefixes = [RUNTIME_CACHE_PREFIX, WASM_ASSET_CACHE_PREFIX, LIBHEIF_ASSET_CACHE_PREFIX, AI_MODEL_CACHE_PREFIX];
     await Promise.all(cacheNames.map(async (cacheName) => {
         const managed = managedPrefixes.some((prefix) => isVersionedCacheName(cacheName, prefix));
         if (!managed) {
@@ -78,6 +89,18 @@ async function pruneOutdatedBinaryAssets() {
             await libheifCache.delete(request);
         }
     }));
+
+    const aiModelCache = await caches.open(AI_MODEL_CACHE);
+    const aiModelRequests = await aiModelCache.keys();
+    await Promise.all(aiModelRequests.map(async (request) => {
+        if (!APP_ASSET_VERSION) {
+            return;
+        }
+        const requestUrl = new URL(request.url);
+        if (isAiModelManifestUrl(requestUrl) && requestUrl.searchParams.get('v') !== APP_ASSET_VERSION) {
+            await aiModelCache.delete(request);
+        }
+    }));
 }
 
 self.addEventListener('activate', (event) => {
@@ -111,8 +134,47 @@ registerRoute(
 );
 
 registerRoute(
+    ({ url }) => isAiModelUrl(url),
+    new CacheFirst({
+        cacheName: AI_MODEL_CACHE,
+        plugins: [
+            new ExpirationPlugin({
+                maxEntries: 2,
+                maxAgeSeconds: 30 * 24 * 60 * 60
+            })
+        ]
+    })
+);
+
+function isOnnxWasmAssetUrl(url) {
+    return /\/assets\/ort-wasm.*\.wasm$/.test(url.pathname);
+}
+
+registerRoute(
+    ({ url }) => isOnnxWasmAssetUrl(url),
+    new CacheFirst({
+        cacheName: WASM_ASSET_CACHE, // Share WASM cache or separate? Let's share for simplicity or create new.
+        // Actually, let's reuse WASM_ASSET_CACHE for all large WASM binaries to keep it simple, 
+        // or separate if we want granular control. 
+        // The pruner checks for v param on WASM_ASSET_CACHE.
+        // These don't have v param usually.
+        // Better to use a separate cache or ensure pruner doesn't delete them aggressively.
+        // Let's use AI_MODEL_CACHE logic or just a new one without strict version pruning?
+        // Or just put them in WASM_ASSET_CACHE but update pruner.
+        // Simpler: Use a dedicated name.
+        cacheName: 'uhdr-onnx-wasm-' + RESOLVED_APP_ASSET_VERSION,
+        plugins: [
+            new ExpirationPlugin({
+                maxEntries: 10,
+                maxAgeSeconds: 30 * 24 * 60 * 60
+            })
+        ]
+    })
+);
+
+registerRoute(
     ({ request, url }) =>
-        !isUltraHdrWasmAssetUrl(url) && !isLibheifWasmAssetUrl(url) && (
+        !isUltraHdrWasmAssetUrl(url) && !isLibheifWasmAssetUrl(url) && !isAiModelUrl(url) && !isOnnxWasmAssetUrl(url) && (
             request.mode === 'navigate' ||
             request.destination === 'script' ||
             request.destination === 'style' ||

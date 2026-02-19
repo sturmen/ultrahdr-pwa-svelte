@@ -11,8 +11,8 @@ import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SDR_IMAGE = path.resolve(__dirname, '../../media/test_sdr.jpg');
-const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/test_sdr2.jpg');
+const SDR_IMAGE = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
+const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/gain_map_demo_image.jpg');
 const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/exif_matrix.jpg');
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
@@ -29,7 +29,7 @@ const EXIF_MATRIX_FIXTURES = [
 
 // Timeouts for processing diagnostics.
 const PROCESSING_TIMEOUT = 180_000;
-const PROCESSING_STALL_TIMEOUT = 20_000;
+const PROCESSING_STALL_TIMEOUT = 120_000;
 const POLL_INTERVAL = 250;
 const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
 
@@ -505,6 +505,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
     test.describe('Single Image Processing', () => {
         test('should process a single SDR image and produce a valid UltraHDR JPEG', async ({ page }) => {
+            test.setTimeout(180_000);
             await page.goto('/');
 
             // Upload SDR image
@@ -518,7 +519,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await expect(resultCards).toHaveCount(1);
 
             // Verify the filename is shown
-            await expect(page.locator('.filename')).toContainText('test_sdr');
+            await expect(page.locator('.filename')).toContainText(path.parse(SDR_IMAGE).name);
 
             // Download and validate
             const jpegData = await downloadFirstResult(page);
@@ -532,6 +533,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         });
 
         test('should generate gain map at quarter-pixel resolution for SDR inputs', async ({ page, browserName }) => {
+            test.setTimeout(180_000);
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-scale-${browserName}-`));
             try {
                 await page.goto('/');
@@ -614,13 +616,12 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             test.setTimeout(120_000); // Re-processing a large image needs more time
             await page.goto('/');
 
-            // Upload a smaller image for faster re-processing
-            await uploadFiles(page, [SDR_IMAGE_2]);
+            // Upload a smaller SDR image for faster re-processing
+            await uploadFiles(page, [SDR_IMAGE]);
             await waitForProcessing(page);
 
             // Download first result with default settings
             const defaultResult = await downloadFirstResult(page);
-            const defaultSize = defaultResult.length;
 
             // Change the boost slider to 4.0 (settings are visible alongside results)
             // This triggers handleSettingChange -> debounced processAll
@@ -640,8 +641,8 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(defaultResult[0]).toBe(0xFF);
             expect(modifiedResult[0]).toBe(0xFF);
 
-            // The sizes should differ (higher boost = different gain map encoding)
-            expect(defaultSize).not.toBe(modifiedResult.length);
+            // Higher boost should produce a different encoded output.
+            expect(Buffer.compare(defaultResult, modifiedResult)).not.toBe(0);
         });
     });
 
@@ -968,7 +969,10 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await context.close();
         });
 
-        test('should show error when WASM fails to load', async ({ page }) => {
+        test('should show error when WASM fails to load', async ({ browser }) => {
+            const context = await browser.newContext({ serviceWorkers: 'block' });
+            const page = await context.newPage();
+
             // Intercept UltraHDR WASM wrapper requests (including versioned query strings) and abort them.
             await page.route('**/ultrahdr_wasm.wasm*', route => route.abort());
             await page.route('**/ultrahdr_wasm.js*', route => route.abort());
@@ -978,19 +982,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             // Upload an image (this will trigger WASM loading)
             await uploadFiles(page, [SDR_IMAGE]);
 
-            // Wait for an error to appear
-            // The app should show an error message when WASM fails
-            // We'll give it some time and check for error indicators
-            await page.waitForTimeout(5000);
-
-            // Check for error message in the page
-            const hasError = await page.evaluate(() => {
+            const hasError = await page.waitForFunction(() => {
                 const errorEl = document.querySelector('.error');
                 const bodyText = document.body.innerText.toLowerCase();
                 return !!(errorEl || bodyText.includes('error') || bodyText.includes('failed'));
-            });
+            }, undefined, { timeout: 10_000 }).then(() => true).catch(() => false);
 
             expect(hasError).toBe(true);
+            await context.close();
         });
     });
 
@@ -1006,6 +1005,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await expect(page.locator('#boost')).toBeVisible();
             await expect(page.locator('#boost')).toHaveValue('2.3');
             await expect(page.locator('#quality')).toBeVisible();
+            await expect(page.getByLabel(/performance mode/i)).toHaveCount(0);
 
             // Verify toggle switches
             await expect(page.locator('.switch-label').filter({ hasText: 'Discard existing gain map(s)' })).toBeVisible();

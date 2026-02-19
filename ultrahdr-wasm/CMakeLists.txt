@@ -60,7 +60,7 @@ target_link_options(ultrahdr_wasm PRIVATE
     -sWASM_ASYNC_COMPILATION=0
     -sSINGLE_FILE=0
     -sWASM=1
-    "-sENVIRONMENT=web,node"
+    "-sENVIRONMENT=web,worker,node"
 )
 
 message(STATUS "WASM wrapper configured")

@@ -1,0 +1,136 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { encoderSpies, forwardedMetadata } = vi.hoisted(() => ({
+  encoderSpies: {
+    init: vi.fn(async () => {}),
+    setCompressedBaseImage: vi.fn(),
+    setCompressedGainMapImage: vi.fn(),
+    setExifData: vi.fn(),
+    encode: vi.fn(),
+    getEncodedData: vi.fn(() => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+    destroy: vi.fn(),
+  },
+  forwardedMetadata: {
+    gainMapMin: [1.0, 1.0, 1.0],
+    gainMapMax: [9.9, 9.9, 9.9],
+    gamma: [1.1, 1.1, 1.1],
+    offsetSdr: [0.01, 0.01, 0.01],
+    offsetHdr: [0.02, 0.02, 0.02],
+    hdrCapacityMin: 1.0,
+    hdrCapacityMax: 9.9,
+  },
+}));
+
+vi.mock('../gain-map-generator.js', () => {
+  class GmnetGainMapGenerator {
+    constructor() {}
+
+    async generate(imageData) {
+      const size = imageData.width * imageData.height * 4;
+      const data = new Uint8ClampedArray(size).fill(128);
+      for (let i = 3; i < size; i += 4) {
+        data[i] = 255;
+      }
+      return {
+        gainMapImageData: new ImageData(data, imageData.width, imageData.height),
+        metadata: forwardedMetadata,
+      };
+    }
+  }
+
+  return {
+    GmnetGainMapGenerator,
+  };
+});
+
+vi.mock('../heic-processing.js', () => ({
+  processHeic: vi.fn(async (file) => file),
+}));
+
+vi.mock('../tiff-processing.js', () => ({
+  processTiff: vi.fn(async (file) => file),
+}));
+
+vi.mock('../input-exif.js', () => ({
+  extractExifApp1PayloadFromInput: vi.fn(() => null),
+}));
+
+vi.mock('../ultrahdr-wasm.js', () => ({
+  isWasmLoaded: vi.fn(() => true),
+  isAvailable: vi.fn(async () => true),
+  isUhdrImage: vi.fn(async () => false),
+  UHDRDecoder: vi.fn().mockImplementation(function () {
+    return {
+      init: vi.fn(async () => {}),
+      destroy: vi.fn(),
+      setImage: vi.fn(),
+      probe: vi.fn(),
+      getBaseImage: vi.fn(() => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+      getGainMapImage: vi.fn(() => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+      getGainMapMetadata: vi.fn(() => forwardedMetadata),
+    };
+  }),
+  UHDREncoder: vi.fn().mockImplementation(function () {
+    return encoderSpies;
+  }),
+}));
+
+class MockOffscreenCanvas {
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+  }
+
+  getContext() {
+    const { width, height } = this;
+    return {
+      drawImage: vi.fn(),
+      putImageData: vi.fn(),
+      getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(width * height * 4).fill(127), width, height)),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+    };
+  }
+
+  async convertToBlob() {
+    return new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
+  }
+}
+
+describe('processImage metadata forwarding', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    globalThis.Worker = undefined;
+    globalThis.OffscreenCanvas = MockOffscreenCanvas;
+    globalThis.createImageBitmap = vi.fn(async () => ({
+      width: 1,
+      height: 1,
+      close: vi.fn(),
+    }));
+  });
+
+  it('uses generated gain-map metadata when encoding compressed gain map', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      maxContentBoost: 4.0,
+      stripExif: true,
+      discardGainMap: true,
+    });
+
+    expect(encoderSpies.setCompressedGainMapImage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        gainMapMax: [9.9, 9.9, 9.9],
+        hdrCapacityMax: 9.9,
+        gamma: [1.1, 1.1, 1.1],
+      }),
+    );
+  });
+});

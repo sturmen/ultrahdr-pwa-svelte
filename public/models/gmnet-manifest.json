@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-02-19T13:16:47.724Z",
+  "default_variant": "realworld",
+  "opset": 18,
+  "variants": {
+    "realworld": {
+      "checkpoint": "GMNet/checkpoints/G_realworld.pth",
+      "checkpoint_sha256": "83bf27bcdbf6eacfdef37f0e24ed6d79152b7386620c012ae509a59a895c875f",
+      "model_filename": "gmnet-realworld.onnx",
+      "model_sha256": "45e4d6c427cc2096756e21056edf79b3d845dda047d57faa11b304c61aac9670",
+      "model_data_filename": "gmnet-realworld.onnx.data",
+      "model_data_sha256": "ca0a37dfa13b9ea13ae8b3488bcce76b2f4745182f96f79c961d5afbf1aa498c",
+      "input_names": [
+        "local_input",
+        "global_input"
+      ],
+      "output_names": [
+        "gain_map"
+      ],
+      "dynamic_axes": {
+        "local_input": {
+          "2": "height",
+          "3": "width"
+        },
+        "gain_map": {
+          "2": "height",
+          "3": "width"
+        }
+      },
+      "parity": {
+        "enabled": false,
+        "passed": false,
+        "reason": "Generated without Python parity run in this environment"
+      }
+    },
+    "synthetic": {
+      "checkpoint": "GMNet/checkpoints/G_synthetic.pth",
+      "checkpoint_sha256": "887c940d492424cd44f029c6b09dd3bbe1bbec07126f15d41192828ff95e6880",
+      "model_filename": "gmnet-synthetic.onnx",
+      "model_sha256": "45e4d6c427cc2096756e21056edf79b3d845dda047d57faa11b304c61aac9670",
+      "model_data_filename": "gmnet-synthetic.onnx.data",
+      "model_data_sha256": "ca0a37dfa13b9ea13ae8b3488bcce76b2f4745182f96f79c961d5afbf1aa498c",
+      "input_names": [
+        "local_input",
+        "global_input"
+      ],
+      "output_names": [
+        "gain_map"
+      ],
+      "dynamic_axes": {
+        "local_input": {
+          "2": "height",
+          "3": "width"
+        },
+        "gain_map": {
+          "2": "height",
+          "3": "width"
+        }
+      },
+      "parity": {
+        "enabled": false,
+        "passed": false,
+        "reason": "Generated without Python parity run in this environment"
+      }
+    }
+  }
+}

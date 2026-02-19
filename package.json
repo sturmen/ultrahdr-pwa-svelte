@@ -1,6 +1,6 @@
 {
   "name": "ultrahdr-pwa-svelte",
-  "version": "3.4.3",
+  "version": "3.5.1",
   "description": "A progressive webapp to encode UltraHDR images.",
   "homepage": "https://sturmen.github.io/ultrahdr-pwa-svelte",
   "main": "index.js",
@@ -10,12 +10,12 @@
     "build:app-version": "node scripts/build-app-version.js",
     "build:wasm": "node scripts/build-wasm.js",
     "preview": "vite preview",
-    "deploy": "gh-pages -d dist",
-    "test": "vitest --config vite.config.test.js",
+    "deploy": "npm run build:wasm && npm run build && gh-pages -d dist",
+    "test": "vitest run --config vite.config.test.js",
     "test:e2e": "npx playwright test --project=chromium --project=firefox --project=webkit",
     "test:e2e:mobile": "npx playwright test --project=mobile-webkit-ios --project=mobile-chromium-android",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest --config vite.config.test.js --coverage --coverage.provider=istanbul"
+    "test:ui": "vitest run --ui",
+    "test:coverage": "vitest run --config vite.config.test.js --coverage --coverage.provider=istanbul"
   },
   "keywords": [],
   "author": "Nicholas Tinsley",
@@ -24,11 +24,12 @@
   "dependencies": {
     "jszip": "^3.10.1",
     "libheif-js": "^1.19.8",
-    "svelte": "^5.43.12",
+    "onnxruntime-web": "^1.24.2",
+    "svelte": "^5.53.0",
     "utif": "^3.1.0",
-    "vite": "^7.2.2",
-    "vite-plugin-pwa": "^1.1.0",
-    "vite-plugin-static-copy": "^3.1.4"
+    "vite": "^7.3.1",
+    "vite-plugin-pwa": "^1.2.0",
+    "vite-plugin-static-copy": "^3.2.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -40,7 +41,8 @@
     "@vitest/ui": "^4.0.18",
     "canvas": "^3.2.1",
     "gh-pages": "^6.3.0",
-    "jsdom": "^28.0.0",
+    "jsdom": "^28.1.0",
+    "onnxruntime-node": "^1.24.2",
     "vitest": "^4.0.18"
   }
 }

@@ -81,19 +81,20 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
   });
 
-  it('shows only Convert/Results mobile tabs and opens settings from floating gear', async () => {
+  it('shows only Convert/Results mobile tabs and opens settings directly from floating gear', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     const convertTab = screen.getByTestId('tab-convert');
     expect(convertTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
+    expect(screen.queryByText('Keep camera metadata')).not.toBeInTheDocument();
     expect(screen.queryByTestId('tab-settings')).not.toBeInTheDocument();
     expect(screen.queryByText(/existing input gain maps are preserved as-is/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/completed,\s*\d+\s*pending/i)).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
-    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
     expect(screen.getByTestId('advanced-settings')).toBeInTheDocument();
+    expect(screen.queryByTestId('floating-gear')).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
   });
 
@@ -131,7 +132,6 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(within(mobileResultsTools).getByTestId('results-rotate-right')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
-    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
     const settingsSheet = screen.getByTestId('settings-sheet');
     expect(within(settingsSheet).queryByText(/^rotation$/i)).not.toBeInTheDocument();
     expect(within(settingsSheet).queryByRole('button', { name: /^left$/i })).not.toBeInTheDocument();
@@ -154,8 +154,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
     expect(screen.getByTestId('results-discard-all')).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByTestId('floating-gear'));
-    expect(screen.queryByRole('button', { name: /settings/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('floating-gear')).not.toBeInTheDocument();
   });
 
   it('shows clear multi-download choices with tooltip info in export sheet', async () => {
@@ -217,6 +216,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
         stage: 'generate-gain-map',
         stageProgress: 42,
         note: 'Encoding gain map',
+        gmnetExecutionProvider: 'webgpu',
       });
       await progressGate.promise;
 
@@ -233,6 +233,51 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByText(/photo-0.jpg/i)).toBeInTheDocument();
     expect(screen.getByText(/File 1 of 1/i)).toBeInTheDocument();
     expect(screen.getByText(/Stage 42%/i)).toBeInTheDocument();
+    expect(screen.getByTestId('pipeline-execution-provider')).toHaveTextContent(
+      /gmnet runtime:\s*webgpu/i,
+    );
+    progressGate.resolve();
+  });
+
+  it('shows AI model updates inside pipeline-status with inline progress UI', async () => {
+    const progressGate = createDeferred();
+
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const baseEvent = {
+        elapsedMs: 12,
+        stageDurationsMs: {},
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        timestamp: Date.now(),
+      };
+
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'generate-gain-map',
+        stageProgress: 50,
+        note: 'Downloading AI Model...',
+        gmnetExecutionProvider: 'wasm',
+      });
+      await progressGate.promise;
+
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
+    });
+
+    const pipelineStatus = screen.getByTestId('pipeline-status');
+    expect(within(pipelineStatus).getByText(/Downloading AI Model/i)).toBeInTheDocument();
+    expect(within(pipelineStatus).getByText('50%')).toBeInTheDocument();
+    expect(within(pipelineStatus).getByTestId('pipeline-ai-progress')).toBeInTheDocument();
+    expect(within(pipelineStatus).getByTestId('pipeline-execution-provider')).toHaveTextContent(
+      /gmnet runtime:\s*wasm/i,
+    );
     progressGate.resolve();
   });
 
@@ -322,10 +367,9 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/pause queue/i);
-    await fireEvent.click(screen.getByTestId('floating-gear'));
     expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /start over/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /cancel current/i })).toBeInTheDocument();
+    expect(screen.getByTestId('cancel-current-control')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('queue-smart-control'));
     firstFileGate.resolve();
@@ -375,7 +419,6 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(vi.mocked(processImage).mock.calls[0][1]).not.toHaveProperty('reverseToneMapVersion');
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
-    await fireEvent.click(screen.getByRole('button', { name: /settings/i }));
     expect(screen.queryByText(/advanced algorithm controls/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/reverse tone map version/i)).not.toBeInTheDocument();
 
@@ -395,6 +438,52 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(processImage).toHaveBeenCalledTimes(2);
     });
     expect(vi.mocked(processImage).mock.calls[1][1]).not.toHaveProperty('reverseToneMapVersion');
+  });
+
+  it('removes performance mode controls and legacy resolution options from process requests', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.queryByLabelText(/performance mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /performance mode/i })).not.toBeInTheDocument();
+
+    const firstOptions = vi.mocked(processImage).mock.calls[0][1];
+    expect(firstOptions).not.toHaveProperty('safeMode');
+    expect(firstOptions).not.toHaveProperty('maxOutputMegapixels');
+    expect(firstOptions).not.toHaveProperty('gainMapScale');
+  });
+
+  it('treats HDR strength slider values as stops and converts them to linear maxContentBoost', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    const firstOptions = vi.mocked(processImage).mock.calls[0][1];
+    expect(firstOptions.maxContentBoost).toBeCloseTo(2 ** 2.3, 6);
+
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+    await fireEvent.input(screen.getByLabelText(/max content boost/i), {
+      target: { value: '4.0' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(2);
+    });
+
+    const secondOptions = vi.mocked(processImage).mock.calls[1][1];
+    expect(secondOptions.maxContentBoost).toBeCloseTo(2 ** 4, 6);
   });
 
   it('shows results reprocess button only after rotation makes results stale', async () => {

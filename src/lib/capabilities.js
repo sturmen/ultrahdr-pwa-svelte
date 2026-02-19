@@ -94,29 +94,7 @@ export function getProcessingProfile(inputCapabilities = null) {
     }
   }
 
-  const profileByTier = {
-    low: {
-      maxInputMegapixels: 12,
-      maxGainMapMegapixels: 2,
-      gainMapScale: 0.5,
-      safeModeDefault: true,
-    },
-    mid: {
-      maxInputMegapixels: 20,
-      maxGainMapMegapixels: 4,
-      gainMapScale: 0.75,
-      safeModeDefault: false,
-    },
-    high: {
-      maxInputMegapixels: 32,
-      maxGainMapMegapixels: 6,
-      gainMapScale: 1,
-      safeModeDefault: false,
-    },
-  };
-
   return {
     memoryTier,
-    ...profileByTier[memoryTier],
   };
 }

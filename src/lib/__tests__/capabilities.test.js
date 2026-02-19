@@ -42,8 +42,7 @@ describe('capabilities', () => {
     expect(caps.isAndroid).toBe(false);
     expect(caps.isStandalone).toBe(true);
     expect(profile.memoryTier).toBe('low');
-    expect(profile.maxInputMegapixels).toBe(12);
-    expect(profile.maxGainMapMegapixels).toBe(2);
+    expect(Object.keys(profile)).toEqual(['memoryTier']);
   });
 
   it('assigns mid tier for Android class devices with moderate memory', () => {
@@ -62,8 +61,6 @@ describe('capabilities', () => {
     expect(caps.isAndroid).toBe(true);
     expect(caps.supportsOffscreenWorker).toBe(true);
     expect(profile.memoryTier).toBe('mid');
-    expect(profile.maxInputMegapixels).toBe(20);
-    expect(profile.maxGainMapMegapixels).toBe(4);
   });
 
   it('assigns high tier for high memory non-iOS devices', () => {
@@ -76,8 +73,7 @@ describe('capabilities', () => {
 
     const profile = getProcessingProfile(getCapabilities(runtime));
     expect(profile.memoryTier).toBe('high');
-    expect(profile.maxInputMegapixels).toBe(32);
-    expect(profile.maxGainMapMegapixels).toBe(6);
+    expect(Object.keys(profile)).toEqual(['memoryTier']);
   });
 
   it('defaults desktop browsers with unknown memory to mid tier', () => {
@@ -92,7 +88,6 @@ describe('capabilities', () => {
     const profile = getProcessingProfile(getCapabilities(runtime));
 
     expect(profile.memoryTier).toBe('mid');
-    expect(profile.safeModeDefault).toBe(false);
-    expect(profile.maxInputMegapixels).toBe(20);
+    expect(Object.keys(profile)).toEqual(['memoryTier']);
   });
 });

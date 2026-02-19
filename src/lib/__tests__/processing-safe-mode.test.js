@@ -6,25 +6,38 @@ import { describe, expect, it } from "vitest";
 import {
   getConstrainedDimensions,
   throwIfAborted
-} from "../processing.js";
+} from "../processing-core.js";
 
-describe("processing safe mode helpers", () => {
-  it("keeps original dimensions when under megapixel limit", () => {
-    const result = getConstrainedDimensions(2000, 1500, 12);
+describe("processing dimension helpers", () => {
+  it("keeps original dimensions when already within the 8192x8192 box", () => {
+    const result = getConstrainedDimensions(6000, 4000);
     expect(result).toEqual({
-      width: 2000,
-      height: 1500,
+      width: 6000,
+      height: 4000,
       changed: false,
     });
   });
 
-  it("downscales proportionally when above megapixel limit", () => {
-    const result = getConstrainedDimensions(8000, 6000, 12);
+  it("aspect-fits oversized images to the 8192x8192 box", () => {
+    const result = getConstrainedDimensions(12000, 9000);
+
+    expect(result).toEqual({
+      width: 8192,
+      height: 6144,
+      changed: true,
+    });
+  });
+
+  it("preserves aspect ratio when only one dimension exceeds 8192", () => {
+    const result = getConstrainedDimensions(5000, 9000);
 
     expect(result.changed).toBe(true);
-    expect(result.width).toBeLessThan(8000);
-    expect(result.height).toBeLessThan(6000);
-    expect((result.width * result.height) / 1_000_000).toBeLessThanOrEqual(12.01);
+    expect(result.width).toBeLessThanOrEqual(8192);
+    expect(result.height).toBeLessThanOrEqual(8192);
+
+    const originalAspect = 5000 / 9000;
+    const constrainedAspect = result.width / result.height;
+    expect(Math.abs(originalAspect - constrainedAspect)).toBeLessThan(0.002);
   });
 
   it("throws AbortError when signal is aborted", () => {

@@ -104,7 +104,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('encodes SDR and gain-map components into compressed inputs before final encode', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
@@ -138,7 +138,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('preserves HEIC gain-map metadata even when maxContentBoost is changed', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
@@ -158,7 +158,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('preserves HEIC gain-map metadata when maxContentBoost is changed and rotation is applied', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
@@ -181,7 +181,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('uses HEIC gainMapHeadroom when explicit gain-map metadata is unavailable', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { processHeic } = await import('../heic-processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
@@ -211,7 +211,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('uses HEIC gainMapHeadroom when explicit gain-map metadata is unavailable and rotation is applied', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { processHeic } = await import('../heic-processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
@@ -244,7 +244,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('emits progress events through onProgress callback across the pipeline', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
@@ -274,7 +274,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('rotates preserved HEIC components before re-encoding', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
@@ -296,7 +296,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('rotates an existing UltraHDR JPEG and keeps gain-map metadata in the output', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(true);
 
@@ -329,6 +329,8 @@ describe('processImage UltraHDR preservation path', () => {
                         new ImageData(new Uint8ClampedArray([128, 128, 128, 255]), 1, 1)
                     ),
                     putImageData: vi.fn(),
+                    save: vi.fn(),
+                    restore: vi.fn(),
                     translate: vi.fn(),
                     rotate: vi.fn()
                 })),
@@ -372,7 +374,7 @@ describe('processImage UltraHDR preservation path', () => {
     });
 
     it('passes extracted HEIC EXIF payload to encoder when stripExif=false', async () => {
-        const { processImage } = await import('../processing.js');
+        const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
@@ -388,27 +390,28 @@ describe('processImage UltraHDR preservation path', () => {
         expect(encoderInstance.setExifData).toHaveBeenCalledWith(extractedExifPayload);
     });
 
-    it('does not downscale preserved gain maps by gainMapScale in safe mode', async () => {
-        const { processImage } = await import('../processing.js');
+    it('bypasses generated-path clamp and GMNet stages for preserved HEIC components', async () => {
+        const { processImage } = await import('../processing-core.js');
         const { processHeic } = await import('../heic-processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
+        const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const onProgress = vi.fn();
 
-        const safeModeSdr = new ImageData(
-            new Uint8ClampedArray(4 * 4 * 4).fill(128),
-            4,
-            4
+        const preservedSdr = new ImageData(
+            new Uint8ClampedArray(16 * 16 * 4).fill(128),
+            16,
+            16
         );
-        const safeModeGainMap = new ImageData(
-            new Uint8ClampedArray(2 * 2 * 4).fill(64),
-            2,
-            2
+        const preservedGainMap = new ImageData(
+            new Uint8ClampedArray(8 * 8 * 4).fill(64),
+            8,
+            8
         );
 
         processHeic.mockResolvedValueOnce({
-            sdr: safeModeSdr,
-            gainMap: safeModeGainMap,
+            sdr: preservedSdr,
+            gainMap: preservedGainMap,
             gainMapMetadata,
             name: 'input.heic'
         });
@@ -428,7 +431,12 @@ describe('processImage UltraHDR preservation path', () => {
         const stages = onProgress.mock.calls
             .map(([event]) => event?.stage)
             .filter(Boolean);
-        expect(stages).toContain('safe-mode-resize-sdr');
-        expect(stages).not.toContain('safe-mode-resize-gain-map');
+        expect(stages).not.toContain('constrain-sdr-image');
+        expect(stages).not.toContain('prepare-gmnet-input');
+        expect(stages).not.toContain('generate-gain-map');
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            '[Process] Gain map decision: preserving existing gain map from source input'
+        );
     });
+
 });

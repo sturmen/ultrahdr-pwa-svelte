@@ -1,1260 +1,543 @@
-import { processHeic } from './heic-processing.js';
-import { createPipelineTelemetry } from './pipeline-telemetry.js';
-import { processTiff } from './tiff-processing.js';
-import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, isUhdrImage } from './ultrahdr-wasm.js';
 import {
-    insertExifSegment,
-    stripExifSegments,
-    normalizeExifOrientationTo1
-} from './exif-utils.js';
-import { extractExifApp1PayloadFromInput } from './input-exif.js';
+  PIPELINE_HISTORY_KEY,
+  PIPELINE_PROGRESS_EVENT,
+  PIPELINE_STATE_KEY,
+} from './pipeline-telemetry.js';
 
-const DEFAULT_MAX_CONTENT_BOOST = 2.3;
-const DEFAULT_BRIGHTNESS_INTENT = 'conservative';
-const SHADOW_CUTOFF_DEPRECATION_KEY = 'processing.shadowCutoff.deprecated';
-const GAIN_MAP_GAMMA_LINEAR = 1.0;
-const GAIN_MAP_OFFSET_SDR_LINEAR = 0.0;
+const WORKER_SUPPORT_ERROR = 'Processing worker is unavailable in this environment.';
+const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
+const WORKER_MESSAGE_ERROR = 'Processing worker returned an unexpected response.';
+const WORKER_STALL_ERROR = 'Processing worker stalled before WASM initialization completed.';
+const WORKER_WASM_LOAD_TIMEOUT_MS = 20_000;
+const WORKER_INIT_TIMEOUT_MS = 15_000;
+const INFERENCE_STAGE_NAME = 'generate-gain-map';
+const INFERENCE_HEARTBEAT_INTERVAL_MS = 5_000;
+const INFERENCE_TIMEOUT_DEFAULT_MS = 180_000;
+const INFERENCE_TIMEOUT_FIREFOX_MS = 600_000;
+const INFERENCE_TIMEOUT_WASM_MS = 600_000;
+const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
+const INFERENCE_TIMEOUT_ERROR_MESSAGE = 'Processing worker stalled during GMNet inference.';
 
-const DEFAULT_PROCESS_OPTIONS = {
-    maxContentBoost: DEFAULT_MAX_CONTENT_BOOST,
-    rotation: 0,
-    quality: 0.95,
-    discardGainMap: false,
-    stripExif: false,
-    highlightExponent: 2.0,
-    brightnessIntent: DEFAULT_BRIGHTNESS_INTENT,
-    safeMode: false,
-    maxOutputMegapixels: null,
-    gainMapScale: 0.5,
-    abortSignal: null
-};
+let workerClientPromise = null;
+let workerClientCreationError = null;
 
-function getDeprecationWarningStore() {
-    if (!globalThis.__ultrahdrDeprecationWarnings) {
-        globalThis.__ultrahdrDeprecationWarnings = new Set();
-    }
-    return globalThis.__ultrahdrDeprecationWarnings;
+function canUseProcessingWorker(runtime = globalThis) {
+  return (
+    typeof runtime?.Worker === 'function' &&
+    typeof runtime?.OffscreenCanvas !== 'undefined' &&
+    typeof runtime?.createImageBitmap === 'function' &&
+    typeof runtime?.fetch === 'function' &&
+    typeof runtime?.ImageData !== 'undefined'
+  );
 }
-
-function warnDeprecationOnce(key, message) {
-    const warningStore = getDeprecationWarningStore();
-    if (warningStore.has(key)) {
-        return;
-    }
-    warningStore.add(key);
-    console.warn(`${key}: ${message}`);
-}
-
-function clamp01(value) {
-    return Math.max(0, Math.min(1, Number(value) || 0));
-}
-
-function smoothstep(edge0, edge1, x) {
-    if (edge0 === edge1) {
-        return x >= edge1 ? 1 : 0;
-    }
-    const t = clamp01((x - edge0) / (edge1 - edge0));
-    return t * t * (3 - 2 * t);
-}
-
-function estimatePercentiles(values, percentiles, bins = 256) {
-    if (!values?.length) {
-        return percentiles.map(() => 0);
-    }
-
-    const histogram = new Uint32Array(bins);
-    const maxBinIndex = bins - 1;
-    for (let i = 0; i < values.length; i++) {
-        const v = clamp01(values[i]);
-        const bin = Math.min(maxBinIndex, Math.floor(v * maxBinIndex));
-        histogram[bin]++;
-    }
-
-    const targets = percentiles.map((p) => Math.floor((values.length - 1) * clamp01(p)));
-    const results = new Array(percentiles.length).fill(0);
-    let cumulative = 0;
-    let targetIndex = 0;
-
-    for (let bin = 0; bin < bins && targetIndex < targets.length; bin++) {
-        cumulative += histogram[bin];
-        while (targetIndex < targets.length && cumulative > targets[targetIndex]) {
-            results[targetIndex] = bin / maxBinIndex;
-            targetIndex++;
-        }
-    }
-
-    while (targetIndex < targets.length) {
-        results[targetIndex] = 1;
-        targetIndex++;
-    }
-
-    return results;
-}
-
 
 function createAbortError() {
-    if (typeof DOMException !== 'undefined') {
-        return new DOMException('Operation aborted', 'AbortError');
-    }
-    const error = new Error('Operation aborted');
-    error.name = 'AbortError';
-    return error;
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('Operation aborted', 'AbortError');
+  }
+  const error = new Error('Operation aborted');
+  error.name = 'AbortError';
+  return error;
 }
 
-export function throwIfAborted(signal) {
-    if (signal?.aborted) {
-        throw createAbortError();
-    }
+function normalizeWorkerError(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return new Error(String(raw || WORKER_MESSAGE_ERROR));
+  }
+
+  const error = new Error(String(raw.message || WORKER_MESSAGE_ERROR));
+  if (raw.name) {
+    error.name = String(raw.name);
+  }
+  if (raw.stack) {
+    error.stack = String(raw.stack);
+  }
+  return error;
 }
 
-export function getConstrainedDimensions(width, height, maxMegapixels) {
-    const w = Math.max(1, Number(width) || 1);
-    const h = Math.max(1, Number(height) || 1);
-    const maxMp = Number(maxMegapixels);
+function cloneEventDetail(eventDetail) {
+  if (!eventDetail || typeof eventDetail !== 'object') {
+    return eventDetail;
+  }
 
-    if (!Number.isFinite(maxMp) || maxMp <= 0) {
-        return { width: w, height: h, changed: false };
-    }
-
-    const currentPixels = w * h;
-    const maxPixels = maxMp * 1_000_000;
-    if (currentPixels <= maxPixels) {
-        return { width: w, height: h, changed: false };
-    }
-
-    const scale = Math.sqrt(maxPixels / currentPixels);
-    let constrainedWidth = Math.max(1, Math.floor(w * scale));
-    let constrainedHeight = Math.max(1, Math.floor(h * scale));
-
-    // Ensure we're under the max pixel budget after integer rounding.
-    while (constrainedWidth * constrainedHeight > maxPixels) {
-        if (constrainedWidth >= constrainedHeight && constrainedWidth > 1) {
-            constrainedWidth--;
-        } else if (constrainedHeight > 1) {
-            constrainedHeight--;
-        } else {
-            break;
-        }
-    }
-
-    return {
-        width: constrainedWidth,
-        height: constrainedHeight,
-        changed: constrainedWidth !== w || constrainedHeight !== h
-    };
+  return {
+    ...eventDetail,
+    stageDurationsMs: eventDetail.stageDurationsMs
+      ? { ...eventDetail.stageDurationsMs }
+      : eventDetail.stageDurationsMs,
+    error: eventDetail.error ? { ...eventDetail.error } : eventDetail.error,
+  };
 }
 
-/**
- * Ensure WASM encoder is loaded
- * @returns {Promise<void>}
- */
-async function ensureWasmLoaded() {
-    if (!isWasmLoaded()) {
-        console.log('[WASM] Loading libultrahdr WASM module...');
-        await isAvailable();
-    }
-    if (!isWasmLoaded()) {
-        throw new Error('libultrahdr WASM module failed to load');
-    }
-    console.log('[WASM] libultrahdr WASM module loaded');
+function publishWorkerTelemetry(eventDetail) {
+  if (!eventDetail || typeof window === 'undefined') {
+    return;
+  }
+
+  const detail = cloneEventDetail(eventDetail);
+  window[PIPELINE_STATE_KEY] = detail;
+
+  const history = Array.isArray(window[PIPELINE_HISTORY_KEY])
+    ? window[PIPELINE_HISTORY_KEY]
+    : [];
+  history.push(detail);
+  if (history.length > 200) {
+    history.splice(0, history.length - 200);
+  }
+  window[PIPELINE_HISTORY_KEY] = history;
+
+  if (typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(PIPELINE_PROGRESS_EVENT, { detail }));
+  }
 }
 
-function buildGainMapMetadata(maxContentBoost) {
-    const safeMaxContentBoost = Number.isFinite(maxContentBoost) && maxContentBoost > 0
-        ? maxContentBoost
-        : DEFAULT_MAX_CONTENT_BOOST;
-    const normalizedMaxContentBoost = Math.max(1.0, safeMaxContentBoost);
-    const log2MaxBoost = Math.log2(normalizedMaxContentBoost);
-    const gamma = GAIN_MAP_GAMMA_LINEAR;
-    const offsetSdr = GAIN_MAP_OFFSET_SDR_LINEAR;
-
-    return {
-        gainMapMin: [1.0, 1.0, 1.0],
-        gainMapMax: [normalizedMaxContentBoost, normalizedMaxContentBoost, normalizedMaxContentBoost],
-        gamma: [gamma, gamma, gamma],
-        offsetSdr: [offsetSdr, offsetSdr, offsetSdr],
-        offsetHdr: [0, 0, 0],
-        hdrCapacityMin: 1.0,
-        hdrCapacityMax: normalizedMaxContentBoost,
-        parsedGainMapMin: [0, 0, 0],
-        parsedGainMapMax: [log2MaxBoost, log2MaxBoost, log2MaxBoost],
-        parsedGamma: [gamma, gamma, gamma],
-        parsedOffsetSdr: [offsetSdr, offsetSdr, offsetSdr],
-        parsedOffsetHdr: [0, 0, 0],
-        parsedHdrCapacityMin: 0,
-        parsedHdrCapacityMax: log2MaxBoost
-    };
+function stripNonSerializableOptions(options = {}) {
+  const sanitized = { ...options };
+  delete sanitized.onProgress;
+  delete sanitized.abortSignal;
+  return sanitized;
 }
 
-/**
- * Processes an image file to create an UltraHDR JPEG.
- * @param {File} file - The input image file.
- * @param {Object} options - Processing options.
- * @param {number} options.maxContentBoost - Max content boost for gain map.
- * @param {number} options.rotation - Rotation in degrees.
- * @param {number} options.quality - JPEG quality (0-1).
- * @param {boolean} options.discardGainMap - Whether to discard existing gain map and regenerate.
- * @param {boolean} options.stripExif - Whether to strip EXIF data.
- * @param {number} options.highlightExponent - Exponent for highlight boost curve.
- * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent] - Brightness profile.
- * @param {number} [options.shadowCutoff] - Deprecated (accepted as no-op for compatibility).
- * @param {(event: Object) => void} [options.onProgress] - Optional telemetry callback.
- * @param {number} [options.fileIndex] - Optional file index in current batch.
- * @param {number} [options.totalFiles] - Optional total files in current batch.
- * @returns {Promise<Blob>} - The processed UltraHDR JPEG blob.
- */
-export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
-    const mergedOptions = { ...DEFAULT_PROCESS_OPTIONS, ...(options || {}) };
-    console.log('[Process] Starting processing for:', file.name);
-    throwIfAborted(mergedOptions.abortSignal);
-    const sourceInputFile = file;
-    let sourceInputBytes = null;
+function isFirefoxRuntime(runtime = globalThis) {
+  const userAgent = String(runtime?.navigator?.userAgent || '');
+  return /firefox\//i.test(userAgent);
+}
 
-    const telemetry = createPipelineTelemetry({
-        fileName: file.name,
-        fileSize: file.size,
-        fileIndex: mergedOptions.fileIndex,
-        totalFiles: mergedOptions.totalFiles,
-        onProgress: mergedOptions.onProgress
-    });
+function normalizeExecutionProvider(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
 
+function resolveInferenceTimeoutMs(runtime = globalThis, executionProvider = null) {
+  if (normalizeExecutionProvider(executionProvider) === 'wasm') {
+    return INFERENCE_TIMEOUT_WASM_MS;
+  }
+  return isFirefoxRuntime(runtime)
+    ? INFERENCE_TIMEOUT_FIREFOX_MS
+    : INFERENCE_TIMEOUT_DEFAULT_MS;
+}
+
+function formatInferenceStatusNote(provider, elapsedMs = 0) {
+  const normalizedProvider =
+    typeof provider === 'string' && provider.trim().length > 0
+      ? provider.trim().toLowerCase()
+      : null;
+  const runtimeSuffix = normalizedProvider ? ` Runtime: ${normalizedProvider}.` : '';
+  if (elapsedMs < INFERENCE_HEARTBEAT_INTERVAL_MS) {
+    return `${INFERENCE_START_NOTE}${runtimeSuffix}`;
+  }
+  const elapsedSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
+  return `${INFERENCE_START_NOTE}${runtimeSuffix} Still running (${elapsedSeconds}s).`;
+}
+
+function initializeWorkerClient() {
+  if (!canUseProcessingWorker()) {
+    return Promise.resolve(null);
+  }
+
+  if (workerClientCreationError) {
+    return Promise.reject(workerClientCreationError);
+  }
+
+  return new Promise((resolve, reject) => {
+    let worker;
+    let initializationSettled = false;
     try {
-        await telemetry.runStage('wasm-load', async () => {
-            throwIfAborted(mergedOptions.abortSignal);
-            await ensureWasmLoaded();
-        });
-
-        const sourceExifBytes = await telemetry.runStage('extract-source-exif', async () => {
-            if (mergedOptions.stripExif || !(sourceInputFile instanceof Blob)) {
-                return null;
-            }
-            sourceInputBytes = await blobToUint8Array(sourceInputFile);
-            return extractExifApp1PayloadFromInput(
-                sourceInputBytes,
-                sourceInputFile.name || '',
-                sourceInputFile.type || ''
-            );
-        });
-
-        file = await telemetry.runStage('preprocess-file', async () => {
-            throwIfAborted(mergedOptions.abortSignal);
-            return preprocessFile(file, mergedOptions);
-        });
-
-        // Check if JPEG already has a gain map (UltraHDR)
-        // When discardGainMap is false, preserve the original gain map.
-        if (!mergedOptions.discardGainMap && file instanceof File) {
-            try {
-                const fileBuffer = await telemetry.runStage('read-source-buffer', async () =>
-                    sourceInputBytes && file === sourceInputFile
-                        ? sourceInputBytes
-                        : new Uint8Array(await file.arrayBuffer())
-                );
-                throwIfAborted(mergedOptions.abortSignal);
-
-                const isUhdr = await telemetry.runStage('detect-ultrahdr', async () => isUhdrImage(fileBuffer));
-                if (isUhdr) {
-                    if (mergedOptions.rotation === 0) {
-                        console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
-                        const blob = await telemetry.runStage('finalize-preserved', async () =>
-                            finalizeUltraHDR(fileBuffer, mergedOptions.stripExif)
-                        );
-                        telemetry.complete({ outputBytes: blob.size, mode: 'preserve' });
-                        return blob;
-                    }
-
-                    console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
-                    const blob = await telemetry.runStage('rotate-preserved-ultrahdr', async () =>
-                        processUhdrWithRotation(fileBuffer, mergedOptions, telemetry, sourceExifBytes)
-                    );
-                    telemetry.complete({ outputBytes: blob.size, mode: 'preserve-with-rotation' });
-                    return blob;
-                }
-            } catch (e) {
-                console.warn('[Process] UltraHDR detection/preservation failed, proceeding with normal processing:', e);
-                telemetry.emit('preservation-fallback', {
-                    stage: 'detect-ultrahdr',
-                    warning: String(e?.message || e)
-                });
-            }
-        }
-
-        // If file is an object with raw data from HEIC preservation, handle it.
-        if (!(file instanceof File) && !(file instanceof Blob) && file.sdr) {
-            console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
-            let imageData = file.sdr;
-            let gainMapImageData = file.gainMap;
-            // Preserve source gain-map metadata when provided by the preprocessor.
-            // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
-            const metadata = file.gainMapMetadata
-                || (Number.isFinite(file.gainMapHeadroom) && file.gainMapHeadroom > 0
-                    ? buildGainMapMetadata(file.gainMapHeadroom)
-                    : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST));
-
-            if (mergedOptions.safeMode) {
-                const constrainedDimensions = getConstrainedDimensions(
-                    imageData.width,
-                    imageData.height,
-                    mergedOptions.maxOutputMegapixels
-                );
-                if (constrainedDimensions.changed) {
-                    imageData = await telemetry.runStage('safe-mode-resize-sdr', async () =>
-                        resizeImageData(imageData, constrainedDimensions.width, constrainedDimensions.height)
-                    );
-                }
-
-                const constrainedGainDimensions = getPreservedGainMapConstrainedDimensions(
-                    gainMapImageData,
-                    imageData
-                );
-                if (constrainedGainDimensions.changed) {
-                    gainMapImageData = await telemetry.runStage('safe-mode-clamp-preserved-gain-map', async () =>
-                        resizeImageData(
-                            gainMapImageData,
-                            constrainedGainDimensions.width,
-                            constrainedGainDimensions.height
-                        )
-                    );
-                }
-            }
-
-            const { sdr } = await telemetry.runStage('compress-components', async () =>
-                compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes)
-            );
-            const blob = await telemetry.runStage('finalize-output', async () =>
-                finalizeUltraHDR(sdr, mergedOptions.stripExif)
-            );
-
-            telemetry.complete({ outputBytes: blob.size, mode: 'pre-decoded-components' });
-            return blob;
-        }
-
-        // Load Data
-        const dataUrl = await telemetry.runStage('read-input-data-url', async () => readFileAsDataURL(file));
-        console.log('[Process] File loaded and EXIF extraction complete');
-        throwIfAborted(mergedOptions.abortSignal);
-
-        // Load image pixels
-        const { imageData } = await telemetry.runStage('decode-image-data', async () => loadImageData(dataUrl));
-        let workingImageData = imageData;
-        console.log('[Process] Image data retrieved');
-
-        if (mergedOptions.safeMode) {
-            const constrainedDimensions = getConstrainedDimensions(
-                workingImageData.width,
-                workingImageData.height,
-                mergedOptions.maxOutputMegapixels
-            );
-            if (constrainedDimensions.changed) {
-                workingImageData = await telemetry.runStage('safe-mode-resize-sdr', async () =>
-                    resizeImageData(
-                        workingImageData,
-                        constrainedDimensions.width,
-                        constrainedDimensions.height
-                    )
-                );
-            }
-        }
-
-        let gainMapSourceImageData = workingImageData;
-        const constrainedGainDimensions = getGainMapConstrainedDimensions(
-            gainMapSourceImageData,
-            mergedOptions.gainMapScale
-        );
-        if (constrainedGainDimensions.changed) {
-            gainMapSourceImageData = await telemetry.runStage('safe-mode-resize-gain-map', async () =>
-                resizeImageData(
-                    gainMapSourceImageData,
-                    constrainedGainDimensions.width,
-                    constrainedGainDimensions.height
-                )
-            );
-        }
-
-        throwIfAborted(mergedOptions.abortSignal);
-
-        // Generate gain map data
-        const { gainMapImageData } = await telemetry.runStage('generate-gain-map', async () =>
-            generateGainMapData(gainMapSourceImageData, {
-                ...mergedOptions,
-                onStageProgress: (stageProgress, note) => {
-                    telemetry.emitStageProgress('generate-gain-map', stageProgress, { note });
-                }
-            })
-        );
-        console.log('[Process] GainMap generated manually');
-        throwIfAborted(mergedOptions.abortSignal);
-
-        // Compress and encode to UltraHDR
-        const { sdr } = await telemetry.runStage('compress-components', async () =>
-            compressImages(workingImageData, gainMapImageData, mergedOptions, null, telemetry, sourceExifBytes)
-        );
-        console.log('[Process] Compression complete');
-
-        // Finalize UltraHDR
-        const blob = await telemetry.runStage('finalize-output', async () =>
-            finalizeUltraHDR(sdr, mergedOptions.stripExif)
-        );
-        console.log('[Process] Processing complete, returning Blob');
-
-        telemetry.complete({ outputBytes: blob.size, mode: 'generated' });
-        return blob;
+      worker = new Worker(new URL('./processing-worker.js', import.meta.url), { type: 'module' });
     } catch (error) {
-        telemetry.fail(error);
-        throw error;
-    }
-}
-
-/**
- * Process an UltraHDR JPEG with rotation, preserving the original gain map.
- * Extracts compressed base/gain-map components and re-encodes once with the
- * encoder's built-in rotation effect and original gain-map metadata.
- * @param {Uint8Array} fileBuffer - The raw file bytes
- * @param {Object} options - Processing options (rotation, quality, stripExif)
- * @returns {Promise<Blob>} - The rotated UltraHDR JPEG
- */
-async function processUhdrWithRotation(fileBuffer, options, telemetry = null, sourceExifBytes = null) {
-    const decoder = new UHDRDecoder();
-    if (telemetry) {
-        await telemetry.runStage('rotation-init-decoder', async () => decoder.init());
-    } else {
-        await decoder.init();
+      const wrappedError = new Error(WORKER_INIT_ERROR);
+      wrappedError.cause = error;
+      wrappedError.name = 'ProcessingWorkerInitError';
+      workerClientCreationError = wrappedError;
+      reject(wrappedError);
+      return;
     }
 
-    try {
-        // 1. Probe the UltraHDR JPEG and extract original compressed components.
-        // This preserves source quality by avoiding decode/re-encode before final output.
-        if (telemetry) {
-            await telemetry.runStage('rotation-probe-source', async () => {
-                decoder.setImage(fileBuffer);
-                decoder.probe();
-            });
-        } else {
-            decoder.setImage(fileBuffer);
-            decoder.probe();
+    const jobs = new Map();
+    let nextJobId = 1;
+    let ready = false;
+
+    function emitProgressToJob(job, detail) {
+      publishWorkerTelemetry(detail);
+      try {
+        job.onProgress?.(detail);
+      } catch (callbackError) {
+        console.warn('[Process] Progress callback failed:', callbackError);
+      }
+    }
+
+    function clearInferenceMonitoring(job) {
+      if (job.inferenceHeartbeatIntervalId !== null) {
+        clearInterval(job.inferenceHeartbeatIntervalId);
+        job.inferenceHeartbeatIntervalId = null;
+      }
+      if (job.inferenceTimeoutId !== null) {
+        clearTimeout(job.inferenceTimeoutId);
+        job.inferenceTimeoutId = null;
+      }
+      job.inferenceStartedAtMs = null;
+    }
+
+    function createInferenceTimeoutError(job) {
+      const timeoutError = new Error(INFERENCE_TIMEOUT_ERROR_MESSAGE);
+      timeoutError.name = 'ProcessingWorkerInferenceTimeoutError';
+      const detail = {
+        phase: 'stage-error',
+        stage: INFERENCE_STAGE_NAME,
+        note: INFERENCE_TIMEOUT_ERROR_MESSAGE,
+        timestamp: Date.now(),
+        syntheticHeartbeat: true,
+        gmnetExecutionProvider: job.gmnetExecutionProvider || null,
+        error: {
+          name: timeoutError.name,
+          message: timeoutError.message,
+        },
+      };
+      return { timeoutError, detail };
+    }
+
+    function armInferenceTimeout(jobId, job) {
+      if (job.inferenceTimeoutId !== null) {
+        clearTimeout(job.inferenceTimeoutId);
+      }
+      const nowMs = Date.now();
+      const inferenceStartedAtMs = job.inferenceStartedAtMs || nowMs;
+      const elapsedMs = Math.max(0, nowMs - inferenceStartedAtMs);
+      const remainingMs = Math.max(1, job.inferenceTimeoutMs - elapsedMs);
+      job.inferenceTimeoutId = setTimeout(() => {
+        const pendingJob = jobs.get(jobId);
+        if (!pendingJob) {
+          return;
+        }
+        const { timeoutError, detail } = createInferenceTimeoutError(pendingJob);
+        emitProgressToJob(pendingJob, detail);
+        worker.postMessage({ type: 'cancel', jobId });
+        pendingJob.reject(timeoutError);
+        disposeJob(jobId);
+      }, remainingMs);
+    }
+
+    function updateInferenceTimeoutForProvider(jobId, job, provider = null) {
+      const normalizedProvider = normalizeExecutionProvider(provider);
+      if (!normalizedProvider) {
+        return;
+      }
+      job.gmnetExecutionProvider = normalizedProvider;
+      const nextTimeoutMs = resolveInferenceTimeoutMs(globalThis, normalizedProvider);
+      if (nextTimeoutMs === job.inferenceTimeoutMs) {
+        return;
+      }
+      job.inferenceTimeoutMs = nextTimeoutMs;
+      if (job.inferenceStartedAtMs !== null) {
+        armInferenceTimeout(jobId, job);
+      }
+    }
+
+    function buildInferenceHeartbeatEvent(job, nowMs = Date.now()) {
+      const baseDetail = job.lastProgressDetail && typeof job.lastProgressDetail === 'object'
+        ? cloneEventDetail(job.lastProgressDetail)
+        : {};
+      const inferenceStartedAtMs = job.inferenceStartedAtMs || nowMs;
+      const elapsedMs = Math.max(0, nowMs - inferenceStartedAtMs);
+      const previousStageProgress = Number(baseDetail.stageProgress);
+      const inferredStageProgress = Number.isFinite(previousStageProgress)
+        ? Math.max(previousStageProgress, Math.min(95, previousStageProgress + 1))
+        : Math.min(95, Math.max(1, Math.floor(elapsedMs / 15_000) + 1));
+      const baseElapsedMs = Number(baseDetail.elapsedMs);
+      const elapsedDeltaMs = Math.max(0, nowMs - (job.lastWorkerMessageAtMs || nowMs));
+
+      return {
+        ...baseDetail,
+        phase: 'stage-progress',
+        stage: INFERENCE_STAGE_NAME,
+        stageProgress: inferredStageProgress,
+        note: formatInferenceStatusNote(job.gmnetExecutionProvider, elapsedMs),
+        timestamp: Date.now(),
+        elapsedMs: Number.isFinite(baseElapsedMs)
+          ? baseElapsedMs + elapsedDeltaMs
+          : baseElapsedMs,
+        syntheticHeartbeat: true,
+        gmnetExecutionProvider: job.gmnetExecutionProvider || null,
+      };
+    }
+
+    function startInferenceMonitoring(jobId, detail = null) {
+      const job = jobs.get(jobId);
+      if (!job) {
+        return;
+      }
+
+      const nowMs = Date.now();
+      if (job.inferenceStartedAtMs === null) {
+        job.inferenceStartedAtMs = nowMs;
+      }
+      updateInferenceTimeoutForProvider(jobId, job, detail?.gmnetExecutionProvider);
+      if (detail && typeof detail === 'object') {
+        job.lastProgressDetail = cloneEventDetail(detail);
+      }
+
+      if (job.inferenceHeartbeatIntervalId === null) {
+        const hasStartNote = typeof detail?.note === 'string'
+          && detail.note.toLowerCase().includes('application may appear hung');
+        if (!hasStartNote) {
+          emitProgressToJob(job, buildInferenceHeartbeatEvent(job, nowMs));
         }
 
-        const baseJpegBytes = telemetry
-            ? await telemetry.runStage('rotation-extract-base', async () => decoder.getBaseImage())
-            : decoder.getBaseImage();
-        const gainMapJpegBytes = telemetry
-            ? await telemetry.runStage('rotation-extract-gain-map', async () => decoder.getGainMapImage())
-            : decoder.getGainMapImage();
-        const gainMapMetadata = telemetry
-            ? await telemetry.runStage('rotation-extract-metadata', async () => decoder.getGainMapMetadata())
-            : decoder.getGainMapMetadata();
-        console.log('[Process] Extracted compressed components. Base:', baseJpegBytes.length, 'GainMap:', gainMapJpegBytes.length);
+        job.inferenceHeartbeatIntervalId = setInterval(() => {
+          const pendingJob = jobs.get(jobId);
+          if (!pendingJob) {
+            return;
+          }
+          emitProgressToJob(pendingJob, buildInferenceHeartbeatEvent(pendingJob));
+        }, INFERENCE_HEARTBEAT_INTERVAL_MS);
+      }
 
-        const quality = options.quality !== undefined ? options.quality : 0.95;
-        const rotation = ((options.rotation || 0) % 360 + 360) % 360;
-        const exifBytes = options.stripExif ? null : sourceExifBytes;
-
-        // Effects on compressed inputs are not supported by libultrahdr. Decode both
-        // compressed components to ImageData, rotate in JS, then re-encode with the
-        // original gain-map metadata.
-        const baseImageData = telemetry
-            ? await telemetry.runStage('rotation-decode-base-image', async () => jpegBytesToImageData(baseJpegBytes))
-            : await jpegBytesToImageData(baseJpegBytes);
-        const gainMapImageData = telemetry
-            ? await telemetry.runStage('rotation-decode-gain-map-image', async () => jpegBytesToImageData(gainMapJpegBytes))
-            : await jpegBytesToImageData(gainMapJpegBytes);
-
-        const { sdr } = telemetry
-            ? await telemetry.runStage('rotation-reencode-components', async () =>
-                compressImages(
-                    baseImageData,
-                    gainMapImageData,
-                    { ...options, quality, rotation },
-                    gainMapMetadata,
-                    telemetry,
-                    exifBytes
-                )
-            )
-            : await compressImages(
-                baseImageData,
-                gainMapImageData,
-                { ...options, quality, rotation },
-                gainMapMetadata,
-                null,
-                exifBytes
-            );
-
-        // 3. Finalize (handle EXIF)
-        return await finalizeUltraHDR(sdr, options.stripExif);
-    } finally {
-        decoder.destroy();
+      armInferenceTimeout(jobId, job);
     }
-}
 
-/**
- * Preprocesses the file, converting HEIC/TIFF to a format we can read if necessary.
- * @param {File} file 
- * @param {Object} options 
- * @returns {Promise<File>}
- */
-async function preprocessFile(file, options) {
-    const name = file.name.toLowerCase();
-    if (name.endsWith('.heic') || name.endsWith('.heif')) {
-        console.log('[Process] Detected HEIC/HEIF, converting...');
-        try {
-            const converted = await processHeic(file, options);
-            if (converted) {
-                console.log('[Process] Converted HEIC to:', converted.type);
-                return converted;
-            }
-        } catch (e) {
-            console.error('[Process] HEIC conversion failed:', e);
-            throw e;
-        }
-    } else if (name.endsWith('.tif') || name.endsWith('.tiff')) {
-        console.log('[Process] Detected TIFF, converting...');
-        try {
-            const converted = await processTiff(file);
-            if (converted) {
-                console.log('[Process] Converted TIFF to:', converted.type);
-                return converted;
-            }
-        } catch (e) {
-            console.error('[Process] TIFF conversion failed:', e);
-            throw e;
-        }
+    function rejectInitialization(error) {
+      if (initializationSettled || ready) {
+        return;
+      }
+      initializationSettled = true;
+      if (error?.name !== 'ProcessingWorkerInitTimeout') {
+        workerClientCreationError = error;
+      }
+      reject(error);
+      worker.terminate();
     }
-    return file;
-}
 
-/**
- * Loads image data from a Data URL.
- * @param {string} dataUrl 
- * @returns {Promise<{imageData: ImageData, width: number, height: number}>}
- */
-async function loadImageData(dataUrl) {
-    const img = await new Promise((resolve, reject) => {
-        const i = new Image();
-        i.onload = () => resolve(i);
-        i.onerror = reject;
-        i.src = dataUrl;
+    function disposeJob(jobId) {
+      const job = jobs.get(jobId);
+      if (!job) {
+        return;
+      }
+
+      if (job.abortSignal && job.abortListener) {
+        job.abortSignal.removeEventListener('abort', job.abortListener);
+      }
+      if (job.wasmLoadTimeoutId !== null) {
+        clearTimeout(job.wasmLoadTimeoutId);
+        job.wasmLoadTimeoutId = null;
+      }
+      clearInferenceMonitoring(job);
+      jobs.delete(jobId);
+    }
+
+    function rejectAllPending(error) {
+      for (const [jobId, job] of jobs.entries()) {
+        job.reject(error);
+        disposeJob(jobId);
+      }
+    }
+
+    worker.addEventListener('error', (event) => {
+      const error = event?.error instanceof Error
+        ? event.error
+        : new Error(event?.message || WORKER_INIT_ERROR);
+      error.name = error.name || 'ProcessingWorkerRuntimeError';
+      if (!ready) {
+        const initError = new Error(
+          `${WORKER_INIT_ERROR}${error.message ? `: ${error.message}` : ''}`
+        );
+        initError.name = 'ProcessingWorkerInitError';
+        initError.cause = error;
+        rejectInitialization(initError);
+        return;
+      }
+      rejectAllPending(error);
     });
 
-    let canvas = document.createElement('canvas');
-    let ctx = canvas.getContext('2d');
-
-    canvas.width = img.width;
-    canvas.height = img.height;
-    ctx.drawImage(img, 0, 0);
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-    // Cleanup
-    canvas.width = 1;
-    canvas.height = 1;
-    return { imageData };
-}
-
-async function resizeImageData(imageData, targetWidth, targetHeight) {
-    if (!imageData || targetWidth <= 0 || targetHeight <= 0) {
-        throw new Error('Invalid resize arguments');
-    }
-
-    if (imageData.width === targetWidth && imageData.height === targetHeight) {
-        return imageData;
-    }
-
-    const sourceCanvas = document.createElement('canvas');
-    sourceCanvas.width = imageData.width;
-    sourceCanvas.height = imageData.height;
-    const sourceCtx = sourceCanvas.getContext('2d');
-    if (!sourceCtx) {
-        throw new Error('Failed to create source canvas context for resize');
-    }
-    sourceCtx.putImageData(imageData, 0, 0);
-
-    const targetCanvas = document.createElement('canvas');
-    targetCanvas.width = targetWidth;
-    targetCanvas.height = targetHeight;
-    const targetCtx = targetCanvas.getContext('2d');
-    if (!targetCtx) {
-        throw new Error('Failed to create target canvas context for resize');
-    }
-
-    targetCtx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
-    const resized = targetCtx.getImageData(0, 0, targetWidth, targetHeight);
-
-    sourceCanvas.width = 1;
-    sourceCanvas.height = 1;
-    targetCanvas.width = 1;
-    targetCanvas.height = 1;
-
-    return resized;
-}
-
-function getGainMapConstrainedDimensions(imageData, gainMapScale) {
-    const normalizedScale = Number(gainMapScale);
-    if (!Number.isFinite(normalizedScale) || normalizedScale <= 0 || normalizedScale >= 1) {
-        return {
-            width: imageData.width,
-            height: imageData.height,
-            changed: false
-        };
-    }
-
-    const width = Math.max(1, Math.floor(imageData.width * normalizedScale));
-    const height = Math.max(1, Math.floor(imageData.height * normalizedScale));
-    return {
-        width,
-        height,
-        changed: width !== imageData.width || height !== imageData.height
-    };
-}
-
-function getPreservedGainMapConstrainedDimensions(gainMapImageData, sdrImageData) {
-    const width = Math.min(gainMapImageData.width, sdrImageData.width);
-    const height = Math.min(gainMapImageData.height, sdrImageData.height);
-    return {
-        width,
-        height,
-        changed: width !== gainMapImageData.width || height !== gainMapImageData.height
-    };
-}
-
-/**
- * Computes a box-filtered (mean) version of a Float32Array image channel.
- * Uses integral image for O(N) performance regardless of radius.
- * @param {Float32Array} src - Source single-channel data (width * height)
- * @param {number} w - Image width
- * @param {number} h - Image height
- * @param {number} r - Kernel radius
- * @returns {Float32Array} Filtered output
- */
-function boxFilter(src, w, h, r) {
-    const radius = Math.max(0, Math.floor(Number(r) || 0));
-    if (radius === 0) {
-        return src.slice();
-    }
-
-    const temp = new Float32Array(w * h);
-    const out = new Float32Array(w * h);
-
-    // Horizontal pass with running window sum.
-    for (let y = 0; y < h; y++) {
-        const rowOff = y * w;
-        const initialEnd = Math.min(w - 1, radius);
-        let sum = 0;
-
-        for (let x = 0; x <= initialEnd; x++) {
-            sum += src[rowOff + x];
-        }
-        temp[rowOff] = sum / (initialEnd + 1);
-
-        for (let x = 1; x < w; x++) {
-            const addX = x + radius;
-            const subX = x - radius - 1;
-            if (addX < w) {
-                sum += src[rowOff + addX];
-            }
-            if (subX >= 0) {
-                sum -= src[rowOff + subX];
-            }
-
-            const x0 = Math.max(0, x - radius);
-            const x1 = Math.min(w - 1, x + radius);
-            temp[rowOff + x] = sum / (x1 - x0 + 1);
-        }
-    }
-
-    // Vertical pass with running window sum.
-    for (let x = 0; x < w; x++) {
-        const initialEnd = Math.min(h - 1, radius);
-        let sum = 0;
-
-        for (let y = 0; y <= initialEnd; y++) {
-            sum += temp[y * w + x];
-        }
-        out[x] = sum / (initialEnd + 1);
-
-        for (let y = 1; y < h; y++) {
-            const addY = y + radius;
-            const subY = y - radius - 1;
-            if (addY < h) {
-                sum += temp[addY * w + x];
-            }
-            if (subY >= 0) {
-                sum -= temp[subY * w + x];
-            }
-
-            const y0 = Math.max(0, y - radius);
-            const y1 = Math.min(h - 1, y + radius);
-            out[y * w + x] = sum / (y1 - y0 + 1);
-        }
-    }
-
-    return out;
-}
-
-/**
- * Guided filter (He et al. 2013) — edge-preserving smoothing with O(N) complexity.
- * Uses the input luminance as both the guide and the filtering target.
- * @param {Float32Array} I - Guide/input image (single channel, width*height)
- * @param {number} w - Image width
- * @param {number} h - Image height
- * @param {number} r - Window radius
- * @param {number} eps - Regularization parameter (controls edge sensitivity)
- * @returns {Float32Array} Edge-preserving smoothed output
- */
-function guidedFilter(I, w, h, r, eps) {
-    const n = w * h;
-
-    // Step 1: Compute local means and correlations via box filter
-    const meanI = boxFilter(I, w, h, r);
-
-    // I*I element-wise
-    const II = new Float32Array(n);
-    for (let i = 0; i < n; i++) II[i] = I[i] * I[i];
-    const meanII = boxFilter(II, w, h, r);
-
-    // Step 2: Compute local variance and linear coefficients
-    // Since guide == input (self-guided): var_I = meanII - meanI^2
-    // a = var_I / (var_I + eps)
-    // b = meanI * (1 - a)
-    const a = new Float32Array(n);
-    const b = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-        const varI = meanII[i] - meanI[i] * meanI[i];
-        a[i] = varI / (varI + eps);
-        b[i] = meanI[i] * (1 - a[i]);
-    }
-
-    // Step 3: Average a and b over the window
-    const meanA = boxFilter(a, w, h, r);
-    const meanB = boxFilter(b, w, h, r);
-
-    // Step 4: Output = meanA * I + meanB
-    const out = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-        out[i] = meanA[i] * I[i] + meanB[i];
-    }
-    return out;
-}
-
-/**
- * Stephen Hill ACES RRT+ODT fit (scalar form for luminance).
- * Reference implementation: BakingLab/ACES.hlsl.
- * @param {number} x - Scene-linear luminance
- * @returns {number}
- */
-function acesHillForward(x) {
-    const a = x * (x + 0.0245786) - 0.000090537;
-    const b = x * (0.983729 * x + 0.4329510) + 0.238081;
-    return a / b;
-}
-
-function acesHillForwardDerivative(x) {
-    const a = x * (x + 0.0245786) - 0.000090537;
-    const b = x * (0.983729 * x + 0.4329510) + 0.238081;
-    const aPrime = 2.0 * x + 0.0245786;
-    const bPrime = 1.967458 * x + 0.4329510;
-    return (aPrime * b - a * bPrime) / (b * b);
-}
-
-function acesHillInverse(y, maxIter = 8) {
-    if (y <= 0) return 0;
-    if (y >= 1) return 20.0;
-
-    let x = y / Math.max(1e-6, 1 - y);
-    x = Math.max(0, Math.min(20, x));
-
-    for (let i = 0; i < maxIter; i++) {
-        const fx = acesHillForward(x) - y;
-        const fpx = acesHillForwardDerivative(x);
-        if (!Number.isFinite(fpx) || Math.abs(fpx) < 1e-10) break;
-        const step = fx / fpx;
-        x -= step;
-        x = Math.max(0, Math.min(20, x));
-        if (Math.abs(step) < 1e-8) break;
-    }
-    return Math.max(0, x);
-}
-
-/**
- * Generates gain-map data using a deterministic reverse-tonemapping pipeline.
- *
- * This implementation is v2-only and applies:
- *  - Clip-aware highlight emphasis
- *  - Two-scale edge-aware local adaptation
- *  - Conservative APL/midtone guardrails
- *  - Continuous low-luma regularization (no hard shadow cutoff)
- *
- * @param {ImageData} imageData - The SDR image data.
- * @param {Object} [options]
- * @param {number} [options.maxContentBoost=2.3] - Maximum HDR boost factor.
- * @param {number} [options.highlightExponent=2.0] - Controls highlight expansion aggressiveness.
- * @param {"conservative" | "balanced" | "vibrant"} [options.brightnessIntent="conservative"] - Brightness profile.
- * @param {number} [options.shadowCutoff] - Deprecated (accepted as no-op).
- * @param {number} [options.localAdaptationStrength=0.5] - Blend between global (0) and local (1) adaptation.
- * @param {(progress: number, note?: string) => void} [options.onStageProgress] - Optional granular progress callback.
- * @returns {{gainMapImageData: ImageData, metadata: Object}}
- */
-export function generateGainMapData(imageData, options = {}) {
-    throwIfAborted(options?.abortSignal);
-    const rgba = imageData.data;
-    const length = rgba.length;
-    const width = imageData.width;
-    const height = imageData.height;
-    const pixelCount = width * height;
-
-    const brightnessIntent = ['conservative', 'balanced', 'vibrant'].includes(options.brightnessIntent)
-        ? options.brightnessIntent
-        : DEFAULT_BRIGHTNESS_INTENT;
-
-    if (Object.prototype.hasOwnProperty.call(options, 'shadowCutoff')) {
-        warnDeprecationOnce(
-            SHADOW_CUTOFF_DEPRECATION_KEY,
-            'shadowCutoff is deprecated and ignored by the v2 gain-map generator; remove it from callers.'
-        );
-    }
-
-    const rawMaxContentBoost = Number.isFinite(options.maxContentBoost)
-        ? options.maxContentBoost
-        : DEFAULT_MAX_CONTENT_BOOST;
-    const maxContentBoost = Math.max(1.0, rawMaxContentBoost);
-    const highlightExponent = options.highlightExponent !== undefined ? options.highlightExponent : 2.0;
-    const localAdaptStrength = options.localAdaptationStrength !== undefined ? options.localAdaptationStrength : 0.5;
-    const v2BaseRadius = Math.max(3, Math.min(12, Math.round(Math.max(width, height) / 256)));
-    const localRadiusSmall = Math.max(2, Math.min(8, Math.round(v2BaseRadius * 0.6)));
-    const localRadiusLarge = Math.max(localRadiusSmall + 2, Math.min(14, Math.round(v2BaseRadius * 1.6)));
-    const guidedEps = 0.0001;
-    const onStageProgress = typeof options?.onStageProgress === 'function'
-        ? options.onStageProgress
-        : null;
-    let lastReportedProgress = -1;
-
-    function reportProgress(progress, note) {
-        if (!onStageProgress) {
-            return;
-        }
-        const safeProgress = Math.max(0, Math.min(100, Number(progress) || 0));
-        if (safeProgress < lastReportedProgress) {
-            return;
-        }
-        lastReportedProgress = safeProgress;
-        onStageProgress(safeProgress, note);
-    }
-
-    const log2MaxBoost = Math.log2(maxContentBoost);
-    const canEncodeGain = log2MaxBoost > 0;
-    const logDelta = 1e-6;
-    const gainMapGamma = GAIN_MAP_GAMMA_LINEAR;
-    const gainMapOffsetSdr = GAIN_MAP_OFFSET_SDR_LINEAR;
-
-    const toLinear = (v) => {
-        v /= 255;
-        return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-    };
-
-    const maxLinearChannel = new Float32Array(pixelCount);
-    const luminance = new Float32Array(pixelCount);
-    const reportInterval = Math.max(2048, Math.floor(pixelCount / 24));
-
-    reportProgress(0, 'Preparing source pixels');
-
-    for (let i = 0; i < pixelCount; i++) {
-        if (i % 4096 === 0) {
-            throwIfAborted(options?.abortSignal);
-        }
-        const idx = i * 4;
-        const r = toLinear(rgba[idx]);
-        const g = toLinear(rgba[idx + 1]);
-        const b = toLinear(rgba[idx + 2]);
-        maxLinearChannel[i] = Math.max(r, g, b);
-        luminance[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-        if (i % reportInterval === 0 || i === pixelCount - 1) {
-            const stageProgress = (i / Math.max(1, pixelCount - 1)) * 40;
-            reportProgress(stageProgress, 'Analyzing luminance');
-        }
-    }
-
-    reportProgress(45, 'Computing local adaptation');
-
-    const localSmall = guidedFilter(luminance, width, height, localRadiusSmall, guidedEps);
-    const localLarge = guidedFilter(luminance, width, height, localRadiusLarge, guidedEps * 1.5);
-    const localLum = new Float32Array(pixelCount);
-    const localDetailLum = localSmall;
-    for (let i = 0; i < pixelCount; i++) {
-        const contrastRatio = Math.abs(localSmall[i] - localLarge[i]) / (localLarge[i] + logDelta);
-        const edgeWeight = smoothstep(0.0, 0.06, contrastRatio);
-        localLum[i] = localLarge[i] * (1 - edgeWeight) + localSmall[i] * edgeWeight;
-    }
-
-    reportProgress(60, 'Building adaptive gain map');
-
-    let logSum = 0;
-    for (let i = 0; i < pixelCount; i++) {
-        logSum += Math.log(luminance[i] + logDelta);
-    }
-    const globalAvgLum = Math.exp(logSum / pixelCount);
-
-    const [medianLum, p75Lum] = estimatePercentiles(luminance, [0.5, 0.75]);
-    const acesAt1 = acesHillForward(1.0);
-    const medianNorm = clamp01(medianLum);
-    const medianSceneLinear = acesHillInverse(medianNorm * acesAt1);
-    const medianBaseBoost = medianLum > logDelta ? medianSceneLinear / medianLum : 1.0;
-    const medianHighlightWeight = Math.pow(medianNorm, highlightExponent);
-    const medianBaseScale = medianBaseBoost > 1.0
-        ? Math.min(medianBaseBoost / (maxContentBoost * 0.6), 1.0)
-        : 0.4;
-    const estimatedMedianRawBoost = 1.0 + (maxContentBoost - 1.0) * medianHighlightWeight * medianBaseScale;
-    const medianLiftCap = brightnessIntent === 'vibrant'
-        ? 1.26
-        : brightnessIntent === 'balanced'
-            ? 1.16
-            : 1.08;
-    const midtoneGuard = Math.min(1.0, Math.max(0, (medianLiftCap - 1.0) / Math.max(1e-5, estimatedMedianRawBoost - 1.0)));
-
-    const gainMapData = new Uint8ClampedArray(length);
-
-    for (let i = 0; i < pixelCount; i++) {
-        if (i % 4096 === 0) {
-            throwIfAborted(options?.abortSignal);
-        }
-        const lum = luminance[i];
-        const idx = i * 4;
-
-        const adaptedAvg = localAdaptStrength > 0
-            ? globalAvgLum * (1 - localAdaptStrength) + localLum[i] * localAdaptStrength
-            : globalAvgLum;
-        const adaptRatio = (lum + logDelta) / (adaptedAvg + logDelta);
-
-        const sdrNorm = clamp01(lum);
-        const acesInput = sdrNorm * acesAt1;
-        const sceneLinear = acesHillInverse(acesInput);
-        const baseBoost = lum > logDelta ? sceneLinear / lum : 1.0;
-
-        const lumNorm = clamp01(lum);
-        const highlightWeight = Math.pow(Math.min(1, lumNorm), highlightExponent);
-        const localBoostMod = Math.pow(
-            Math.max(0.6, adaptRatio),
-            0.22 * localAdaptStrength
-        );
-        const baseScale = baseBoost > 1.0
-            ? Math.min(baseBoost / (maxContentBoost * 0.6), 1.0)
-            : 0.4;
-
-        let rawBoost = 1.0 + (maxContentBoost - 1.0) * highlightWeight * localBoostMod * baseScale;
-
-        const nearClip = smoothstep(0.96, 0.995, maxLinearChannel[i]);
-        const localContrast = Math.abs(lum - localDetailLum[i]);
-        const plateau = 1.0 - smoothstep(0.01, 0.08, localContrast);
-        const clipMask = nearClip * plateau;
-        if (clipMask > 0) {
-            const clipBoost = 1.0 + clipMask * (maxContentBoost - 1.0);
-            rawBoost = Math.max(rawBoost, clipBoost);
-        }
-
-        const highlightShare = smoothstep(Math.max(0, Math.min(1, p75Lum)), 1.0, lum);
-        const midtoneScale = 1.0 - (1.0 - midtoneGuard) * (1.0 - highlightShare);
-        rawBoost = 1.0 + (rawBoost - 1.0) * midtoneScale;
-        if (midtoneGuard < 1.0 && highlightShare > 0) {
-            const recovered = (1.0 - midtoneGuard) * 0.35 * highlightShare;
-            rawBoost = rawBoost + recovered * (maxContentBoost - rawBoost);
-        }
-
-        const lowLumaWeight = smoothstep(0.03, 0.12, lum);
-        let boost = 1.0 + (rawBoost - 1.0) * lowLumaWeight;
-
-        boost = Math.max(1.0, Math.min(maxContentBoost, boost));
-
-        // Generated maps are intentionally monochrome: a single luminance-derived
-        // gain preserves base-image color ratios and avoids synthetic color shifts.
-        const encodedLinear = canEncodeGain ? clamp01(Math.log2(boost) / log2MaxBoost) : 0;
-        const encoded = Math.round(encodedLinear * 255);
-
-        gainMapData[idx] = encoded;
-        gainMapData[idx + 1] = encoded;
-        gainMapData[idx + 2] = encoded;
-        gainMapData[idx + 3] = 255;
-
-        if (i % reportInterval === 0 || i === pixelCount - 1) {
-            const stageProgress = 60 + (i / Math.max(1, pixelCount - 1)) * 40;
-            reportProgress(stageProgress, 'Encoding gain map');
-        }
-    }
-
-    reportProgress(100, 'Gain map ready');
-
-    const gainMapImageData = new ImageData(gainMapData, width, height);
-    const parsedMaxBoost = canEncodeGain ? log2MaxBoost : 0;
-    const metadata = {
-        gainMapMin: [1.0, 1.0, 1.0],
-        gainMapMax: [maxContentBoost, maxContentBoost, maxContentBoost],
-        gamma: [gainMapGamma, gainMapGamma, gainMapGamma],
-        offsetSdr: [gainMapOffsetSdr, gainMapOffsetSdr, gainMapOffsetSdr],
-        offsetHdr: [0, 0, 0],
-        hdrCapacityMin: 1.0,
-        hdrCapacityMax: maxContentBoost,
-        parsedGainMapMin: [0, 0, 0],
-        parsedGainMapMax: [parsedMaxBoost, parsedMaxBoost, parsedMaxBoost],
-        parsedGamma: [gainMapGamma, gainMapGamma, gainMapGamma],
-        parsedOffsetSdr: [gainMapOffsetSdr, gainMapOffsetSdr, gainMapOffsetSdr],
-        parsedOffsetHdr: [0, 0, 0],
-        parsedHdrCapacityMin: 0,
-        parsedHdrCapacityMax: parsedMaxBoost
-    };
-
-    return { gainMapImageData, metadata };
-}
-
-/**
- * Compresses images using libultrahdr WASM encoder.
- * @param {ImageData} sdrImageData
- * @param {ImageData} gainMapImageData
- * @param {Object} options
- * @param {Object} metadata
- * @param {Object|null} telemetry
- * @param {Uint8Array|null} exifPayload
- * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
- */
-async function compressImages(sdrImageData, gainMapImageData, options, metadata = null, telemetry = null, exifPayload = null) {
-    // Convert quality 0-1 to 0-100
-    const quality = options.quality !== undefined ? options.quality : 0.95;
-    const wasmQuality = Math.round(quality * 100);
-    const rotation = ((options.rotation || 0) % 360 + 360) % 360;
-    const maxContentBoost = options.maxContentBoost ?? DEFAULT_MAX_CONTENT_BOOST;
-    const gainMapMetadata = metadata || buildGainMapMetadata(maxContentBoost);
-    const compressedMetadata = {
-        gainMapMin: gainMapMetadata.gainMapMin,
-        gainMapMax: gainMapMetadata.gainMapMax,
-        gamma: gainMapMetadata.gamma,
-        offsetSdr: gainMapMetadata.offsetSdr,
-        offsetHdr: gainMapMetadata.offsetHdr,
-        hdrCapacityMin: gainMapMetadata.hdrCapacityMin,
-        hdrCapacityMax: gainMapMetadata.hdrCapacityMax
-    };
-
-    // Initialize WASM encoder
-    const encoder = new UHDREncoder();
-    if (telemetry) {
-        await telemetry.runStage('encode-init', async () => encoder.init());
-    } else {
-        await encoder.init();
-    }
-
-    try {
-        const rotatedSdrImageData = rotation !== 0
-            ? (telemetry
-                ? await telemetry.runStage('rotate-sdr-image', async () => rotateImageData(sdrImageData, rotation))
-                : await rotateImageData(sdrImageData, rotation))
-            : sdrImageData;
-        const rotatedGainMapImageData = rotation !== 0
-            ? (telemetry
-                ? await telemetry.runStage('rotate-gain-map-image', async () => rotateImageData(gainMapImageData, rotation))
-                : await rotateImageData(gainMapImageData, rotation))
-            : gainMapImageData;
-
-        // The current WASM wrapper expects compressed base and gain map inputs
-        // when bypassing gain-map computation.
-        const sdrJpegBytes = telemetry
-            ? await telemetry.runStage('encode-sdr-to-jpeg', async () => imageDataToJpegBytes(rotatedSdrImageData, quality))
-            : await imageDataToJpegBytes(rotatedSdrImageData, quality);
-        const gainMapJpegBytes = telemetry
-            ? await telemetry.runStage('encode-gain-map-to-jpeg', async () => imageDataToJpegBytes(rotatedGainMapImageData, quality))
-            : await imageDataToJpegBytes(rotatedGainMapImageData, quality);
-
-        let finalExifPayload = exifPayload;
-        if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
-            finalExifPayload = normalizeExifOrientationTo1(finalExifPayload);
-            if (finalExifPayload.length + 2 > 0xffff) {
-                console.warn('Skipping EXIF insertion: payload exceeds JPEG APP1 segment size limit');
-                finalExifPayload = null;
-            }
-        }
-
-        const baseJpegForEncoder =
-            !options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0
-                ? insertExifSegment(sdrJpegBytes, finalExifPayload)
-                : sdrJpegBytes;
-
-        if (telemetry) {
-            await telemetry.runStage('encode-set-base-image', async () => {
-                encoder.setCompressedBaseImage(baseJpegForEncoder);
-            });
-            await telemetry.runStage('encode-set-gain-map-image', async () => {
-                encoder.setCompressedGainMapImage(gainMapJpegBytes, compressedMetadata);
-            });
-        } else {
-            encoder.setCompressedBaseImage(baseJpegForEncoder);
-            encoder.setCompressedGainMapImage(gainMapJpegBytes, compressedMetadata);
-        }
-
-        if (!options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
-            if (telemetry) {
-                await telemetry.runStage('encode-set-exif', async () => {
-                    encoder.setExifData(finalExifPayload);
-                });
-            } else {
-                encoder.setExifData(finalExifPayload);
-            }
-        }
-
-        // Encode to UltraHDR JPEG.
-        if (telemetry) {
-            await telemetry.runStage('encode-ultrahdr', async () => {
-                encoder.encode(wasmQuality);
-            });
-        } else {
-            encoder.encode(wasmQuality);
-        }
-
-        // Get the encoded data.
-        const jpegData = encoder.getEncodedData();
-        if (!jpegData) {
-            throw new Error('Encoding failed: no output data');
-        }
-
-        return { sdr: jpegData, gainMap: new Uint8Array(0) };
-    } finally {
-        encoder.destroy();
-    }
-}
-
-async function imageDataToJpegBytes(imageData, quality = 0.95) {
-    const canvas = document.createElement('canvas');
-    canvas.width = imageData.width;
-    canvas.height = imageData.height;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-        throw new Error('Failed to create canvas context for JPEG encoding');
-    }
-
-    ctx.putImageData(imageData, 0, 0);
-
-    const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob(
-            (encodedBlob) => {
-                if (!encodedBlob) {
-                    reject(new Error('Canvas toBlob returned null for JPEG encoding'));
+    worker.addEventListener('messageerror', () => {
+      const error = new Error('Processing worker communication error.');
+      error.name = 'ProcessingWorkerMessageError';
+      if (!ready) {
+        const initError = new Error(`${WORKER_INIT_ERROR}: ${error.message}`);
+        initError.name = 'ProcessingWorkerInitError';
+        initError.cause = error;
+        rejectInitialization(initError);
+        return;
+      }
+      rejectAllPending(error);
+    });
+
+    worker.addEventListener('message', (event) => {
+      const message = event?.data;
+      if (!message || typeof message !== 'object') {
+        return;
+      }
+
+      if (message.type === 'ready') {
+        if (!ready) {
+          ready = true;
+          initializationSettled = true;
+          resolve({
+            process(file, options = {}) {
+              if (!ready) {
+                return Promise.reject(new Error(WORKER_INIT_ERROR));
+              }
+
+              if (options?.abortSignal?.aborted) {
+                return Promise.reject(createAbortError());
+              }
+
+              const jobId = nextJobId++;
+              const payload = {
+                type: 'process',
+                jobId,
+                file,
+                options: stripNonSerializableOptions(options),
+              };
+
+              return new Promise((jobResolve, jobReject) => {
+                const abortSignal = options?.abortSignal || null;
+                let abortListener = null;
+                const wasmLoadTimeoutId = setTimeout(() => {
+                  const pendingJob = jobs.get(jobId);
+                  if (!pendingJob || !pendingJob.awaitingWasmLoadCompletion) {
                     return;
+                  }
+
+                  const timeoutError = new Error(WORKER_STALL_ERROR);
+                  timeoutError.name = 'ProcessingWorkerTimeoutError';
+                  worker.postMessage({ type: 'cancel', jobId });
+                  pendingJob.reject(timeoutError);
+                  disposeJob(jobId);
+                }, WORKER_WASM_LOAD_TIMEOUT_MS);
+
+                if (abortSignal) {
+                  abortListener = () => {
+                    worker.postMessage({ type: 'cancel', jobId });
+                  };
+                  abortSignal.addEventListener('abort', abortListener, { once: true });
                 }
-                resolve(encodedBlob);
+
+                jobs.set(jobId, {
+                  resolve: jobResolve,
+                  reject: jobReject,
+                  onProgress: typeof options?.onProgress === 'function' ? options.onProgress : null,
+                  abortSignal,
+                  abortListener,
+                  awaitingWasmLoadCompletion: true,
+                  wasmLoadTimeoutId,
+                  inferenceHeartbeatIntervalId: null,
+                  inferenceTimeoutId: null,
+                  inferenceStartedAtMs: null,
+                  inferenceTimeoutMs: resolveInferenceTimeoutMs(),
+                  gmnetExecutionProvider: null,
+                  lastProgressDetail: null,
+                  lastWorkerMessageAtMs: Date.now(),
+                });
+
+                worker.postMessage(payload);
+              });
             },
-            'image/jpeg',
-            quality
-        );
+          });
+        }
+        return;
+      }
+
+      const jobId = Number(message.jobId);
+      if (!Number.isFinite(jobId) || !jobs.has(jobId)) {
+        return;
+      }
+
+      const job = jobs.get(jobId);
+
+      if (message.type === 'progress') {
+        const detail = cloneEventDetail(message.event);
+        job.lastWorkerMessageAtMs = Date.now();
+        if (detail && typeof detail === 'object') {
+          job.lastProgressDetail = cloneEventDetail(detail);
+          updateInferenceTimeoutForProvider(jobId, job, detail.gmnetExecutionProvider);
+        }
+        if (
+          job.awaitingWasmLoadCompletion &&
+          detail?.stage === 'wasm-load' &&
+          (detail.phase === 'stage-complete' || detail.phase === 'stage-error')
+        ) {
+          job.awaitingWasmLoadCompletion = false;
+          if (job.wasmLoadTimeoutId !== null) {
+            clearTimeout(job.wasmLoadTimeoutId);
+            job.wasmLoadTimeoutId = null;
+          }
+        }
+        if (
+          detail?.stage === INFERENCE_STAGE_NAME &&
+          (detail?.phase === 'stage-start' || detail?.phase === 'stage-progress')
+        ) {
+          startInferenceMonitoring(jobId, detail);
+        } else if (
+          detail?.stage === INFERENCE_STAGE_NAME &&
+          (detail?.phase === 'stage-complete' || detail?.phase === 'stage-error')
+        ) {
+          clearInferenceMonitoring(job);
+        } else if (detail?.phase === 'stage-start' && job.inferenceHeartbeatIntervalId !== null) {
+          clearInferenceMonitoring(job);
+        }
+        emitProgressToJob(job, detail);
+        return;
+      }
+
+      if (message.type === 'result') {
+        disposeJob(jobId);
+        const mimeType = typeof message.mimeType === 'string' ? message.mimeType : 'image/jpeg';
+        const buffer = message.buffer;
+        if (!(buffer instanceof ArrayBuffer)) {
+          job.reject(new Error(WORKER_MESSAGE_ERROR));
+          return;
+        }
+        job.resolve(new Blob([buffer], { type: mimeType }));
+        return;
+      }
+
+      if (message.type === 'error') {
+        disposeJob(jobId);
+        job.reject(normalizeWorkerError(message.error));
+        return;
+      }
+
+      disposeJob(jobId);
+      job.reject(new Error(WORKER_MESSAGE_ERROR));
     });
 
-    // Release canvas resources aggressively when processing many files.
-    canvas.width = 1;
-    canvas.height = 1;
+    worker.postMessage({ type: 'init' });
 
-    return await blobToUint8Array(blob);
+    setTimeout(() => {
+      if (!ready) {
+        const timeoutError = new Error(WORKER_INIT_ERROR);
+        timeoutError.name = 'ProcessingWorkerInitTimeout';
+        rejectInitialization(timeoutError);
+      }
+    }, WORKER_INIT_TIMEOUT_MS);
+  });
 }
 
-async function jpegBytesToImageData(jpegBytes) {
-    const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
-    const dataUrl = await readBlobAsDataURL(blob);
-    const { imageData } = await loadImageData(dataUrl);
-    return imageData;
+async function getWorkerClient() {
+  if (workerClientPromise) {
+    return workerClientPromise;
+  }
+
+  workerClientPromise = initializeWorkerClient().catch((error) => {
+    workerClientPromise = null;
+    workerClientCreationError = error;
+    throw error;
+  });
+
+  return workerClientPromise;
 }
 
-async function rotateImageData(imageData, degrees) {
-    const normalized = ((degrees || 0) % 360 + 360) % 360;
-    if (normalized === 0) {
-        return imageData;
-    }
+export async function processImage(file, options = {}) {
+  if (!canUseProcessingWorker()) {
+    const error = new Error(WORKER_SUPPORT_ERROR);
+    error.name = 'ProcessingWorkerUnavailableError';
+    throw error;
+  }
 
-    const canvas = document.createElement('canvas');
-    const sourceCanvas = document.createElement('canvas');
-    sourceCanvas.width = imageData.width;
-    sourceCanvas.height = imageData.height;
+  const client = await getWorkerClient();
 
-    const srcCtx = sourceCanvas.getContext('2d');
-    if (!srcCtx) {
-        throw new Error('Failed to create source canvas context for rotation');
-    }
-    srcCtx.putImageData(imageData, 0, 0);
-
-    if (normalized === 90 || normalized === 270) {
-        canvas.width = imageData.height;
-        canvas.height = imageData.width;
-    } else {
-        canvas.width = imageData.width;
-        canvas.height = imageData.height;
-    }
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-        throw new Error('Failed to create destination canvas context for rotation');
-    }
-
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate((normalized * Math.PI) / 180);
-    ctx.drawImage(sourceCanvas, -imageData.width / 2, -imageData.height / 2);
-
-    const rotated = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    canvas.width = 1;
-    canvas.height = 1;
-    sourceCanvas.width = 1;
-    sourceCanvas.height = 1;
-    return rotated;
-}
-
-async function blobToUint8Array(blob) {
-    if (blob && typeof blob.arrayBuffer === 'function') {
-        return new Uint8Array(await blob.arrayBuffer());
-    }
-
-    if (typeof Response !== 'undefined') {
-        const arrayBuffer = await new Response(blob).arrayBuffer();
-        return new Uint8Array(arrayBuffer);
-    }
-
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(new Uint8Array(reader.result));
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-    });
-}
-
-function readBlobAsDataURL(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
-
-/**
- * Embeds metadata and finalizes the UltraHDR JPEG.
- * With WASM encoder, the metadata is already embedded in the JPEG.
- * This function now handles EXIF preservation only.
- * @param {Uint8Array} sdr - The UltraHDR JPEG from WASM encoder
- * @param {boolean} stripExif
- * @returns {Promise<Blob>}
- */
-async function finalizeUltraHDR(sdr, stripExif) {
-    // The WASM encoder embeds metadata directly in the JPEG
-    // We only strip metadata when requested.
-    let finalJpeg = sdr;
-
-    if (stripExif) {
-        finalJpeg = stripExifSegments(finalJpeg);
-    }
-
-    return new Blob([finalJpeg], { type: 'image/jpeg' });
-}
-
-/**
- * Reads a File as a Data URL.
- * @param {File} file 
- * @returns {Promise<string>}
- */
-export function readFileAsDataURL(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
+  return client.process(file, options);
 }

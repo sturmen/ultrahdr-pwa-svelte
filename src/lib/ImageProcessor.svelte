@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher, onMount } from "svelte";
-  import { getCapabilities, getProcessingProfile } from "./capabilities.js";
+  import { getCapabilities } from "./capabilities.js";
   import { processImage } from "./processing";
   import JSZip from "jszip";
   import {
@@ -25,12 +25,11 @@
   export let launchSource = "regular";
   export let launchIntent = { action: null, tab: null };
 
-  let maxContentBoost = 2.3;
+  let maxContentBoostStops = 2.3;
   let rotation = 0;
   let quality = 0.95;
   let discardGainMap = false;
   let stripExif = false;
-  let performanceMode = "auto";
   let keepScreenAwake = true;
 
   let processing = false;
@@ -65,7 +64,6 @@
   let activeMobileTab = "convert";
   let activeDesktopTab = "all";
   let openSheet = "none";
-  let isFabOpen = false;
   let selectionToggleState = "none";
   let queueControlVisibility = "hidden";
   let isDesktopLayout = false;
@@ -77,12 +75,15 @@
   let pipelineStageProgress = 0;
   let pipelineStatusLabel = "Waiting to start";
   let pipelineStatusNote = "";
+  let pipelineExecutionProvider = null;
   let pipelineFileLabel = "";
   let pipelineFileName = "";
   let activeProgressFileIndex = null;
+  let aiModelStatusVisible = false;
+  let aiModelStatusMessage = "";
+  let aiModelStatusProgress = 0;
 
   const capabilities = getCapabilities();
-  const processingProfile = getProcessingProfile(capabilities);
   const dispatch = createEventDispatcher();
 
   const PROGRESS_STAGE_ORDER = [
@@ -93,9 +94,9 @@
     "read-input-data-url",
     "extract-exif",
     "decode-image-data",
-    "safe-mode-resize-sdr",
-    "safe-mode-resize-gain-map",
-    "safe-mode-clamp-preserved-gain-map",
+    "constrain-sdr-image",
+    "apply-rotation",
+    "prepare-gmnet-input",
     "generate-gain-map",
     "compress-components",
     "encode-init",
@@ -119,9 +120,9 @@
     "read-input-data-url": "Reading image",
     "extract-exif": "Extracting metadata",
     "decode-image-data": "Decoding pixels",
-    "safe-mode-resize-sdr": "Resizing SDR image",
-    "safe-mode-resize-gain-map": "Resizing gain map source",
-    "safe-mode-clamp-preserved-gain-map": "Clamping preserved gain map",
+    "constrain-sdr-image": "Constraining output dimensions",
+    "apply-rotation": "Applying rotation",
+    "prepare-gmnet-input": "Preparing GMNet input",
     "generate-gain-map": "Generating gain map",
     "compress-components": "Compressing components",
     "encode-init": "Initializing encoder",
@@ -140,19 +141,29 @@
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
   $: showSettingsPanel = isDesktopLayout;
-  $: staleCount = queue.filter((item) => item.status === QUEUE_ITEM_STATES.STALE).length;
+  $: staleCount = queue.filter(
+    (item) => item.status === QUEUE_ITEM_STATES.STALE,
+  ).length;
   $: queuePendingCount = queue.filter(
-    (item) => item.status === QUEUE_ITEM_STATES.QUEUED || item.status === QUEUE_ITEM_STATES.PROCESSING,
+    (item) =>
+      item.status === QUEUE_ITEM_STATES.QUEUED ||
+      item.status === QUEUE_ITEM_STATES.PROCESSING,
   ).length;
   $: queueCompletedCount = queue.filter(
-    (item) => item.status === QUEUE_ITEM_STATES.COMPLETED || item.status === QUEUE_ITEM_STATES.STALE,
+    (item) =>
+      item.status === QUEUE_ITEM_STATES.COMPLETED ||
+      item.status === QUEUE_ITEM_STATES.STALE,
   ).length;
   $: canPauseQueue =
     workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
     workflowState === WORKFLOW_STATES.PROCESSING_PAUSING;
   $: canResumeQueue = workflowState === WORKFLOW_STATES.PROCESSING_PAUSED;
   $: canCancelCurrent = processing && currentQueueId !== null;
-  $: queueControlVisibility = canPauseQueue ? "pause" : canResumeQueue ? "resume" : "hidden";
+  $: queueControlVisibility = canPauseQueue
+    ? "pause"
+    : canResumeQueue
+      ? "resume"
+      : "hidden";
   $: selectionToggleState =
     results.length === 0 || selectedIndices.size === 0
       ? "none"
@@ -160,7 +171,8 @@
         ? "all"
         : "partial";
   $: hasShareCapability =
-    typeof navigator !== "undefined" && typeof navigator.canShare === "function";
+    typeof navigator !== "undefined" &&
+    typeof navigator.canShare === "function";
   $: hasRotationStaleResults = results.some((result) => {
     if (getQueueItemStatus(result.queueId) !== QUEUE_ITEM_STATES.STALE) {
       return false;
@@ -172,7 +184,8 @@
     !processing &&
     queuePendingCount === 0 &&
     queueCompletedCount > 0;
-  $: showPipelineStatusCard = processing || latestPipelineEvent || showPipelineCompleteSummary;
+  $: showPipelineStatusCard =
+    processing || latestPipelineEvent || showPipelineCompleteSummary;
   $: if (showStalePrompt && staleCount === 0) {
     showStalePrompt = false;
   }
@@ -219,7 +232,9 @@
 
   function getSlowestStage(stageDurationsMs) {
     if (!stageDurationsMs) return null;
-    const entries = Object.entries(stageDurationsMs).sort((a, b) => b[1] - a[1]);
+    const entries = Object.entries(stageDurationsMs).sort(
+      (a, b) => b[1] - a[1],
+    );
     if (entries.length === 0) return null;
     const [name, duration] = entries[0];
     return `${name} (${formatMs(duration)})`;
@@ -231,6 +246,44 @@
       return 0;
     }
     return Math.max(0, Math.min(100, numeric));
+  }
+
+  function normalizeExecutionProvider(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized || null;
+  }
+
+  function parseExecutionProviderFromNote(note) {
+    if (typeof note !== "string") {
+      return null;
+    }
+    const match = /runtime:\s*([a-z0-9_-]+)/i.exec(note);
+    return normalizeExecutionProvider(match?.[1] || null);
+  }
+
+  function resolveExecutionProviderFromEvent(event) {
+    const fromField = normalizeExecutionProvider(event?.gmnetExecutionProvider);
+    if (fromField) {
+      return fromField;
+    }
+    return parseExecutionProviderFromNote(event?.note);
+  }
+
+  function formatExecutionProviderLabel(provider) {
+    const normalized = normalizeExecutionProvider(provider);
+    if (!normalized) {
+      return "";
+    }
+    if (normalized === "webgpu") {
+      return "WebGPU";
+    }
+    if (normalized === "wasm") {
+      return "WASM";
+    }
+    return normalized;
   }
 
   function getStageLabel(stage, phase) {
@@ -257,12 +310,16 @@
     let stageProgress = previousProgress;
     if (event.phase === "stage-progress") {
       stageProgress =
-        segmentStart + ((segmentEnd - segmentStart) * clampPercent(event.stageProgress)) / 100;
+        segmentStart +
+        ((segmentEnd - segmentStart) * clampPercent(event.stageProgress)) / 100;
     } else if (event.phase === "stage-complete") {
       stageProgress = segmentEnd;
     } else if (event.phase === "stage-start") {
       stageProgress = segmentStart + segmentSize * 0.08;
-    } else if (event.phase === "stage-error" || event.phase === "pipeline-error") {
+    } else if (
+      event.phase === "stage-error" ||
+      event.phase === "pipeline-error"
+    ) {
       stageProgress = Math.max(previousProgress, segmentStart);
     }
     return Math.max(previousProgress, Math.min(100, stageProgress));
@@ -272,7 +329,11 @@
     const safeProgress = clampPercent(perFileProgress);
     const safeIndex = Number(fileIndex);
     const safeTotal = Number(totalFiles);
-    if (!Number.isFinite(safeIndex) || !Number.isFinite(safeTotal) || safeTotal <= 0) {
+    if (
+      !Number.isFinite(safeIndex) ||
+      !Number.isFinite(safeTotal) ||
+      safeTotal <= 0
+    ) {
       return safeProgress;
     }
     const clampedIndex = Math.max(0, Math.min(safeTotal - 1, safeIndex));
@@ -285,29 +346,75 @@
     pipelineStageProgress = 0;
     pipelineStatusLabel = "Waiting to start";
     pipelineStatusNote = "";
+    pipelineExecutionProvider = null;
     pipelineFileLabel = "";
     pipelineFileName = "";
     activeProgressFileIndex = null;
+    resetAiModelStatus();
+  }
+
+  function resetAiModelStatus() {
+    aiModelStatusVisible = false;
+    aiModelStatusMessage = "";
+    aiModelStatusProgress = 0;
+  }
+
+  function isAiModelDownloadNote(note) {
+    return /downloading ai/i.test(String(note || ""));
   }
 
   function updateProgressUi(event) {
     latestPipelineEvent = event;
+    const phase = event?.phase;
+    const note = String(event?.note || "");
     const fileIndex = Number(event?.fileIndex);
     const totalFiles = Number(event?.totalFiles);
+    const executionProvider = resolveExecutionProviderFromEvent(event);
+    if (executionProvider) {
+      pipelineExecutionProvider = executionProvider;
+    }
 
     if (Number.isFinite(fileIndex) && fileIndex !== activeProgressFileIndex) {
       activeProgressFileIndex = fileIndex;
       pipelineCurrentFileProgress = 0;
     }
 
-    pipelineCurrentFileProgress = estimatePipelineProgress(event, pipelineCurrentFileProgress);
-    pipelineOverallProgress = toBatchProgress(pipelineCurrentFileProgress, fileIndex, totalFiles);
+    if (event?.stage === "generate-gain-map") {
+      if (phase === "stage-complete" || phase === "stage-error") {
+        resetAiModelStatus();
+      } else if (phase === "stage-progress") {
+        if (note.toLowerCase().includes("fallback")) {
+          resetAiModelStatus();
+        } else {
+          aiModelStatusVisible = true;
+          aiModelStatusMessage = note || "Running AI inference...";
+          aiModelStatusProgress = clampPercent(event.stageProgress);
+        }
+      }
+    }
 
-    if (event?.phase === "stage-progress") {
+    if (phase === "pipeline-complete" || phase === "pipeline-error") {
+      resetAiModelStatus();
+    }
+
+    pipelineCurrentFileProgress = estimatePipelineProgress(
+      event,
+      pipelineCurrentFileProgress,
+    );
+    pipelineOverallProgress = toBatchProgress(
+      pipelineCurrentFileProgress,
+      fileIndex,
+      totalFiles,
+    );
+
+    if (phase === "stage-progress") {
       pipelineStageProgress = clampPercent(event.stageProgress);
-    } else if (event?.phase === "stage-complete" || event?.phase === "pipeline-complete") {
+    } else if (
+      phase === "stage-complete" ||
+      phase === "pipeline-complete"
+    ) {
       pipelineStageProgress = 100;
-    } else if (event?.phase === "stage-start") {
+    } else if (phase === "stage-start") {
       pipelineStageProgress = 0;
     }
 
@@ -326,7 +433,9 @@
     }
 
     pipelineFileLabel =
-      Number.isFinite(fileIndex) && Number.isFinite(totalFiles) && totalFiles > 0
+      Number.isFinite(fileIndex) &&
+      Number.isFinite(totalFiles) &&
+      totalFiles > 0
         ? `File ${fileIndex + 1} of ${totalFiles}`
         : "";
   }
@@ -351,7 +460,6 @@
   function setActiveTab(tab) {
     activeMobileTab = tab;
     openSheet = "none";
-    isFabOpen = false;
   }
 
   function consumeLaunchIntent() {
@@ -381,28 +489,20 @@
     }
   }
 
-  function toggleFab() {
-    isFabOpen = !isFabOpen;
-  }
-
   function openSettingsSurface() {
     if (isDesktopLayout) {
       activeDesktopTab = "settings";
-      isFabOpen = false;
       return;
     }
     openSheet = "settings";
-    isFabOpen = false;
   }
 
   function openExportSheet() {
     openSheet = "export";
-    isFabOpen = false;
   }
 
   function openReprocessSheet() {
     openSheet = "reprocess";
-    isFabOpen = false;
   }
 
   function closeSheet() {
@@ -427,39 +527,23 @@
     }
   }
 
-  function getPerformanceSettings() {
-    if (performanceMode === "faster") {
-      return {
-        safeMode: true,
-        maxOutputMegapixels: Math.max(8, Math.floor(processingProfile.maxInputMegapixels * 0.6)),
-        gainMapScale: 0.5,
-      };
+  function convertStopsToMaxContentBoost(stops) {
+    const numericStops = Number(stops);
+    if (!Number.isFinite(numericStops)) {
+      return 2 ** 2.3;
     }
-    if (performanceMode === "best-quality") {
-      return {
-        safeMode: false,
-        maxOutputMegapixels: null,
-        gainMapScale: 0.5,
-      };
-    }
-    return {
-      safeMode: processingProfile.safeModeDefault,
-      maxOutputMegapixels: processingProfile.maxInputMegapixels,
-      gainMapScale: 0.5,
-    };
+    const clampedStops = Math.max(0, Math.min(4, numericStops));
+    return 2 ** clampedStops;
   }
 
   function buildProcessingOptions(abortSignal, fileIndex, totalFiles) {
-    const performanceSettings = getPerformanceSettings();
     return {
-      maxContentBoost,
+      maxContentBoost: convertStopsToMaxContentBoost(maxContentBoostStops),
       rotation,
       quality,
       discardGainMap,
       stripExif,
-      safeMode: performanceSettings.safeMode,
-      maxOutputMegapixels: performanceSettings.maxOutputMegapixels,
-      gainMapScale: performanceSettings.gainMapScale,
+      gmnetModelVariant: "realworld",
       abortSignal,
       fileIndex,
       totalFiles,
@@ -482,9 +566,13 @@
     try {
       const hasPending = queue.some(
         (item) =>
-          item.status === QUEUE_ITEM_STATES.QUEUED || item.status === QUEUE_ITEM_STATES.PROCESSING,
+          item.status === QUEUE_ITEM_STATES.QUEUED ||
+          item.status === QUEUE_ITEM_STATES.PROCESSING,
       );
-      if (queue.length === 0 || (!hasPending && workflowState === WORKFLOW_STATES.PROCESSING_DONE)) {
+      if (
+        queue.length === 0 ||
+        (!hasPending && workflowState === WORKFLOW_STATES.PROCESSING_DONE)
+      ) {
         await clearQueueState();
         return;
       }
@@ -520,17 +608,28 @@
   function updateQueueItem(queueId, changes) {
     queue = queue.map((item) =>
       item.id === queueId
-        ? { ...item, ...(typeof changes === "function" ? changes(item) : changes) }
+        ? {
+            ...item,
+            ...(typeof changes === "function" ? changes(item) : changes),
+          }
         : item,
     );
     schedulePersistQueueState();
   }
 
   function getQueueItemStatus(queueId) {
-    return queue.find((item) => item.id === queueId)?.status || QUEUE_ITEM_STATES.COMPLETED;
+    return (
+      queue.find((item) => item.id === queueId)?.status ||
+      QUEUE_ITEM_STATES.COMPLETED
+    );
   }
 
-  function upsertResult(queueItem, blob, appliedSettingsVersion, appliedRotation) {
+  function upsertResult(
+    queueItem,
+    blob,
+    appliedSettingsVersion,
+    appliedRotation,
+  ) {
     const resultRecord = {
       originalName: queueItem.name,
       blob,
@@ -542,11 +641,15 @@
       rotation: appliedRotation,
     };
 
-    const existingIndex = results.findIndex((result) => result.queueId === queueItem.id);
+    const existingIndex = results.findIndex(
+      (result) => result.queueId === queueItem.id,
+    );
     const nextSelection = new Set(selectedIndices);
     if (existingIndex >= 0) {
       URL.revokeObjectURL(results[existingIndex].url);
-      results = results.map((result, index) => (index === existingIndex ? resultRecord : result));
+      results = results.map((result, index) =>
+        index === existingIndex ? resultRecord : result,
+      );
       nextSelection.add(existingIndex);
     } else {
       const newIndex = results.length;
@@ -559,7 +662,9 @@
   function startQueue() {
     if (queueLoopActive) return;
 
-    const hasQueuedItems = queue.some((item) => item.status === QUEUE_ITEM_STATES.QUEUED);
+    const hasQueuedItems = queue.some(
+      (item) => item.status === QUEUE_ITEM_STATES.QUEUED,
+    );
     if (!hasQueuedItems) return;
 
     if (workflowState === WORKFLOW_STATES.EMPTY) {
@@ -581,8 +686,10 @@
   }
 
   async function acquireWakeLockIfNeeded() {
-    if (!keepScreenAwake || !capabilities.supportsWakeLock || wakeLockSentinel) return;
-    if (typeof navigator === "undefined" || !navigator.wakeLock?.request) return;
+    if (!keepScreenAwake || !capabilities.supportsWakeLock || wakeLockSentinel)
+      return;
+    if (typeof navigator === "undefined" || !navigator.wakeLock?.request)
+      return;
 
     try {
       wakeLockSentinel = await navigator.wakeLock.request("screen");
@@ -590,7 +697,9 @@
         wakeLockSentinel = null;
       });
     } catch (e) {
-      setNotice(`Screen wake lock unavailable (${e.message || "unsupported"}).`);
+      setNotice(
+        `Screen wake lock unavailable (${e.message || "unsupported"}).`,
+      );
     }
   }
 
@@ -620,7 +729,9 @@
           break;
         }
 
-        const nextItem = queue.find((item) => item.status === QUEUE_ITEM_STATES.QUEUED);
+        const nextItem = queue.find(
+          (item) => item.status === QUEUE_ITEM_STATES.QUEUED,
+        );
         if (!nextItem) {
           processing = false;
           pauseRequested = false;
@@ -728,7 +839,9 @@
   }
 
   function initializeQueueFromFiles(initialFiles) {
-    const normalizedFiles = Array.from(initialFiles || []).filter((file) => file instanceof File);
+    const normalizedFiles = Array.from(initialFiles || []).filter(
+      (file) => file instanceof File,
+    );
     if (normalizedFiles.length === 0) {
       workflowState = WORKFLOW_STATES.EMPTY;
       return;
@@ -765,12 +878,6 @@
     handleSettingChange();
   }
 
-  function handleMetadataToggle(event) {
-    const keepMetadata = Boolean(event?.currentTarget?.checked);
-    stripExif = !keepMetadata;
-    handleSettingChange();
-  }
-
   function requestPauseQueue() {
     if (!processing) return;
     pauseRequested = true;
@@ -789,11 +896,6 @@
     if (!canCancelCurrent) return;
     cancelCurrentRequested = true;
     abortActiveProcessing();
-  }
-
-  function cancelCurrentFromFab() {
-    cancelCurrent();
-    isFabOpen = false;
   }
 
   function selectedStaleQueueIds() {
@@ -852,7 +954,9 @@
 
   function reprocessAllStale() {
     const staleIds = new Set(
-      queue.filter((item) => item.status === QUEUE_ITEM_STATES.STALE).map((item) => item.id),
+      queue
+        .filter((item) => item.status === QUEUE_ITEM_STATES.STALE)
+        .map((item) => item.id),
     );
     if (requeueByIds(staleIds)) {
       showStalePrompt = false;
@@ -867,7 +971,9 @@
   }
 
   async function handleAddFiles(event) {
-    const newFiles = Array.from(event.target.files || []).filter((file) => file instanceof File);
+    const newFiles = Array.from(event.target.files || []).filter(
+      (file) => file instanceof File,
+    );
     if (newFiles.length === 0) return;
 
     const addedItems = createQueueItems(newFiles);
@@ -941,7 +1047,10 @@
     const content = await zip.generateAsync({ type: "blob" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(content);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, 19);
     a.download = `ultrahdr-batch-${timestamp}.zip`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 0);
@@ -972,7 +1081,10 @@
           zip.file(filename, result.blob);
         }
 
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const timestamp = new Date()
+          .toISOString()
+          .replace(/[:.]/g, "-")
+          .slice(0, 19);
         const zipBlob = await zip.generateAsync({ type: "blob" });
         const zipFile = new File([zipBlob], `ultrahdr-batch-${timestamp}.zip`, {
           type: "application/zip",
@@ -1038,11 +1150,10 @@
     emphasizeShareOut = false;
 
     rotation = 0;
-    maxContentBoost = 2.3;
+    maxContentBoostStops = 2.3;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
-    performanceMode = "auto";
     keepScreenAwake = true;
 
     notice = null;
@@ -1050,7 +1161,6 @@
     activeMobileTab = "convert";
     activeDesktopTab = "all";
     openSheet = "none";
-    isFabOpen = false;
 
     await clearQueueState();
     dispatch("reset");
@@ -1085,7 +1195,10 @@
     let mediaQuery = null;
     let handleMediaChange = null;
 
-    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function"
+    ) {
       mediaQuery = window.matchMedia("(min-width: 1024px)");
       handleMediaChange = (event) => {
         isDesktopLayout = event.matches;
@@ -1121,7 +1234,8 @@
       try {
         const persistedQueue = await loadQueueState();
         if (persistedQueue?.hasPending && (!files || files.length === 0)) {
-          queueRestoreNotice = "Previous queue could not be restored. Please re-add files.";
+          queueRestoreNotice =
+            "Previous queue could not be restored. Please re-add files.";
           setNotice(queueRestoreNotice);
         }
       } catch (e) {
@@ -1140,7 +1254,10 @@
       void releaseWakeLock();
 
       if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange,
+        );
       }
 
       if (mediaQuery && handleMediaChange) {
@@ -1197,41 +1314,39 @@
       {#if showConvertPanel}
         <div class="controls card panel convert-panel" id="panel-convert">
           <h2>Convert</h2>
-          <p class="panel-intro">Queue images, process locally, then export to other apps.</p>
+          <p class="panel-intro">
+            Queue images, process locally, then export to other apps.
+          </p>
 
           <div class="control-group" data-testid="quick-controls">
-            <label for="boost">HDR Strength (Max Content Boost)</label>
+            <label for="boost">HDR Strength (Max Content Boost Stops)</label>
             <div class="range-wrapper">
               <input
                 type="range"
                 id="boost"
-                min="1.0"
+                min="0.0"
                 max="4.0"
                 step="0.1"
-                bind:value={maxContentBoost}
+                bind:value={maxContentBoostStops}
                 on:input={handleSettingChange}
               />
-              <span class="value">{maxContentBoost.toFixed(1)}x</span>
+              <span class="value">{maxContentBoostStops.toFixed(1)} stops</span>
             </div>
           </div>
 
           <div class="control-group horizontal">
             <label for="quality">Quality</label>
             <div class="select-wrapper">
-              <select id="quality" bind:value={quality} on:change={handleSettingChange}>
+              <select
+                id="quality"
+                bind:value={quality}
+                on:change={handleSettingChange}
+              >
                 <option value={0.95}>High</option>
                 <option value={0.75}>Medium</option>
                 <option value={0.5}>Low</option>
               </select>
             </div>
-          </div>
-
-          <div class="control-group switch-group">
-            <label class="switch">
-              <input type="checkbox" checked={!stripExif} on:change={handleMetadataToggle} />
-              <span class="slider"></span>
-            </label>
-            <span class="switch-label">Keep camera metadata</span>
           </div>
 
           <div class="actions compact-actions">
@@ -1243,7 +1358,10 @@
               style="display: none;"
               on:change={handleAddFiles}
             />
-            <button class="secondary" on:click={() => document.getElementById("add-files").click()}>
+            <button
+              class="secondary"
+              on:click={() => document.getElementById("add-files").click()}
+            >
               Add Images
             </button>
             {#if queueControlVisibility !== "hidden"}
@@ -1253,7 +1371,18 @@
                 on:click={handleQueueSmartControl}
                 disabled={workflowState === WORKFLOW_STATES.PROCESSING_PAUSING}
               >
-                {queueControlVisibility === "pause" ? "Pause Queue" : "Resume Queue"}
+                {queueControlVisibility === "pause"
+                  ? "Pause Queue"
+                  : "Resume Queue"}
+              </button>
+            {/if}
+            {#if canCancelCurrent}
+              <button
+                class="secondary"
+                data-testid="cancel-current-control"
+                on:click={cancelCurrent}
+              >
+                Cancel Current
               </button>
             {/if}
           </div>
@@ -1271,15 +1400,22 @@
               {:else}
                 <div class="pipeline-header-row">
                   <p class="pipeline-title">{pipelineStatusLabel}</p>
-                  <p class="pipeline-percent">{Math.round(pipelineOverallProgress)}%</p>
+                  <p class="pipeline-percent">
+                    {Math.round(pipelineOverallProgress)}%
+                  </p>
                 </div>
 
                 {#if pipelineFileLabel}
-                  <p class="help-text pipeline-file-label">{pipelineFileLabel}</p>
+                  <p class="help-text pipeline-file-label">
+                    {pipelineFileLabel}
+                  </p>
                 {/if}
 
                 {#if pipelineFileName}
-                  <p class="help-text pipeline-file-name" data-testid="pipeline-file-name">
+                  <p
+                    class="help-text pipeline-file-name"
+                    data-testid="pipeline-file-name"
+                  >
                     Processing: {pipelineFileName}
                   </p>
                 {/if}
@@ -1293,23 +1429,74 @@
                   aria-valuemax="100"
                   aria-valuenow={Math.round(pipelineOverallProgress)}
                 >
-                  <span class="progress-fill" style={`width: ${Math.round(pipelineOverallProgress)}%`}></span>
+                  <span
+                    class="progress-fill"
+                    style={`width: ${Math.round(pipelineOverallProgress)}%`}
+                  ></span>
                 </div>
 
                 <div class="pipeline-meta-row">
                   <p class="help-text">
-                    Stage {Math.round(pipelineStageProgress)}% • {latestPipelineEvent?.stage || "pipeline"}
+                    Stage {Math.round(pipelineStageProgress)}% • {latestPipelineEvent?.stage ||
+                      "pipeline"}
                   </p>
-                  <p class="help-text">{formatMs(latestPipelineEvent?.elapsedMs)}</p>
+                  <p class="help-text">
+                    {formatMs(latestPipelineEvent?.elapsedMs)}
+                  </p>
                 </div>
 
-                {#if pipelineStatusNote}
+                {#if aiModelStatusVisible}
+                  <div class="pipeline-ai-status" data-testid="pipeline-ai-status">
+                    <div class="pipeline-ai-header-row">
+                      <p class="help-text pipeline-ai-message">
+                        {aiModelStatusMessage}
+                      </p>
+                      {#if isAiModelDownloadNote(aiModelStatusMessage)}
+                        <p class="help-text pipeline-ai-percent">
+                          {Math.round(aiModelStatusProgress)}%
+                        </p>
+                      {/if}
+                    </div>
+                    {#if isAiModelDownloadNote(aiModelStatusMessage)}
+                      <div
+                        class="progress-track"
+                        data-testid="pipeline-ai-progress"
+                        role="progressbar"
+                        aria-label="AI model progress"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow={Math.round(aiModelStatusProgress)}
+                      >
+                        <span
+                          class="progress-fill"
+                          style={`width: ${Math.round(aiModelStatusProgress)}%`}
+                        ></span>
+                      </div>
+                    {:else}
+                      <div
+                        class="pipeline-ai-spinner"
+                        data-testid="pipeline-ai-spinner"
+                        aria-hidden="true"
+                      ></div>
+                    {/if}
+                  </div>
+                {:else if pipelineStatusNote}
                   <p class="help-text">{pipelineStatusNote}</p>
+                {/if}
+
+                {#if pipelineExecutionProvider}
+                  <p class="help-text" data-testid="pipeline-execution-provider">
+                    GMNet runtime: {formatExecutionProviderLabel(
+                      pipelineExecutionProvider,
+                    )}
+                  </p>
                 {/if}
 
                 {#if latestPipelineEvent?.phase === "pipeline-complete"}
                   <p class="help-text">
-                    Slowest stage: {getSlowestStage(latestPipelineEvent.stageDurationsMs) || "n/a"}
+                    Slowest stage: {getSlowestStage(
+                      latestPipelineEvent.stageDurationsMs,
+                    ) || "n/a"}
                   </p>
                 {/if}
               {/if}
@@ -1328,13 +1515,17 @@
             <div class="stale-prompt card" data-testid="stale-reprocess-prompt">
               <p>{staleCount} result(s) were generated with older settings.</p>
               <div class="stale-actions">
-                <button class="primary small" on:click={openReprocessSheet}>Reprocess</button>
+                <button class="primary small" on:click={openReprocessSheet}
+                  >Reprocess</button
+                >
               </div>
             </div>
           {/if}
 
           {#if notice}
-            <p class="help-text notice" data-testid="notice-message">{notice}</p>
+            <p class="help-text notice" data-testid="notice-message">
+              {notice}
+            </p>
           {/if}
         </div>
       {/if}
@@ -1348,7 +1539,11 @@
             <div class="control-group">
               <span class="label">Rotation</span>
               <div class="button-group">
-                <button on:click={() => rotate(-90)} class="icon-btn" title="Rotate Left">
+                <button
+                  on:click={() => rotate(-90)}
+                  class="icon-btn"
+                  title="Rotate Left"
+                >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     fill="none"
@@ -1365,7 +1560,11 @@
                   </svg>
                   Left
                 </button>
-                <button on:click={() => rotate(90)} class="icon-btn" title="Rotate Right">
+                <button
+                  on:click={() => rotate(90)}
+                  class="icon-btn"
+                  title="Rotate Right"
+                >
                   Right
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -1388,26 +1587,23 @@
 
             <div class="control-group switch-group">
               <label class="switch">
-                <input type="checkbox" bind:checked={discardGainMap} on:change={handleSettingChange} />
+                <input
+                  type="checkbox"
+                  bind:checked={discardGainMap}
+                  on:change={handleSettingChange}
+                />
                 <span class="slider"></span>
               </label>
               <span class="switch-label">Discard existing gain map(s)</span>
             </div>
 
-            <div class="control-group horizontal">
-              <label for="performance-mode">Performance mode</label>
-              <div class="select-wrapper">
-                <select id="performance-mode" bind:value={performanceMode} on:change={handleSettingChange}>
-                  <option value="auto">Auto</option>
-                  <option value="faster">Faster</option>
-                  <option value="best-quality">Best Quality</option>
-                </select>
-              </div>
-            </div>
-
             <div class="control-group switch-group">
               <label class="switch">
-                <input type="checkbox" bind:checked={stripExif} on:change={handleSettingChange} />
+                <input
+                  type="checkbox"
+                  bind:checked={stripExif}
+                  on:change={handleSettingChange}
+                />
                 <span class="slider"></span>
               </label>
               <span class="switch-label">Strip EXIF data</span>
@@ -1419,10 +1615,11 @@
                   <input type="checkbox" bind:checked={keepScreenAwake} />
                   <span class="slider"></span>
                 </label>
-                <span class="switch-label">Keep screen awake while processing</span>
+                <span class="switch-label"
+                  >Keep screen awake while processing</span
+                >
               </div>
             {/if}
-
           </div>
         </div>
       {/if}
@@ -1437,14 +1634,19 @@
       {/if}
 
       {#if showResultsPanel}
-        <div class="results-container" class:loading={processing} id="panel-results">
+        <div
+          class="results-container"
+          class:loading={processing}
+          id="panel-results"
+        >
           {#if processing && results.length === 0}
             <div class="loading-overlay">
               <div class="spinner"></div>
               <p>
                 Processing... {Math.round(pipelineOverallProgress)}%
                 {#if latestPipelineEvent}
-                  ({pipelineStatusLabel}, {Math.round(pipelineStageProgress)}% stage, {formatMs(latestPipelineEvent.elapsedMs)})
+                  ({pipelineStatusLabel}, {Math.round(pipelineStageProgress)}%
+                  stage, {formatMs(latestPipelineEvent.elapsedMs)})
                 {/if}
               </p>
             </div>
@@ -1456,7 +1658,9 @@
                 <h3>Results</h3>
                 <div class="selection-controls compact">
                   <button class="text-btn" on:click={toggleSelectionSet}>
-                    {selectionToggleState === "all" ? "Clear Selection" : "Select All"}
+                    {selectionToggleState === "all"
+                      ? "Clear Selection"
+                      : "Select All"}
                   </button>
                   {#if isDesktopLayout}
                     <button
@@ -1471,7 +1675,9 @@
                     <button
                       class="primary small"
                       on:click={openExportSheet}
-                      data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
+                      data-testid={emphasizeShareOut
+                        ? "share-out-cta"
+                        : undefined}
                     >
                       Export ({selectedIndices.size})
                     </button>
@@ -1519,8 +1725,10 @@
                   <div
                     class="result-card card"
                     class:selected={selectedIndices.has(i)}
-                    class:stale={getQueueItemStatus(result.queueId) === QUEUE_ITEM_STATES.STALE}
-                    class:failed={getQueueItemStatus(result.queueId) === QUEUE_ITEM_STATES.FAILED}
+                    class:stale={getQueueItemStatus(result.queueId) ===
+                      QUEUE_ITEM_STATES.STALE}
+                    class:failed={getQueueItemStatus(result.queueId) ===
+                      QUEUE_ITEM_STATES.FAILED}
                     on:click={() => toggleSelection(i)}
                     role="button"
                     tabindex="0"
@@ -1569,8 +1777,12 @@
                     </div>
                     <div class="info">
                       <p class="filename">{result.originalName}</p>
-                      <p class="size">{(result.size / 1024 / 1024).toFixed(2)} MB</p>
-                      <p class="status-tag">{getQueueItemStatus(result.queueId)}</p>
+                      <p class="size">
+                        {(result.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                      <p class="status-tag">
+                        {getQueueItemStatus(result.queueId)}
+                      </p>
                     </div>
                   </div>
                 {/each}
@@ -1592,7 +1804,11 @@
 
   {#if !isDesktopLayout && activeMobileTab === "results" && results.length > 0}
     <div class="mobile-action-bar" data-testid="mobile-action-bar">
-      <button class="secondary" data-testid="results-discard-all" on:click={() => reset()}>
+      <button
+        class="secondary"
+        data-testid="results-discard-all"
+        on:click={() => reset()}
+      >
         Discard all
       </button>
       <button
@@ -1605,37 +1821,37 @@
     </div>
   {/if}
 
-  <div class="fab-layer">
-    {#if isFabOpen}
-      <div class="fab-menu">
-        {#if !isDesktopLayout}
-          <button class="secondary small" on:click={openSettingsSurface}>Settings</button>
-        {/if}
-        {#if canCancelCurrent}
-          <button class="secondary small" on:click={cancelCurrentFromFab}>Cancel Current</button>
-        {/if}
-      </div>
-    {/if}
-    <button
-      class="floating-gear"
-      type="button"
-      data-testid="floating-gear"
-      aria-expanded={isFabOpen}
-      aria-label="Open actions menu"
-      on:click={toggleFab}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M19.43 12.98c.04-.32.07-.65.07-.98s-.03-.66-.08-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.03 7.03 0 0 0-1.7-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.62.24-1.19.56-1.7.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.05.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.31.62.22l2.49-1c.51.42 1.08.74 1.7.98l.38 2.65c.04.24.25.42.49.42h4c.24 0 .45-.18.49-.42l.38-2.65c.62-.24 1.19-.56 1.7-.98l2.49 1c.23.09.49 0 .62-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"
-        />
-      </svg>
-      <span class="sr-only">Open actions menu</span>
-    </button>
-  </div>
+  {#if !showSettingsPanel && openSheet !== "settings"}
+    <div class="fab-layer">
+      <button
+        class="floating-gear"
+        type="button"
+        data-testid="floating-gear"
+        aria-label="Open settings"
+        on:click={openSettingsSurface}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            fill="currentColor"
+            d="M19.43 12.98c.04-.32.07-.65.07-.98s-.03-.66-.08-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.03 7.03 0 0 0-1.7-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.62.24-1.19.56-1.7.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.05.32-.08.65-.08.98s.03.66.08.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.31.62.22l2.49-1c.51.42 1.08.74 1.7.98l.38 2.65c.04.24.25.42.49.42h4c.24 0 .45-.18.49-.42l.38-2.65c.62-.24 1.19-.56 1.7-.98l2.49 1c.23.09.49 0 .62-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z"
+          />
+        </svg>
+        <span class="sr-only">Open settings</span>
+      </button>
+    </div>
+  {/if}
 
   {#if openSheet !== "none"}
-    <button class="sheet-backdrop" type="button" aria-label="Close panel" on:click={closeSheet}></button>
+    <button
+      class="sheet-backdrop"
+      type="button"
+      aria-label="Close panel"
+      on:click={closeSheet}
+    ></button>
   {/if}
 
   {#if openSheet === "settings" && !isDesktopLayout}
@@ -1648,30 +1864,23 @@
       <div data-testid="advanced-settings">
         <div class="control-group switch-group">
           <label class="switch">
-            <input type="checkbox" bind:checked={discardGainMap} on:change={handleSettingChange} />
+            <input
+              type="checkbox"
+              bind:checked={discardGainMap}
+              on:change={handleSettingChange}
+            />
             <span class="slider"></span>
           </label>
           <span class="switch-label">Discard existing gain map(s)</span>
         </div>
 
-        <div class="control-group horizontal">
-          <label for="performance-mode-mobile">Performance mode</label>
-          <div class="select-wrapper">
-            <select
-              id="performance-mode-mobile"
-              bind:value={performanceMode}
-              on:change={handleSettingChange}
-            >
-              <option value="auto">Auto</option>
-              <option value="faster">Faster</option>
-              <option value="best-quality">Best Quality</option>
-            </select>
-          </div>
-        </div>
-
         <div class="control-group switch-group">
           <label class="switch">
-            <input type="checkbox" bind:checked={stripExif} on:change={handleSettingChange} />
+            <input
+              type="checkbox"
+              bind:checked={stripExif}
+              on:change={handleSettingChange}
+            />
             <span class="slider"></span>
           </label>
           <span class="switch-label">Strip EXIF data</span>
@@ -1686,7 +1895,6 @@
             <span class="switch-label">Keep screen awake while processing</span>
           </div>
         {/if}
-
       </div>
     </div>
   {/if}
@@ -1717,19 +1925,30 @@
               Download as separate files
             </button>
             <span class="download-tooltip-anchor">
-              <button class="info-icon" type="button" aria-label="About separate file downloads">i</button>
+              <button
+                class="info-icon"
+                type="button"
+                aria-label="About separate file downloads">i</button
+              >
               <span class="download-tooltip" role="tooltip">
-                Not all browsers allow downloading multiple separate files simultaneously.
+                Not all browsers allow downloading multiple separate files
+                simultaneously.
               </span>
             </span>
           </div>
         {:else}
-          <button class="primary" on:click={() => downloadSelected(false)} disabled={selectedIndices.size === 0}>
+          <button
+            class="primary"
+            on:click={() => downloadSelected(false)}
+            disabled={selectedIndices.size === 0}
+          >
             Download
           </button>
         {/if}
         {#if selectedIndices.size > 1}
-          <button class="primary" on:click={() => downloadSelected(true)}>Download as single ZIP file</button>
+          <button class="primary" on:click={() => downloadSelected(true)}
+            >Download as single ZIP file</button
+          >
         {/if}
         {#if hasShareCapability}
           <button
@@ -1753,9 +1972,15 @@
         <button class="text-btn" on:click={closeSheet}>Done</button>
       </div>
       <div class="sheet-actions">
-        <button class="primary" on:click={reprocessSelectedStale}>Reprocess Selected</button>
-        <button class="secondary" on:click={reprocessAllStale}>Reprocess All Stale</button>
-        <button class="text-btn" on:click={keepCurrentResults}>Keep Current Results</button>
+        <button class="primary" on:click={reprocessSelectedStale}
+          >Reprocess Selected</button
+        >
+        <button class="secondary" on:click={reprocessAllStale}
+          >Reprocess All Stale</button
+        >
+        <button class="text-btn" on:click={keepCurrentResults}
+          >Keep Current Results</button
+        >
       </div>
     </div>
   {/if}
@@ -1919,7 +2144,8 @@
   }
 
   input:focus + .slider {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 45%, transparent);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--primary-color) 45%, transparent);
   }
 
   input:checked + .slider:before {
@@ -1988,7 +2214,8 @@
   }
 
   .value {
-    font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Liberation Mono", monospace;
+    font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
+      "Liberation Mono", monospace;
     font-size: 0.95rem;
     min-width: 3ch;
   }
@@ -2107,6 +2334,36 @@
     word-break: break-word;
   }
 
+  .pipeline-ai-status {
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .pipeline-ai-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
+  .pipeline-ai-message {
+    color: var(--text-color);
+  }
+
+  .pipeline-ai-percent {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pipeline-ai-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+    border-left-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+
   .progress-track {
     width: 100%;
     height: 8px;
@@ -2119,7 +2376,11 @@
     display: block;
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, var(--primary-color), color-mix(in srgb, var(--primary-color) 70%, #ffffff));
+    background: linear-gradient(
+      90deg,
+      var(--primary-color),
+      color-mix(in srgb, var(--primary-color) 70%, #ffffff)
+    );
     transition: width 0.2s ease;
   }
 
@@ -2281,7 +2542,9 @@
     position: relative;
     cursor: pointer;
     border: 1px solid transparent;
-    transition: transform 0.15s ease, border-color 0.15s ease;
+    transition:
+      transform 0.15s ease,
+      border-color 0.15s ease;
   }
 
   .result-card:hover {
@@ -2425,17 +2688,6 @@
     z-index: 25;
   }
 
-  .fab-menu {
-    display: grid;
-    gap: 0.45rem;
-    padding: 0.6rem;
-    background: var(--surface-raised);
-    border: 1px solid var(--border-subtle);
-    border-radius: 12px;
-    box-shadow: var(--shadow-lg);
-    min-width: 120px;
-  }
-
   .floating-gear {
     width: 56px;
     height: 56px;
@@ -2554,7 +2806,9 @@
     opacity: 0;
     pointer-events: none;
     transform: translateY(4px);
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
     z-index: 5;
   }
 

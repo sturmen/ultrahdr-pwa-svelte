@@ -177,7 +177,7 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.js',
       injectManifest: {
-        globIgnores: ['**/assets/ultrahdr_wasm.js', '**/assets/ultrahdr_wasm.wasm', '**/assets/libheif.wasm']
+        globIgnores: ['**/assets/ultrahdr_wasm.js', '**/assets/ultrahdr_wasm.wasm', '**/assets/libheif.wasm', '**/assets/ort-*.wasm']
       }
     }),
     viteStaticCopy({
@@ -185,12 +185,23 @@ export default defineConfig({
         {
           src: 'node_modules/libheif-js/libheif-wasm/libheif.wasm',
           dest: 'assets'
+        },
+        {
+          src: 'node_modules/onnxruntime-web/dist/*.wasm',
+          dest: 'assets'
+        },
+        {
+          src: 'public/models/*',
+          dest: 'models'
         }
       ]
     })
   ],
   optimizeDeps: {
     exclude: ['@monogrid/gainmap-js/libultrahdr']
+  },
+  worker: {
+    format: 'es'
   },
   server: {
     headers: {

@@ -12,6 +12,9 @@ export default defineConfig({
   },
   resolve: {
     conditions: ['browser'],
+    alias: {
+      'virtual:pwa-register': '/src/test/mocks/pwa-register.js',
+    },
   },
   plugins: [
     svelte({
@@ -20,6 +23,9 @@ export default defineConfig({
       },
     }),
   ],
+  worker: {
+    format: 'es',
+  },
   test: {
     globals: true,
     environment: 'jsdom',

@@ -2,6 +2,8 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   createDefaultPwaUpdateState,
   createPwaUpdateCoordinator,
@@ -168,5 +170,14 @@ describe('pwa updater coordinator', () => {
     expect(updateSWMock).toHaveBeenCalledWith(true);
 
     coordinator.dispose();
+  });
+
+  it('uses literal virtual:pwa-register import so Vite can transform it', () => {
+    const sourcePath = path.resolve(process.cwd(), 'src/lib/pwa-updater.js');
+    const source = fs.readFileSync(sourcePath, 'utf8');
+
+    expect(source).toContain("import('virtual:pwa-register')");
+    expect(source).not.toContain("import(moduleId)");
+    expect(source).not.toContain("'virtual:' + 'pwa-register'");
   });
 });
