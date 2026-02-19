@@ -197,7 +197,7 @@ describe('generateGainMapData function', () => {
     }
   });
 
-  it('keeps channel gains bounded for highly saturated colors in v2', () => {
+  it('generates monochrome gain values for highly saturated colors in v2', () => {
     const imageData = new ImageData(
       new Uint8ClampedArray([240, 40, 40, 255]),
       1,
@@ -212,9 +212,9 @@ describe('generateGainMapData function', () => {
     const r = result.gainMapImageData.data[0];
     const g = result.gainMapImageData.data[1];
     const b = result.gainMapImageData.data[2];
-    expect(r).toBeGreaterThanOrEqual(g);
-    expect(r).toBeGreaterThanOrEqual(b);
-    expect(Math.min(g, b)).toBeGreaterThan(0);
+    expect(r).toBe(g);
+    expect(g).toBe(b);
+    expect(r).toBeGreaterThan(0);
   });
 
   it('should produce correct metadata structure', () => {

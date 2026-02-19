@@ -1,7 +1,7 @@
 import { processHeic } from './heic-processing.js';
 import { createPipelineTelemetry } from './pipeline-telemetry.js';
 import { processTiff } from './tiff-processing.js';
-import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, getStatus, isUhdrImage } from './ultrahdr-wasm.js';
+import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, isUhdrImage } from './ultrahdr-wasm.js';
 import {
     insertExifSegment,
     stripExifSegments,
@@ -145,22 +145,6 @@ export function getConstrainedDimensions(width, height, maxMegapixels) {
 }
 
 /**
- * Check if WASM encoder is available
- * @returns {Promise<boolean>}
- */
-export async function isWasmAvailable() {
-    return await isAvailable();
-}
-
-/**
- * Get WASM encoder status
- * @returns {Object}
- */
-export function getWasmStatus() {
-    return getStatus();
-}
-
-/**
  * Ensure WASM encoder is loaded
  * @returns {Promise<void>}
  */
@@ -273,7 +257,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     if (mergedOptions.rotation === 0) {
                         console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
                         const blob = await telemetry.runStage('finalize-preserved', async () =>
-                            finalizeUltraHDR({}, fileBuffer, new Uint8Array(0), mergedOptions.stripExif)
+                            finalizeUltraHDR(fileBuffer, mergedOptions.stripExif)
                         );
                         telemetry.complete({ outputBytes: blob.size, mode: 'preserve' });
                         return blob;
@@ -281,7 +265,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
                     console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
                     const blob = await telemetry.runStage('rotate-preserved-ultrahdr', async () =>
-                        processUhdrWithRotation(file, fileBuffer, mergedOptions, telemetry, sourceExifBytes)
+                        processUhdrWithRotation(fileBuffer, mergedOptions, telemetry, sourceExifBytes)
                     );
                     telemetry.complete({ outputBytes: blob.size, mode: 'preserve-with-rotation' });
                     return blob;
@@ -334,11 +318,11 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                 }
             }
 
-            const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
+            const { sdr } = await telemetry.runStage('compress-components', async () =>
                 compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes)
             );
             const blob = await telemetry.runStage('finalize-output', async () =>
-                finalizeUltraHDR(metadata, sdr, gainMap, mergedOptions.stripExif)
+                finalizeUltraHDR(sdr, mergedOptions.stripExif)
             );
 
             telemetry.complete({ outputBytes: blob.size, mode: 'pre-decoded-components' });
@@ -390,7 +374,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         throwIfAborted(mergedOptions.abortSignal);
 
         // Generate gain map data
-        const { gainMapImageData, metadata } = await telemetry.runStage('generate-gain-map', async () =>
+        const { gainMapImageData } = await telemetry.runStage('generate-gain-map', async () =>
             generateGainMapData(gainMapSourceImageData, {
                 ...mergedOptions,
                 onStageProgress: (stageProgress, note) => {
@@ -402,14 +386,14 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         throwIfAborted(mergedOptions.abortSignal);
 
         // Compress and encode to UltraHDR
-        const { sdr, gainMap } = await telemetry.runStage('compress-components', async () =>
-            compressImages(workingImageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes)
+        const { sdr } = await telemetry.runStage('compress-components', async () =>
+            compressImages(workingImageData, gainMapImageData, mergedOptions, null, telemetry, sourceExifBytes)
         );
         console.log('[Process] Compression complete');
 
         // Finalize UltraHDR
         const blob = await telemetry.runStage('finalize-output', async () =>
-            finalizeUltraHDR(metadata, sdr, gainMap, mergedOptions.stripExif)
+            finalizeUltraHDR(sdr, mergedOptions.stripExif)
         );
         console.log('[Process] Processing complete, returning Blob');
 
@@ -425,12 +409,11 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
  * Process an UltraHDR JPEG with rotation, preserving the original gain map.
  * Extracts compressed base/gain-map components and re-encodes once with the
  * encoder's built-in rotation effect and original gain-map metadata.
- * @param {File} file - The input file
  * @param {Uint8Array} fileBuffer - The raw file bytes
  * @param {Object} options - Processing options (rotation, quality, stripExif)
  * @returns {Promise<Blob>} - The rotated UltraHDR JPEG
  */
-async function processUhdrWithRotation(file, fileBuffer, options, telemetry = null, sourceExifBytes = null) {
+async function processUhdrWithRotation(fileBuffer, options, telemetry = null, sourceExifBytes = null) {
     const decoder = new UHDRDecoder();
     if (telemetry) {
         await telemetry.runStage('rotation-init-decoder', async () => decoder.init());
@@ -476,7 +459,7 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
             ? await telemetry.runStage('rotation-decode-gain-map-image', async () => jpegBytesToImageData(gainMapJpegBytes))
             : await jpegBytesToImageData(gainMapJpegBytes);
 
-        const { sdr, gainMap } = telemetry
+        const { sdr } = telemetry
             ? await telemetry.runStage('rotation-reencode-components', async () =>
                 compressImages(
                     baseImageData,
@@ -497,7 +480,7 @@ async function processUhdrWithRotation(file, fileBuffer, options, telemetry = nu
             );
 
         // 3. Finalize (handle EXIF)
-        return await finalizeUltraHDR({}, sdr, gainMap, options.stripExif);
+        return await finalizeUltraHDR(sdr, options.stripExif);
     } finally {
         decoder.destroy();
     }
@@ -555,11 +538,8 @@ async function loadImageData(dataUrl) {
     let canvas = document.createElement('canvas');
     let ctx = canvas.getContext('2d');
 
-    let width = img.width;
-    let height = img.height;
-
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = img.width;
+    canvas.height = img.height;
     ctx.drawImage(img, 0, 0);
 
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -567,10 +547,7 @@ async function loadImageData(dataUrl) {
     // Cleanup
     canvas.width = 1;
     canvas.height = 1;
-    canvas = null;
-    ctx = null;
-
-    return { imageData, width: canvas?.width || width, height: canvas?.height || height };
+    return { imageData };
 }
 
 async function resizeImageData(imageData, targetWidth, targetHeight) {
@@ -873,9 +850,7 @@ export function generateGainMapData(imageData, options = {}) {
         return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     };
 
-    const linR = new Float32Array(pixelCount);
-    const linG = new Float32Array(pixelCount);
-    const linB = new Float32Array(pixelCount);
+    const maxLinearChannel = new Float32Array(pixelCount);
     const luminance = new Float32Array(pixelCount);
     const reportInterval = Math.max(2048, Math.floor(pixelCount / 24));
 
@@ -889,9 +864,7 @@ export function generateGainMapData(imageData, options = {}) {
         const r = toLinear(rgba[idx]);
         const g = toLinear(rgba[idx + 1]);
         const b = toLinear(rgba[idx + 2]);
-        linR[i] = r;
-        linG[i] = g;
-        linB[i] = b;
+        maxLinearChannel[i] = Math.max(r, g, b);
         luminance[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
         if (i % reportInterval === 0 || i === pixelCount - 1) {
@@ -921,11 +894,9 @@ export function generateGainMapData(imageData, options = {}) {
     const globalAvgLum = Math.exp(logSum / pixelCount);
 
     const [medianLum, p75Lum] = estimatePercentiles(luminance, [0.5, 0.75]);
-    const toneForward = acesHillForward;
-    const toneInverse = acesHillInverse;
-    const acesAt1 = toneForward(1.0);
+    const acesAt1 = acesHillForward(1.0);
     const medianNorm = clamp01(medianLum);
-    const medianSceneLinear = toneInverse(medianNorm * acesAt1);
+    const medianSceneLinear = acesHillInverse(medianNorm * acesAt1);
     const medianBaseBoost = medianLum > logDelta ? medianSceneLinear / medianLum : 1.0;
     const medianHighlightWeight = Math.pow(medianNorm, highlightExponent);
     const medianBaseScale = medianBaseBoost > 1.0
@@ -946,20 +917,19 @@ export function generateGainMapData(imageData, options = {}) {
             throwIfAborted(options?.abortSignal);
         }
         const lum = luminance[i];
-        const lumForAnalysis = lum;
         const idx = i * 4;
 
         const adaptedAvg = localAdaptStrength > 0
             ? globalAvgLum * (1 - localAdaptStrength) + localLum[i] * localAdaptStrength
             : globalAvgLum;
-        const adaptRatio = (lumForAnalysis + logDelta) / (adaptedAvg + logDelta);
+        const adaptRatio = (lum + logDelta) / (adaptedAvg + logDelta);
 
         const sdrNorm = clamp01(lum);
         const acesInput = sdrNorm * acesAt1;
-        const sceneLinear = toneInverse(acesInput);
+        const sceneLinear = acesHillInverse(acesInput);
         const baseBoost = lum > logDelta ? sceneLinear / lum : 1.0;
 
-        const lumNorm = clamp01(lumForAnalysis);
+        const lumNorm = clamp01(lum);
         const highlightWeight = Math.pow(Math.min(1, lumNorm), highlightExponent);
         const localBoostMod = Math.pow(
             Math.max(0.6, adaptRatio),
@@ -971,9 +941,8 @@ export function generateGainMapData(imageData, options = {}) {
 
         let rawBoost = 1.0 + (maxContentBoost - 1.0) * highlightWeight * localBoostMod * baseScale;
 
-        const maxChannel = Math.max(linR[i], linG[i], linB[i]);
-        const nearClip = smoothstep(0.96, 0.995, maxChannel);
-        const localContrast = Math.abs(lumForAnalysis - localDetailLum[i]);
+        const nearClip = smoothstep(0.96, 0.995, maxLinearChannel[i]);
+        const localContrast = Math.abs(lum - localDetailLum[i]);
         const plateau = 1.0 - smoothstep(0.01, 0.08, localContrast);
         const clipMask = nearClip * plateau;
         if (clipMask > 0) {
@@ -981,7 +950,7 @@ export function generateGainMapData(imageData, options = {}) {
             rawBoost = Math.max(rawBoost, clipBoost);
         }
 
-        const highlightShare = smoothstep(Math.max(0, Math.min(1, p75Lum)), 1.0, lumForAnalysis);
+        const highlightShare = smoothstep(Math.max(0, Math.min(1, p75Lum)), 1.0, lum);
         const midtoneScale = 1.0 - (1.0 - midtoneGuard) * (1.0 - highlightShare);
         rawBoost = 1.0 + (rawBoost - 1.0) * midtoneScale;
         if (midtoneGuard < 1.0 && highlightShare > 0) {
@@ -989,39 +958,19 @@ export function generateGainMapData(imageData, options = {}) {
             rawBoost = rawBoost + recovered * (maxContentBoost - rawBoost);
         }
 
-        const lowLumaWeight = smoothstep(0.03, 0.12, lumForAnalysis);
+        const lowLumaWeight = smoothstep(0.03, 0.12, lum);
         let boost = 1.0 + (rawBoost - 1.0) * lowLumaWeight;
 
         boost = Math.max(1.0, Math.min(maxContentBoost, boost));
 
-        const satBoostStrength = brightnessIntent === 'vibrant' ? 0.14 : brightnessIntent === 'balanced' ? 0.1 : 0.06;
-        const boostRatio = clamp01((boost - 1.0) / Math.max(1e-6, maxContentBoost - 1.0));
-        const satBoost = 1.0 + satBoostStrength * boostRatio;
+        // Generated maps are intentionally monochrome: a single luminance-derived
+        // gain preserves base-image color ratios and avoids synthetic color shifts.
+        const encodedLinear = canEncodeGain ? clamp01(Math.log2(boost) / log2MaxBoost) : 0;
+        const encoded = Math.round(encodedLinear * 255);
 
-        const lumSafe = Math.max(lum, logDelta);
-        const rRatio = linR[i] / lumSafe;
-        const gRatio = linG[i] / lumSafe;
-        const bRatio = linB[i] / lumSafe;
-        const rRatSat = 1.0 + (rRatio - 1.0) * satBoost;
-        const gRatSat = 1.0 + (gRatio - 1.0) * satBoost;
-        const bRatSat = 1.0 + (bRatio - 1.0) * satBoost;
-        const minChannelRatio = 0.65;
-        const minChannelBoost = 1.0 + (boost - 1.0) * 0.35;
-
-        const rBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, rRatSat))));
-        const gBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, gRatSat))));
-        const bBoost = Math.max(1.0, Math.min(maxContentBoost, Math.max(minChannelBoost, boost * Math.max(minChannelRatio, bRatSat))));
-
-        const rLinearEncoded = canEncodeGain ? clamp01(Math.log2(rBoost) / log2MaxBoost) : 0;
-        const gLinearEncoded = canEncodeGain ? clamp01(Math.log2(gBoost) / log2MaxBoost) : 0;
-        const bLinearEncoded = canEncodeGain ? clamp01(Math.log2(bBoost) / log2MaxBoost) : 0;
-        const rEncoded = rLinearEncoded;
-        const gEncoded = gLinearEncoded;
-        const bEncoded = bLinearEncoded;
-
-        gainMapData[idx] = Math.round(rEncoded * 255);
-        gainMapData[idx + 1] = Math.round(gEncoded * 255);
-        gainMapData[idx + 2] = Math.round(bEncoded * 255);
+        gainMapData[idx] = encoded;
+        gainMapData[idx + 1] = encoded;
+        gainMapData[idx + 2] = encoded;
         gainMapData[idx + 3] = 255;
 
         if (i % reportInterval === 0 || i === pixelCount - 1) {
@@ -1280,13 +1229,11 @@ function readBlobAsDataURL(blob) {
  * Embeds metadata and finalizes the UltraHDR JPEG.
  * With WASM encoder, the metadata is already embedded in the JPEG.
  * This function now handles EXIF preservation only.
- * @param {Object} metadata
  * @param {Uint8Array} sdr - The UltraHDR JPEG from WASM encoder
- * @param {Uint8Array} gainMap - Unused (kept for API compatibility)
  * @param {boolean} stripExif
  * @returns {Promise<Blob>}
  */
-async function finalizeUltraHDR(metadata, sdr, gainMap, stripExif) {
+async function finalizeUltraHDR(sdr, stripExif) {
     // The WASM encoder embeds metadata directly in the JPEG
     // We only strip metadata when requested.
     let finalJpeg = sdr;
