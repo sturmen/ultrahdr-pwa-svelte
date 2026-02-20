@@ -27,6 +27,7 @@
   let runtimeInitSteps = createRuntimeInitSteps();
   let runtimeInitFailure = null;
   let runtimeInitRunId = 0;
+  let runtimeInitExecutionProvider = null;
   let appDisposed = false;
 
   function createRuntimeInitSteps() {
@@ -90,6 +91,14 @@
     );
   }
 
+  function normalizeExecutionProvider(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized || null;
+  }
+
   function applyRuntimeProgressEvent(event) {
     if (!event || typeof event !== "object") {
       return;
@@ -147,10 +156,11 @@
     const runId = ++runtimeInitRunId;
     runtimeInitState = "running";
     runtimeInitFailure = null;
+    runtimeInitExecutionProvider = null;
     runtimeInitSteps = createRuntimeInitSteps();
 
     try {
-      await initializeRuntime({
+      const runtimeResult = await initializeRuntime({
         forceRetry,
         onProgress: (event) => {
           if (appDisposed || runId !== runtimeInitRunId) {
@@ -162,6 +172,9 @@
       if (appDisposed || runId !== runtimeInitRunId) {
         return false;
       }
+      runtimeInitExecutionProvider = normalizeExecutionProvider(
+        runtimeResult?.resolvedExecutionProvider,
+      );
       runtimeInitState = "ready";
       return true;
     } catch (error) {
@@ -293,6 +306,9 @@
   <section class="content-area" aria-live="polite">
     {#if runtimeInitState === "ready"}
       <span class="runtime-ready-marker" data-testid="runtime-init-ready">Runtime ready</span>
+      <span class="runtime-ready-marker" data-testid="runtime-init-provider">
+        Runtime provider: {runtimeInitExecutionProvider || "unknown"}
+      </span>
     {/if}
     {#if runtimeInitState !== "ready"}
       <InitializationGate

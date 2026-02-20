@@ -196,12 +196,19 @@ describe('processing worker wrapper', () => {
         });
       });
       queueMicrotask(() => {
-        worker.emit('message', { data: { type: 'ready' } });
+        worker.emit('message', {
+          data: {
+            type: 'ready',
+            runtime: {
+              resolvedExecutionProvider: 'webgl',
+            },
+          },
+        });
       });
     };
 
     const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime({ onProgress });
+    const result = await initializeRuntime({ onProgress });
 
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -213,6 +220,12 @@ describe('processing worker wrapper', () => {
       expect.objectContaining({
         stepId: 'webgpu-check',
         status: 'passed',
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        ready: true,
+        resolvedExecutionProvider: 'webgl',
       }),
     );
   });
@@ -234,6 +247,12 @@ describe('processing worker wrapper', () => {
               userMessage: 'WebGPU is unavailable in this environment.',
               diagnostics: {
                 hasNavigatorGpu: false,
+                attemptFailures: [
+                  {
+                    provider: 'webgpu',
+                    errorCode: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
+                  },
+                ],
               },
             },
           },
@@ -248,6 +267,7 @@ describe('processing worker wrapper', () => {
       stepId: 'webgpu-check',
       diagnostics: expect.objectContaining({
         hasNavigatorGpu: false,
+        attemptFailures: expect.any(Array),
       }),
     });
   });

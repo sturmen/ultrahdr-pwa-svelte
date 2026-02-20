@@ -61,11 +61,21 @@ describe('InitializationGate', () => {
         failure: {
           stepId: 'webgpu-check',
           stepLabel: 'Check WebGPU availability',
-          errorCode: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
-          userMessage: 'WebGPU is unavailable in this environment.',
+          errorCode: 'RUNTIME_INIT_PROVIDER_FALLBACK_EXHAUSTED',
+          userMessage: 'WebGPU startup failed; fallback to WebGL also failed.',
           diagnostics: {
             userAgent: 'TestAgent/1.0',
             hasNavigatorGpu: false,
+            attemptFailures: [
+              {
+                provider: 'webgpu',
+                errorCode: 'RUNTIME_INIT_SMOKE_INFERENCE_FAILED',
+              },
+              {
+                provider: 'webgl',
+                errorCode: 'RUNTIME_INIT_SMOKE_INFERENCE_FAILED',
+              },
+            ],
           },
         },
       },
@@ -74,13 +84,13 @@ describe('InitializationGate', () => {
     const failureCard = screen.getByTestId('runtime-init-failure');
     expect(failureCard).toBeInTheDocument();
     expect(failureCard).toHaveTextContent(/check webgpu availability/i);
-    expect(failureCard).toHaveTextContent(/runtime_init_webgpu_unavailable/i);
-    expect(failureCard).toHaveTextContent(/webgpu is unavailable/i);
+    expect(failureCard).toHaveTextContent(/runtime_init_provider_fallback_exhausted/i);
+    expect(failureCard).toHaveTextContent(/fallback to webgl/i);
 
     const detailsSummary = screen.getByTestId('runtime-init-diagnostics-summary');
     await fireEvent.click(detailsSummary);
     expect(screen.getByTestId('runtime-init-diagnostics-json')).toHaveTextContent(
-      /hasNavigatorGpu/i,
+      /attemptFailures/i,
     );
   });
 

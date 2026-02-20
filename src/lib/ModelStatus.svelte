@@ -39,6 +39,9 @@
     if (provider === 'webgpu') {
       return 'WebGPU';
     }
+    if (provider === 'webgl') {
+      return 'WebGL';
+    }
     if (provider === 'wasm') {
       return 'WASM';
     }

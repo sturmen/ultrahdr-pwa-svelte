@@ -8,6 +8,7 @@ const chromiumWebGpuArgs = [
 
 export default defineConfig({
     testDir: './tests/e2e',
+    testIgnore: ['**/android-real-webgpu.spec.js'],
     fullyParallel: false,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
@@ -30,17 +31,17 @@ export default defineConfig({
                     args: chromiumWebGpuArgs,
                 },
             },
-            testIgnore: '**/mobile.spec.js',
+            testIgnore: ['**/mobile.spec.js', '**/android-real-webgpu.spec.js'],
         },
         {
             name: 'firefox',
             use: { ...devices['Desktop Firefox'] },
-            testIgnore: '**/mobile.spec.js',
+            testIgnore: ['**/mobile.spec.js', '**/android-real-webgpu.spec.js'],
         },
         {
             name: 'webkit',
             use: { ...devices['Desktop Safari'] },
-            testIgnore: '**/mobile.spec.js',
+            testIgnore: ['**/mobile.spec.js', '**/android-real-webgpu.spec.js'],
         },
         {
             name: 'mobile-webkit-ios',

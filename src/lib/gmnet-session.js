@@ -1,7 +1,12 @@
-import * as ort from 'onnxruntime-web/webgpu';
+import * as ortWebGpu from 'onnxruntime-web/webgpu';
 import { createCanvasWithContext as createRuntimeCanvasWithContext } from './canvas-runtime.js';
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
+export const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
+export const SUPPORTED_GMNET_EXECUTION_PROVIDERS = Object.freeze([
+    REQUIRED_GMNET_EXECUTION_PROVIDER,
+    GMNET_FALLBACK_EXECUTION_PROVIDER,
+]);
 
 function resolveOrtAssetBasePath() {
     const baseUrl = import.meta.env.BASE_URL || '/';
@@ -20,8 +25,20 @@ function isWindowsRuntime(runtime = globalThis) {
     return userAgent.includes('windows') || platform.startsWith('win');
 }
 
+function isWebKitRuntime(runtime = globalThis) {
+    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+    if (!userAgent.includes('applewebkit')) {
+        return false;
+    }
+    return !userAgent.includes('chrome')
+        && !userAgent.includes('chromium')
+        && !userAgent.includes('edg/');
+}
+
 const DEFAULT_WASM_THREAD_COUNT = 1;
 const MAX_WASM_THREAD_COUNT = 4;
+let ortAllModulePromise = null;
+const configuredOrtModules = new WeakSet();
 
 function supportsWasmThreading(runtime = globalThis) {
     const hasIsolatedContext = runtime?.crossOriginIsolated === true;
@@ -38,6 +55,10 @@ function resolveHardwareConcurrency(runtime = globalThis) {
 }
 
 function resolveWasmThreadCount(runtime = globalThis) {
+    // WebKit workers are still unreliable with threaded ORT startup in our startup-gate path.
+    if (isWebKitRuntime(runtime)) {
+        return DEFAULT_WASM_THREAD_COUNT;
+    }
     if (!supportsWasmThreading(runtime)) {
         return DEFAULT_WASM_THREAD_COUNT;
     }
@@ -46,10 +67,10 @@ function resolveWasmThreadCount(runtime = globalThis) {
     return Math.max(2, boundedCount);
 }
 
-function resolveCpuCoreUsageForProvider(provider, runtime = globalThis) {
+function resolveCpuCoreUsageForProvider(provider, ortModule, runtime = globalThis) {
     const normalizedProvider = typeof provider === 'string' ? provider.toLowerCase() : 'unknown';
     const availableCores = resolveHardwareConcurrency(runtime);
-    const configuredWasmThreads = Number(ort?.env?.wasm?.numThreads);
+    const configuredWasmThreads = Number(ortModule?.env?.wasm?.numThreads);
     if (
         normalizedProvider === 'wasm' &&
         Number.isFinite(configuredWasmThreads) &&
@@ -60,39 +81,80 @@ function resolveCpuCoreUsageForProvider(provider, runtime = globalThis) {
     return `n/a/${availableCores}`;
 }
 
-ort.env.wasm.numThreads = resolveWasmThreadCount();
-ort.env.wasm.simd = true;
-const ortAssetBasePath = resolveOrtAssetBasePath();
-ort.env.wasm.wasmPaths = {
-    'ort-wasm.wasm': `${ortAssetBasePath}ort-wasm.wasm`,
-    'ort-wasm-simd.wasm': `${ortAssetBasePath}ort-wasm-simd.wasm`,
-    'ort-wasm-threaded.wasm': `${ortAssetBasePath}ort-wasm-threaded.wasm`,
-    'ort-wasm-simd-threaded.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.wasm`,
-    'ort-wasm-simd-threaded.jsep.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jsep.wasm`,
-    'ort-wasm-simd-threaded.asyncify.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.asyncify.wasm`,
-    'ort-wasm-simd-threaded.jspi.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jspi.wasm`
-};
-// Disable proxy to prevent ONNX from trying to spawn another worker or check for document
-ort.env.wasm.proxy = false;
-if (!ort.env.webgpu || typeof ort.env.webgpu !== 'object') {
-    ort.env.webgpu = {};
+function configureOrtRuntime(ortModule, runtime = globalThis) {
+    if (!ortModule || typeof ortModule !== 'object') {
+        return;
+    }
+    if (configuredOrtModules.has(ortModule)) {
+        return;
+    }
+
+    if (!ortModule.env || typeof ortModule.env !== 'object') {
+        return;
+    }
+
+    if (!ortModule.env.wasm || typeof ortModule.env.wasm !== 'object') {
+        ortModule.env.wasm = {};
+    }
+
+    ortModule.env.wasm.numThreads = resolveWasmThreadCount(runtime);
+    ortModule.env.wasm.simd = !isWebKitRuntime(runtime);
+    const ortAssetBasePath = resolveOrtAssetBasePath();
+    ortModule.env.wasm.wasmPaths = {
+        'ort-wasm.wasm': `${ortAssetBasePath}ort-wasm.wasm`,
+        'ort-wasm-simd.wasm': `${ortAssetBasePath}ort-wasm-simd.wasm`,
+        'ort-wasm-threaded.wasm': `${ortAssetBasePath}ort-wasm-threaded.wasm`,
+        'ort-wasm-simd-threaded.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.wasm`,
+        'ort-wasm-simd-threaded.jsep.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jsep.wasm`,
+        'ort-wasm-simd-threaded.asyncify.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.asyncify.wasm`,
+        'ort-wasm-simd-threaded.jspi.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jspi.wasm`
+    };
+    // Disable proxy to prevent ONNX from trying to spawn another worker or check for document.
+    ortModule.env.wasm.proxy = false;
+
+    if (!ortModule.env.webgpu || typeof ortModule.env.webgpu !== 'object') {
+        ortModule.env.webgpu = {};
+    }
+    // Prefer the high-performance adapter for GMNet inference when WebGPU is available.
+    // Skip this hint on Windows where Chromium currently ignores it and emits noisy warnings.
+    if (!isWindowsRuntime(runtime)) {
+        ortModule.env.webgpu.powerPreference = 'high-performance';
+    }
+
+    configuredOrtModules.add(ortModule);
 }
-// Prefer the high-performance adapter for GMNet inference when WebGPU is available.
-// Skip this hint on Windows where Chromium currently ignores it and emits noisy warnings.
-if (!isWindowsRuntime()) {
-    ort.env.webgpu.powerPreference = 'high-performance';
+
+async function loadOrtAllModule(runtime = globalThis) {
+    if (!ortAllModulePromise) {
+        ortAllModulePromise = import('onnxruntime-web/all');
+    }
+    const ortAllModule = await ortAllModulePromise;
+    configureOrtRuntime(ortAllModule, runtime);
+    return ortAllModule;
 }
+
+async function resolveOrtModuleForProvider(provider, runtime = globalThis) {
+    if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+        return loadOrtAllModule(runtime);
+    }
+    configureOrtRuntime(ortWebGpu, runtime);
+    return ortWebGpu;
+}
+
+configureOrtRuntime(ortWebGpu);
 
 export const DEFAULT_GMNET_MODEL_VARIANT = 'realworld';
 const SUPPORTED_MODEL_VARIANTS = Object.freeze(['realworld', 'synthetic']);
 const MODEL_VARIANT_CONFIG = Object.freeze({
     realworld: {
         modelFilename: 'gmnet-realworld.onnx',
-        modelDataFilename: 'gmnet-realworld.onnx.data'
+        modelDataFilename: 'gmnet-realworld.onnx.data',
+        inlineModelFilename: 'gmnet-realworld-inline.onnx'
     },
     synthetic: {
         modelFilename: 'gmnet-synthetic.onnx',
-        modelDataFilename: 'gmnet-synthetic.onnx.data'
+        modelDataFilename: 'gmnet-synthetic.onnx.data',
+        inlineModelFilename: 'gmnet-synthetic-inline.onnx'
     }
 });
 // Current exported artifacts reference this external-data location in the ONNX graph.
@@ -110,11 +172,44 @@ function hasWebGpuSupport(runtime = globalThis) {
     return typeof runtime?.navigator?.gpu !== 'undefined';
 }
 
-function resolveExecutionProviders(runtime = globalThis) {
-    if (!hasWebGpuSupport(runtime)) {
-        return [];
+function hasWebGlSupport(runtime = globalThis) {
+    try {
+        if (typeof runtime?.OffscreenCanvas !== 'undefined') {
+            const canvas = new runtime.OffscreenCanvas(1, 1);
+            const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (context) {
+                return true;
+            }
+        }
+    } catch (_error) {
+        // Fall through to DOM canvas probing.
     }
-    return [REQUIRED_GMNET_EXECUTION_PROVIDER];
+
+    try {
+        if (typeof runtime?.document?.createElement === 'function') {
+            const canvas = runtime.document.createElement('canvas');
+            if (canvas && typeof canvas.getContext === 'function') {
+                const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (context) {
+                    return true;
+                }
+            }
+        }
+    } catch (_error) {
+        // No-op.
+    }
+
+    return false;
+}
+
+function resolveExecutionProviders(runtime = globalThis) {
+    if (hasWebGpuSupport(runtime)) {
+        return [REQUIRED_GMNET_EXECUTION_PROVIDER];
+    }
+    if (hasWebGlSupport(runtime)) {
+        return [GMNET_FALLBACK_EXECUTION_PROVIDER];
+    }
+    return [];
 }
 
 function normalizeExecutionProvider(value) {
@@ -123,6 +218,48 @@ function normalizeExecutionProvider(value) {
     }
     const normalized = value.trim().toLowerCase();
     return normalized || null;
+}
+
+async function loadBinaryAsset(runtime, assetUrl, assetLabel) {
+    const fetchFn = runtime?.fetch || globalThis.fetch;
+    if (typeof fetchFn !== 'function') {
+        throw new Error(`Fetch API is unavailable for ${assetLabel} loading.`);
+    }
+
+    const response = await fetchFn.call(runtime, assetUrl, { credentials: 'same-origin' });
+    if (!response?.ok) {
+        throw new Error(
+            `Failed to load ${assetLabel}: ${response?.status || 'unknown status'}.`
+        );
+    }
+
+    if (typeof response.arrayBuffer !== 'function') {
+        throw new Error(`${assetLabel} response does not support arrayBuffer().`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+        throw new Error(`${assetLabel} response was empty.`);
+    }
+
+    return new Uint8Array(buffer);
+}
+
+async function resolveModelAndExternalDataPayloads(runtime, provider, modelUrl, externalDataUrl) {
+    if (provider !== GMNET_FALLBACK_EXECUTION_PROVIDER) {
+        return {
+            modelPayload: modelUrl,
+            externalDataPayload: externalDataUrl,
+            includeExternalData: true,
+        };
+    }
+
+    const modelPayload = await loadBinaryAsset(runtime, modelUrl, 'GMNet ONNX model');
+    return {
+        modelPayload,
+        externalDataPayload: null,
+        includeExternalData: false,
+    };
 }
 
 function resolveActiveExecutionProvider(session, requestedExecutionProviders = []) {
@@ -144,7 +281,7 @@ function resolveActiveExecutionProvider(session, requestedExecutionProviders = [
         return session.handler.executionProvider;
     }
 
-    return requestedExecutionProviders[0] || 'wasm';
+    return requestedExecutionProviders[0] || 'unknown';
 }
 
 function logExecutionProviderSelection(provider, modelVariant, requestedExecutionProviders = []) {
@@ -155,6 +292,12 @@ function logExecutionProviderSelection(provider, modelVariant, requestedExecutio
     console.info(
         `[GMNet] Execution provider: ${normalizedProvider} (variant: ${modelVariant}, requested: ${requestedProviders})`
     );
+}
+
+function createSessionCacheKey(modelVariant, provider) {
+    const normalizedVariant = normalizeModelVariant(modelVariant);
+    const normalizedProvider = normalizeExecutionProvider(provider) || 'unknown';
+    return `${normalizedVariant}:${normalizedProvider}`;
 }
 
 function resizeImageData(imageData, targetWidth, targetHeight) {
@@ -203,10 +346,11 @@ export class GMNetInferenceSession {
     constructor({ runtime = globalThis } = {}) {
         this.runtime = runtime;
         this.session = null;
-        this.sessionsByVariant = new Map();
-        this.executionProviderByVariant = new Map();
+        this.sessionsByVariantAndProvider = new Map();
+        this.executionProviderByVariantAndProvider = new Map();
         this.activeModelVariant = DEFAULT_GMNET_MODEL_VARIANT;
         this.activeExecutionProvider = null;
+        this.activeOrtModule = ortWebGpu;
         this.downloadProgress = 0;
         this.eventListeners = {
             'progress': [],
@@ -242,37 +386,47 @@ export class GMNetInferenceSession {
             : resolveExecutionProviders(this.runtime);
         const requestedExecutionProviders = requestedExecutionProvidersRaw
             .map((provider) => (typeof provider === 'string' ? provider.trim().toLowerCase() : ''))
-            .filter(Boolean);
+            .filter((provider) => SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider));
 
-        if (!hasWebGpuSupport(this.runtime)) {
-            const unavailableError = new Error('WebGPU runtime is not available in this environment.');
-            unavailableError.name = 'GmnetWebGpuUnavailableError';
-            throw unavailableError;
-        }
-        if (
-            requestedExecutionProviders.length !== 1
-            || requestedExecutionProviders[0] !== REQUIRED_GMNET_EXECUTION_PROVIDER
-        ) {
+        if (requestedExecutionProviders.length !== 1) {
             const providerError = new Error(
-                `GMNet requires executionProviders=[${REQUIRED_GMNET_EXECUTION_PROVIDER}] in strict mode.`
+                `GMNet requires exactly one GPU execution provider from [${SUPPORTED_GMNET_EXECUTION_PROVIDERS.join(', ')}].`
             );
             providerError.name = 'GmnetExecutionProviderConfigurationError';
             throw providerError;
         }
+        const requestedProvider = requestedExecutionProviders[0];
 
+        if (requestedProvider === REQUIRED_GMNET_EXECUTION_PROVIDER && !hasWebGpuSupport(this.runtime)) {
+            const unavailableError = new Error('WebGPU runtime is not available in this environment.');
+            unavailableError.name = 'GmnetWebGpuUnavailableError';
+            throw unavailableError;
+        }
+
+        if (requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER && !hasWebGlSupport(this.runtime)) {
+            const unavailableError = new Error('WebGL runtime is not available in this environment.');
+            unavailableError.name = 'GmnetWebGlUnavailableError';
+            throw unavailableError;
+        }
+
+        const ortModule = await resolveOrtModuleForProvider(requestedProvider, this.runtime);
+        const sessionCacheKey = createSessionCacheKey(normalizedVariant, requestedProvider);
         const forceReload = Boolean(options.forceReload);
-        if (!forceReload && this.sessionsByVariant.has(normalizedVariant)) {
-            this.session = this.sessionsByVariant.get(normalizedVariant);
+        if (!forceReload && this.sessionsByVariantAndProvider.has(sessionCacheKey)) {
+            this.session = this.sessionsByVariantAndProvider.get(sessionCacheKey);
             this.activeModelVariant = normalizedVariant;
             this.activeExecutionProvider = normalizeExecutionProvider(
-                this.executionProviderByVariant.get(normalizedVariant)
+                this.executionProviderByVariantAndProvider.get(sessionCacheKey)
                 || resolveActiveExecutionProvider(this.session, requestedExecutionProviders)
             );
-            if (this.activeExecutionProvider !== REQUIRED_GMNET_EXECUTION_PROVIDER) {
+            this.activeOrtModule = ortModule;
+            if (this.activeExecutionProvider !== requestedProvider) {
                 const cachedProviderError = new Error(
-                    `GMNet requires WebGPU execution provider; cached provider is "${this.activeExecutionProvider || 'unknown'}".`
+                    `GMNet requires "${requestedProvider}" execution provider; cached provider is "${this.activeExecutionProvider || 'unknown'}".`
                 );
                 cachedProviderError.name = 'GmnetExecutionProviderMismatchError';
+                cachedProviderError.requestedExecutionProviders = requestedExecutionProviders;
+                cachedProviderError.resolvedExecutionProvider = this.activeExecutionProvider || null;
                 throw cachedProviderError;
             }
             logExecutionProviderSelection(
@@ -289,13 +443,16 @@ export class GMNetInferenceSession {
         }
         if (!forceReload && this.session && this.activeModelVariant === normalizedVariant) {
             this.activeExecutionProvider = normalizeExecutionProvider(this.activeExecutionProvider);
-            if (this.activeExecutionProvider !== REQUIRED_GMNET_EXECUTION_PROVIDER) {
+            if (this.activeExecutionProvider !== requestedProvider) {
                 const providerError = new Error(
-                    `GMNet requires WebGPU execution provider; active provider is "${this.activeExecutionProvider || 'unknown'}".`
+                    `GMNet requires "${requestedProvider}" execution provider; active provider is "${this.activeExecutionProvider || 'unknown'}".`
                 );
                 providerError.name = 'GmnetExecutionProviderMismatchError';
+                providerError.requestedExecutionProviders = requestedExecutionProviders;
+                providerError.resolvedExecutionProvider = this.activeExecutionProvider || null;
                 throw providerError;
             }
+            this.activeOrtModule = ortModule;
             logExecutionProviderSelection(
                 this.activeExecutionProvider,
                 normalizedVariant,
@@ -315,28 +472,40 @@ export class GMNetInferenceSession {
             // We append version query param from env.
             const version = import.meta.env.VITE_APP_ASSET_VERSION || 'dev';
             const variantConfig = MODEL_VARIANT_CONFIG[normalizedVariant];
-            const modelUrl = `${MODEL_BASE_PATH}${variantConfig.modelFilename}?v=${version}`;
+            const modelFilename = requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER
+                ? variantConfig.inlineModelFilename
+                : variantConfig.modelFilename;
+            const modelUrl = `${MODEL_BASE_PATH}${modelFilename}?v=${version}`;
             const externalDataUrl = `${MODEL_BASE_PATH}${variantConfig.modelDataFilename}?v=${version}`;
+            const { modelPayload, externalDataPayload, includeExternalData } = await resolveModelAndExternalDataPayloads(
+                this.runtime,
+                requestedProvider,
+                modelUrl,
+                externalDataUrl
+            );
             this.emit('progress', { loaded: 0, total: 1 });
             console.log(`[GMNet] Loading ${normalizedVariant} model from ${modelUrl}...`);
 
-            // Create session from URL so ORT can resolve external tensor data files.
-            const createdSession = await ort.InferenceSession.create(modelUrl, {
+            // Use URL payloads for WebGPU and explicit binary payloads for WebGL compatibility.
+            const sessionOptions = {
                 executionProviders: requestedExecutionProviders,
-                externalData: [
+            };
+            if (includeExternalData) {
+                sessionOptions.externalData = [
                     {
                         path: MODEL_EXTERNAL_DATA_PATH,
-                        data: externalDataUrl
+                        data: externalDataPayload
                     }
-                ]
-            });
+                ];
+            }
+            const createdSession = await ortModule.InferenceSession.create(modelPayload, sessionOptions);
             const resolvedExecutionProvider = normalizeExecutionProvider(resolveActiveExecutionProvider(
                 createdSession,
                 requestedExecutionProviders,
             ));
-            if (resolvedExecutionProvider !== REQUIRED_GMNET_EXECUTION_PROVIDER) {
+            if (resolvedExecutionProvider !== requestedProvider) {
                 const providerMismatchError = new Error(
-                    `GMNet requires WebGPU execution provider; resolved "${resolvedExecutionProvider || 'unknown'}".`
+                    `GMNet requires "${requestedProvider}" execution provider; resolved "${resolvedExecutionProvider || 'unknown'}".`
                 );
                 providerMismatchError.name = 'GmnetExecutionProviderMismatchError';
                 providerMismatchError.requestedExecutionProviders = requestedExecutionProviders;
@@ -344,11 +513,12 @@ export class GMNetInferenceSession {
                 throw providerMismatchError;
             }
 
-            this.sessionsByVariant.set(normalizedVariant, createdSession);
+            this.sessionsByVariantAndProvider.set(sessionCacheKey, createdSession);
             this.session = createdSession;
             this.activeModelVariant = normalizedVariant;
             this.activeExecutionProvider = resolvedExecutionProvider;
-            this.executionProviderByVariant.set(normalizedVariant, this.activeExecutionProvider);
+            this.activeOrtModule = ortModule;
+            this.executionProviderByVariantAndProvider.set(sessionCacheKey, this.activeExecutionProvider);
             logExecutionProviderSelection(
                 this.activeExecutionProvider,
                 normalizedVariant,
@@ -373,8 +543,24 @@ export class GMNetInferenceSession {
     async run(imageData, options = {}) {
         console.log('[GMNet session] run called');
         const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
-        if (!this.session || this.activeModelVariant !== requestedVariant) {
-            await this.init(requestedVariant);
+        const forceExecutionProviders = Array.isArray(options?.forceExecutionProviders)
+            ? options.forceExecutionProviders
+            : undefined;
+        const normalizedForcedProviders = Array.isArray(forceExecutionProviders)
+            ? forceExecutionProviders
+                .map((provider) => normalizeExecutionProvider(provider))
+                .filter((provider) => SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider))
+            : [];
+        const forcedProvider = normalizedForcedProviders.length === 1
+            ? normalizedForcedProviders[0]
+            : null;
+        const shouldForceReload = Boolean(forcedProvider)
+            && normalizeExecutionProvider(this.activeExecutionProvider) !== forcedProvider;
+        if (!this.session || this.activeModelVariant !== requestedVariant || shouldForceReload) {
+            await this.init(requestedVariant, {
+                forceExecutionProviders,
+                forceReload: shouldForceReload,
+            });
         }
 
         // imageData is RGBA Uint8ClampedArray
@@ -399,7 +585,11 @@ export class GMNetInferenceSession {
 
         const inferenceProvider = this.activeExecutionProvider
             || resolveActiveExecutionProvider(this.session);
-        const cpuCoreUsage = resolveCpuCoreUsageForProvider(inferenceProvider);
+        const cpuCoreUsage = resolveCpuCoreUsageForProvider(
+            inferenceProvider,
+            this.activeOrtModule,
+            this.runtime,
+        );
         console.log(
             `[GMNet session] Executing inference (provider: ${inferenceProvider}, cpu cores: ${cpuCoreUsage})...`
         );
@@ -450,7 +640,8 @@ export class GMNetInferenceSession {
             float32Data[2 * width * height + i] = b; // B
         }
 
-        return new ort.Tensor('float32', float32Data, [1, 3, height, width]);
+        const ortModule = this.activeOrtModule || ortWebGpu;
+        return new ortModule.Tensor('float32', float32Data, [1, 3, height, width]);
     }
 
     async preprocessGlobal(imageData) {

@@ -10,11 +10,12 @@
     "build:app-version": "node scripts/build-app-version.js",
     "build:wasm": "node scripts/build-wasm.js",
     "preview": "vite preview",
-    "deploy": "npm run build:wasm && npm run build && node scripts/prepare-gh-pages.js && gh-pages -d dist --dotfiles",
+    "deploy": "npm run build:wasm && npm run build && gh-pages -d dist",
     "test": "vitest run --config vite.config.test.js",
     "test:e2e:chromium": "npx playwright test --project=chromium",
     "test:e2e": "npx playwright test --project=chromium --project=firefox --project=webkit",
     "test:e2e:mobile": "npx playwright test --project=mobile-webkit-ios --project=mobile-chromium-android",
+    "test:e2e:android-webgpu": "npx playwright test --config=playwright.android-real.config.js",
     "test:ui": "vitest run --ui",
     "test:coverage": "vitest run --config vite.config.test.js --coverage --coverage.provider=istanbul"
   },

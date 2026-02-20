@@ -220,6 +220,7 @@ function initializeWorkerClient() {
     const jobs = new Map();
     let nextJobId = 1;
     let ready = false;
+    let runtimeMetadata = {};
 
     function emitProgressToJob(job, detail) {
       publishWorkerTelemetry(detail);
@@ -448,8 +449,12 @@ function initializeWorkerClient() {
       if (message.type === 'ready') {
         if (!ready) {
           ready = true;
+          runtimeMetadata = message.runtime && typeof message.runtime === 'object'
+            ? { ...message.runtime }
+            : {};
           initializationSettled = true;
           resolve({
+            runtime: runtimeMetadata,
             process(file, options = {}) {
               if (!ready) {
                 return Promise.reject(new Error(WORKER_INIT_ERROR));
@@ -646,8 +651,14 @@ export async function initializeRuntime(options = {}) {
   }
 
   try {
-    await getWorkerClient();
-    return { ready: true };
+    const client = await getWorkerClient();
+    const runtimeMetadata = client?.runtime && typeof client.runtime === 'object'
+      ? { ...client.runtime }
+      : {};
+    return {
+      ready: true,
+      ...runtimeMetadata,
+    };
   } finally {
     if (onProgress) {
       runtimeInitProgressListeners.delete(onProgress);

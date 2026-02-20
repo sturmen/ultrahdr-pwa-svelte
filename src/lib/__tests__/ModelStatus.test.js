@@ -75,6 +75,22 @@ describe('ModelStatus Component', () => {
         expect(screen.getByTestId('model-status-provider')).toHaveTextContent(/runtime:\s*wasm/i);
     });
 
+    it('shows WebGL runtime label when inference runs on webgl', async () => {
+        render(ModelStatus);
+
+        const detail = {
+            phase: 'stage-progress',
+            stage: 'generate-gain-map',
+            stageProgress: 5,
+            note: 'Starting inference; application may appear hung while AI model executes.',
+            gmnetExecutionProvider: 'webgl'
+        };
+
+        await fireEvent(window, new CustomEvent(PIPELINE_PROGRESS_EVENT, { detail }));
+
+        expect(screen.getByTestId('model-status-provider')).toHaveTextContent(/runtime:\s*webgl/i);
+    });
+
     it('hides when complete', async () => {
         render(ModelStatus);
 

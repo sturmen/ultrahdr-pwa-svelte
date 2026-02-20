@@ -91,8 +91,8 @@ async function ensureRuntimeInitialized() {
 
 async function handleInitMessage() {
   try {
-    await ensureRuntimeInitialized();
-    self.postMessage({ type: 'ready' });
+    const runtime = await ensureRuntimeInitialized();
+    self.postMessage({ type: 'ready', runtime });
   } catch (error) {
     postInitError(error);
   }

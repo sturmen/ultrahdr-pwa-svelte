@@ -1,7 +1,14 @@
-import { GMNetInferenceSession } from './gmnet-session.js';
+import {
+  GMNET_FALLBACK_EXECUTION_PROVIDER,
+  GMNetInferenceSession,
+  REQUIRED_GMNET_EXECUTION_PROVIDER,
+} from './gmnet-session.js';
 
 const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
+const WEBGL_FALLBACK_RETRY_NOTE = 'WebGPU produced an invalid gain map; retrying with WebGL.';
+const MIN_GAIN_MAP_DYNAMIC_RANGE = 2;
+const MIN_GAIN_MAP_STD_DEV = 0.25;
 
 function normalizeExecutionProviderName(value) {
   if (typeof value !== 'string') {
@@ -25,6 +32,68 @@ function normalizeMaxContentBoost(value) {
     return DEFAULT_MAX_CONTENT_BOOST;
   }
   return Math.max(1.0, numeric);
+}
+
+function analyzeGainMapRgba(rgba) {
+  const pixelCount = Math.floor((rgba?.length || 0) / 4);
+  if (pixelCount <= 0) {
+    return {
+      pixelCount: 0,
+      min: 0,
+      max: 0,
+      mean: 0,
+      stdDev: 0,
+      dynamicRange: 0,
+    };
+  }
+
+  let min = 255;
+  let max = 0;
+  let sum = 0;
+  let sumSq = 0;
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    const value = rgba[pixelIndex * 4];
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+    sum += value;
+    sumSq += value * value;
+  }
+  const mean = sum / pixelCount;
+  const variance = Math.max(0, (sumSq / pixelCount) - (mean * mean));
+  const stdDev = Math.sqrt(variance);
+
+  return {
+    pixelCount,
+    min,
+    max,
+    mean,
+    stdDev,
+    dynamicRange: max - min,
+  };
+}
+
+function isNearFlatGainMap(stats) {
+  if (!stats || typeof stats !== 'object') {
+    return true;
+  }
+  // A single pixel has no meaningful variance; skip flatness checks for this edge case.
+  if (Number.isFinite(stats.pixelCount) && stats.pixelCount <= 1) {
+    return false;
+  }
+  return (
+    !Number.isFinite(stats.dynamicRange)
+    || !Number.isFinite(stats.stdDev)
+    || stats.dynamicRange < MIN_GAIN_MAP_DYNAMIC_RANGE
+    || stats.stdDev < MIN_GAIN_MAP_STD_DEV
+  );
+}
+
+function resolveCurrentExecutionProvider(runtimeExecutionProvider, session) {
+  return (
+    normalizeExecutionProviderName(runtimeExecutionProvider)
+    || normalizeExecutionProviderName(session?.activeExecutionProvider)
+    || null
+  );
 }
 
 export function isGmnetRuntimeSupported(runtime = globalThis) {
@@ -110,28 +179,57 @@ export class GmnetGainMapGenerator {
     }
 
     try {
+      const runInference = async (runOptions = {}) => {
+        const gainMapRgba = await session.run(imageData, {
+          gmnetModelVariant: options.gmnetModelVariant,
+          ...runOptions,
+        });
+        const expectedLength = imageData.width * imageData.height * 4;
+        if (!(gainMapRgba instanceof Uint8ClampedArray)) {
+          throw new Error('GMNet output must be Uint8ClampedArray RGBA pixels.');
+        }
+        if (gainMapRgba.length !== expectedLength) {
+          throw new Error(
+            `GMNet output size mismatch: expected ${expectedLength}, received ${gainMapRgba.length}.`
+          );
+        }
+        return {
+          gainMapRgba,
+          gainMapStats: analyzeGainMapRgba(gainMapRgba),
+        };
+      };
+
       onStageProgress?.(
         0,
         INFERENCE_START_NOTE,
         { gmnetExecutionProvider: runtimeExecutionProvider },
       );
-      const gainMapRgba = await session.run(imageData, {
-        gmnetModelVariant: options.gmnetModelVariant,
-      });
-      const expectedLength = imageData.width * imageData.height * 4;
-      if (!(gainMapRgba instanceof Uint8ClampedArray)) {
-        throw new Error('GMNet output must be Uint8ClampedArray RGBA pixels.');
+      let { gainMapRgba, gainMapStats } = await runInference();
+      if (isNearFlatGainMap(gainMapStats)) {
+        const activeProvider = resolveCurrentExecutionProvider(runtimeExecutionProvider, session);
+        if (activeProvider === REQUIRED_GMNET_EXECUTION_PROVIDER) {
+          onStageProgress?.(
+            2,
+            WEBGL_FALLBACK_RETRY_NOTE,
+            { gmnetExecutionProvider: GMNET_FALLBACK_EXECUTION_PROVIDER },
+          );
+          const fallbackResult = await runInference({
+            forceExecutionProviders: [GMNET_FALLBACK_EXECUTION_PROVIDER],
+          });
+          gainMapRgba = fallbackResult.gainMapRgba;
+          gainMapStats = fallbackResult.gainMapStats;
+        }
       }
-      if (gainMapRgba.length !== expectedLength) {
+      if (isNearFlatGainMap(gainMapStats)) {
         throw new Error(
-          `GMNet output size mismatch: expected ${expectedLength}, received ${gainMapRgba.length}.`
+          `GMNet output appears near-flat (range=${gainMapStats.dynamicRange}, std=${gainMapStats.stdDev.toFixed(3)}).`
         );
       }
 
       onStageProgress?.(
         100,
         'AI Inference Complete',
-        { gmnetExecutionProvider: runtimeExecutionProvider },
+        { gmnetExecutionProvider: resolveCurrentExecutionProvider(runtimeExecutionProvider, session) },
       );
 
       return {

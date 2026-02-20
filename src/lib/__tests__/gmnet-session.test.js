@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('onnxruntime-web/webgpu', () => {
+function createOrtMock() {
   const env = { wasm: {}, webgpu: {} };
   class Tensor {
     constructor(type, data, dims) {
@@ -20,7 +20,10 @@ vi.mock('onnxruntime-web/webgpu', () => {
       create: vi.fn(),
     },
   };
-});
+}
+
+vi.mock('onnxruntime-web/webgpu', () => createOrtMock());
+vi.mock('onnxruntime-web/all', () => createOrtMock());
 
 describe('GMNetInferenceSession runtime config', () => {
   let originalNavigatorGpuDescriptor;
@@ -104,6 +107,10 @@ describe('GMNetInferenceSession runtime config', () => {
       configurable: true,
       value: 8,
     });
+    Object.defineProperty(Navigator.prototype, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    });
 
     const ort = await import('onnxruntime-web/webgpu');
     ort.env.wasm = {};
@@ -113,6 +120,29 @@ describe('GMNetInferenceSession runtime config', () => {
 
     expect(ort.env.wasm.numThreads).toBe(4);
     expect(ort.env.wasm.proxy).toBe(false);
+  });
+
+  it('forces single-thread wasm on WebKit runtimes for startup compatibility', async () => {
+    Object.defineProperty(globalThis, 'crossOriginIsolated', {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
+      configurable: true,
+      value: 8,
+    });
+    Object.defineProperty(Navigator.prototype, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+    });
+
+    const ort = await import('onnxruntime-web/webgpu');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+
+    await import('../gmnet-session.js');
+
+    expect(ort.env.wasm.numThreads).toBe(1);
   });
 
   it('postprocess expands mono tensor output into RGBA bytes', async () => {
@@ -175,10 +205,54 @@ describe('GMNetInferenceSession runtime config', () => {
       },
     });
 
-    await expect(session.init()).rejects.toMatchObject({
+    await expect(
+      session.init('realworld', { forceExecutionProviders: ['webgpu'] }),
+    ).rejects.toMatchObject({
       name: 'GmnetWebGpuUnavailableError',
     });
     expect(ort.InferenceSession.create).not.toHaveBeenCalled();
+  });
+
+  it('initializes a webgl session when explicitly requested', async () => {
+    const ort = await import('onnxruntime-web/all');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+    ort.InferenceSession.create.mockClear();
+    ort.InferenceSession.create.mockResolvedValueOnce({
+      run: vi.fn(),
+      executionProviders: ['webgl'],
+    });
+
+    const runtime = {
+      navigator: {},
+      fetch: vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+      })),
+      document: {
+        createElement: () => ({
+          getContext: (name) => (name === 'webgl' ? {} : null),
+        }),
+      },
+      OffscreenCanvas: undefined,
+    };
+
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession({ runtime });
+
+    await session.init('realworld', { forceExecutionProviders: ['webgl'] });
+
+    expect(ort.InferenceSession.create).toHaveBeenCalledTimes(1);
+    const [modelPayload, options] = ort.InferenceSession.create.mock.calls[0];
+    expect(modelPayload).toBeInstanceOf(Uint8Array);
+    expect(modelPayload).toHaveLength(4);
+    expect(options.executionProviders).toEqual(['webgl']);
+    expect(runtime.fetch).toHaveBeenCalledTimes(1);
+    const fetchedUrls = runtime.fetch.mock.calls.map(([url]) => String(url));
+    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline.onnx'))).toBe(true);
+    expect(runtime.fetch.mock.calls[0][1]).toMatchObject({ credentials: 'same-origin' });
+    expect(options.externalData).toBeUndefined();
+    expect(session.activeExecutionProvider).toBe('webgl');
   });
 
   it('does not set WebGPU powerPreference on Windows', async () => {
@@ -193,6 +267,36 @@ describe('GMNetInferenceSession runtime config', () => {
     await import('../gmnet-session.js');
 
     expect(ort.env.webgpu.powerPreference).toBeUndefined();
+  });
+
+  it('fails webgl init when external model data cannot be fetched', async () => {
+    const ort = await import('onnxruntime-web/all');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+    ort.InferenceSession.create.mockClear();
+
+    const runtime = {
+      navigator: {},
+      fetch: vi.fn(async () => ({
+        ok: false,
+        status: 503,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })),
+      document: {
+        createElement: () => ({
+          getContext: (name) => (name === 'webgl' ? {} : null),
+        }),
+      },
+      OffscreenCanvas: undefined,
+    };
+
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession({ runtime });
+
+    await expect(
+      session.init('realworld', { forceExecutionProviders: ['webgl'] }),
+    ).rejects.toThrow(/Failed to load GMNet ONNX model: 503/i);
+    expect(ort.InferenceSession.create).not.toHaveBeenCalled();
   });
 
   it('emits runtime telemetry with webgpu as the active execution provider', async () => {
@@ -380,12 +484,8 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(result.length).toBe(2 * 2 * 4);
   });
 
-  it('throws when runtime resolves non-webgpu provider', async () => {
-    Object.defineProperty(Navigator.prototype, 'gpu', {
-      configurable: true,
-      value: {},
-    });
-    const ort = await import('onnxruntime-web/webgpu');
+  it('throws when runtime resolves a provider that was not requested', async () => {
+    const ort = await import('onnxruntime-web/all');
     ort.env.wasm = {};
     ort.env.webgpu = {};
     ort.InferenceSession.create.mockClear();
@@ -395,39 +495,132 @@ describe('GMNetInferenceSession runtime config', () => {
     });
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
-    const session = new GMNetInferenceSession();
+    const session = new GMNetInferenceSession({
+      runtime: {
+        navigator: {},
+        fetch: vi.fn(async () => ({
+          ok: true,
+          arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+        })),
+        document: {
+          createElement: () => ({
+            getContext: (name) => (name === 'webgl' ? {} : null),
+          }),
+        },
+        OffscreenCanvas: undefined,
+      },
+    });
 
-    await expect(session.init()).rejects.toMatchObject({
+    await expect(
+      session.init('realworld', { forceExecutionProviders: ['webgl'] }),
+    ).rejects.toMatchObject({
       name: 'GmnetExecutionProviderMismatchError',
     });
   });
 
   it('does not retry with wasm when webgpu inference fails at runtime', async () => {
-    Object.defineProperty(Navigator.prototype, 'gpu', {
-      configurable: true,
-      value: {},
-    });
     const ort = await import('onnxruntime-web/webgpu');
     ort.env.wasm = {};
     ort.env.webgpu = {};
     ort.InferenceSession.create.mockClear();
 
     const webgpuSession = {
-      executionProviders: ['webgpu'],
       run: vi.fn(async () => {
         throw new Error('webgpu pipeline compile failure');
       }),
     };
-    ort.InferenceSession.create.mockResolvedValueOnce(webgpuSession);
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
+    session.session = webgpuSession;
+    session.activeExecutionProvider = 'webgpu';
     const image = new ImageData(new Uint8ClampedArray(2 * 2 * 4), 2, 2);
 
     await expect(session.run(image)).rejects.toThrow(/webgpu pipeline compile failure/i);
 
-    expect(ort.InferenceSession.create).toHaveBeenCalledTimes(1);
+    expect(ort.InferenceSession.create).not.toHaveBeenCalled();
     expect(webgpuSession.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('reinitializes with the requested provider when run() provider differs from active provider', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+    const webgpuSession = {
+      run: vi.fn(async () => {
+        throw new Error('webgpu session should not run');
+      }),
+    };
+    const webglSession = {
+      run: vi.fn(async () => ({
+        gain_map: {
+          data: new Float32Array([0.1, 0.2, 0.3, 0.4]),
+          dims: [1, 1, 2, 2],
+        },
+      })),
+    };
+
+    session.session = webgpuSession;
+    session.activeExecutionProvider = 'webgpu';
+    session.activeModelVariant = 'realworld';
+
+    vi.spyOn(session, 'preprocessGlobal').mockResolvedValue({ kind: 'global' });
+    vi.spyOn(session, 'preprocessLocal').mockImplementation((_imageData, width, height) => ({
+      kind: 'local',
+      dims: [1, 3, height, width],
+    }));
+    const initSpy = vi.spyOn(session, 'init').mockImplementation(async (_variant, options = {}) => {
+      expect(options).toEqual(
+        expect.objectContaining({
+          forceExecutionProviders: ['webgl'],
+          forceReload: true,
+        }),
+      );
+      session.session = webglSession;
+      session.activeExecutionProvider = 'webgl';
+      session.activeModelVariant = 'realworld';
+    });
+
+    const image = new ImageData(new Uint8ClampedArray(2 * 2 * 4), 2, 2);
+    const output = await session.run(image, { forceExecutionProviders: ['webgl'] });
+
+    expect(output).toBeInstanceOf(Uint8ClampedArray);
+    expect(initSpy).toHaveBeenCalledTimes(1);
+    expect(webgpuSession.run).not.toHaveBeenCalled();
+    expect(webglSession.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry with wasm when webgl inference fails at runtime', async () => {
+    const ort = await import('onnxruntime-web/all');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+    ort.InferenceSession.create.mockClear();
+
+    const webglSession = {
+      run: vi.fn(async () => {
+        throw new Error('webgl pipeline compile failure');
+      }),
+    };
+
+    const runtime = {
+      navigator: {},
+      document: {
+        createElement: () => ({
+          getContext: (name) => (name === 'webgl' ? {} : null),
+        }),
+      },
+      OffscreenCanvas: undefined,
+    };
+
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession({ runtime });
+    session.session = webglSession;
+    session.activeExecutionProvider = 'webgl';
+    const image = new ImageData(new Uint8ClampedArray(2 * 2 * 4), 2, 2);
+
+    await expect(session.run(image)).rejects.toThrow(/webgl pipeline compile failure/i);
+
+    expect(ort.InferenceSession.create).not.toHaveBeenCalled();
+    expect(webglSession.run).toHaveBeenCalledTimes(1);
   });
 
   it('logs inference runtime details including provider and cpu thread/core counts', async () => {

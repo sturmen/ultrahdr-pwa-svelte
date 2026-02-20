@@ -12,7 +12,7 @@ vi.mock('../share-target-launch.js', () => ({
 }));
 
 vi.mock('../processing.js', () => ({
-  initializeRuntime: vi.fn(async () => ({ ready: true })),
+  initializeRuntime: vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' })),
   RUNTIME_INIT_STEP_ORDER: [
     'onnx-load',
     'webgpu-check',
@@ -58,7 +58,7 @@ describe('App shell and startup gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     consumeSharedFilesFromLaunch.mockResolvedValue([]);
-    vi.mocked(initializeRuntime).mockResolvedValue({ ready: true });
+    vi.mocked(initializeRuntime).mockResolvedValue({ ready: true, resolvedExecutionProvider: 'webgpu' });
     window.history.replaceState({}, '', '/');
   });
 
@@ -71,10 +71,11 @@ describe('App shell and startup gate', () => {
     expect(screen.getByTestId('runtime-init-loading')).toBeInTheDocument();
     expect(screen.queryByTestId('upload-drop-zone')).not.toBeInTheDocument();
 
-    initGate.resolve({ ready: true });
+    initGate.resolve({ ready: true, resolvedExecutionProvider: 'webgl' });
     await waitFor(() => {
       expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
     });
+    expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/webgl/i);
   });
 
   it('renders a minimal header and keeps trust messaging on the About page', async () => {
@@ -105,7 +106,7 @@ describe('App shell and startup gate', () => {
   it('shows startup failure diagnostics and retries initialization', async () => {
     vi.mocked(initializeRuntime)
       .mockRejectedValueOnce(createInitFailure())
-      .mockResolvedValueOnce({ ready: true });
+      .mockResolvedValueOnce({ ready: true, resolvedExecutionProvider: 'webgl' });
 
     render(App);
 
@@ -118,6 +119,7 @@ describe('App shell and startup gate', () => {
     await waitFor(() => {
       expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
     });
+    expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/webgl/i);
     expect(initializeRuntime).toHaveBeenCalledTimes(2);
   });
 

@@ -216,7 +216,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
         stage: 'generate-gain-map',
         stageProgress: 42,
         note: 'Encoding gain map',
-        gmnetExecutionProvider: 'webgpu',
+        gmnetExecutionProvider: 'webgl',
       });
       await progressGate.promise;
 
@@ -234,7 +234,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByText(/File 1 of 1/i)).toBeInTheDocument();
     expect(screen.getByText(/Stage 42%/i)).toBeInTheDocument();
     expect(screen.getByTestId('pipeline-execution-provider')).toHaveTextContent(
-      /gmnet runtime:\s*webgpu/i,
+      /gmnet runtime:\s*webgl/i,
     );
     progressGate.resolve();
   });

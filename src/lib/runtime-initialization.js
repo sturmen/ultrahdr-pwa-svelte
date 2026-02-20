@@ -1,5 +1,6 @@
 import {
   DEFAULT_GMNET_MODEL_VARIANT,
+  GMNET_FALLBACK_EXECUTION_PROVIDER,
   GMNetInferenceSession,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.js';
@@ -7,6 +8,8 @@ import {
 const DEFAULT_SMOKE_ASSET_PATH = 'models/gmnet-smoke-128.png';
 const DEFAULT_SMOKE_IMAGE_WIDTH = 128;
 const DEFAULT_SMOKE_IMAGE_HEIGHT = 128;
+const SMOKE_OUTPUT_MIN_DYNAMIC_RANGE = 8;
+const SMOKE_OUTPUT_MIN_STD_DEV = 1.5;
 
 export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'onnx-load',
@@ -29,7 +32,9 @@ export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
 export const RUNTIME_INIT_ERROR_CODES = Object.freeze({
   ONNX_FAILED: 'RUNTIME_INIT_ONNX_FAILED',
   WEBGPU_UNAVAILABLE: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
+  NO_COMPATIBLE_GPU_PROVIDER: 'RUNTIME_INIT_NO_COMPATIBLE_GPU_PROVIDER',
   PROVIDER_MISMATCH: 'RUNTIME_INIT_PROVIDER_MISMATCH',
+  PROVIDER_FALLBACK_EXHAUSTED: 'RUNTIME_INIT_PROVIDER_FALLBACK_EXHAUSTED',
   SMOKE_ASSET_FAILED: 'RUNTIME_INIT_SMOKE_ASSET_FAILED',
   SMOKE_INFERENCE_FAILED: 'RUNTIME_INIT_SMOKE_INFERENCE_FAILED',
 });
@@ -40,6 +45,36 @@ function normalizeExecutionProvider(value) {
   }
   const normalized = value.trim().toLowerCase();
   return normalized || null;
+}
+
+function hasWebGlSupport(runtime = globalThis) {
+  try {
+    if (typeof runtime?.OffscreenCanvas !== 'undefined') {
+      const canvas = new runtime.OffscreenCanvas(1, 1);
+      const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (context) {
+        return true;
+      }
+    }
+  } catch (_error) {
+    // Fall through to DOM canvas probing.
+  }
+
+  try {
+    if (typeof runtime?.document?.createElement === 'function') {
+      const canvas = runtime.document.createElement('canvas');
+      if (canvas && typeof canvas.getContext === 'function') {
+        const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (context) {
+          return true;
+        }
+      }
+    }
+  } catch (_error) {
+    // No-op.
+  }
+
+  return false;
 }
 
 function resolveModelBasePath() {
@@ -62,6 +97,63 @@ function resolveSmokeAssetUrl(smokeAssetPath = DEFAULT_SMOKE_ASSET_PATH) {
     : '';
   const url = `${resolveModelBasePath()}${normalized}`;
   return appendVersionQuery(url, appVersion);
+}
+
+function analyzeSmokeOutputRgba(smokeOutput) {
+  const pixelCount = Math.floor(smokeOutput.length / 4);
+  if (pixelCount <= 0) {
+    return {
+      pixelCount: 0,
+      min: 0,
+      max: 0,
+      mean: 0,
+      stdDev: 0,
+      dynamicRange: 0,
+    };
+  }
+
+  let min = 255;
+  let max = 0;
+  let sum = 0;
+  let sumSq = 0;
+
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    const channelValue = smokeOutput[pixelIndex * 4];
+    if (channelValue < min) {
+      min = channelValue;
+    }
+    if (channelValue > max) {
+      max = channelValue;
+    }
+    sum += channelValue;
+    sumSq += channelValue * channelValue;
+  }
+
+  const mean = sum / pixelCount;
+  const variance = Math.max(0, (sumSq / pixelCount) - (mean * mean));
+  const stdDev = Math.sqrt(variance);
+
+  return {
+    pixelCount,
+    min,
+    max,
+    mean,
+    stdDev,
+    dynamicRange: max - min,
+  };
+}
+
+function isSmokeOutputNearFlat(smokeStats) {
+  if (!smokeStats || typeof smokeStats !== 'object') {
+    return true;
+  }
+  if (!Number.isFinite(smokeStats.dynamicRange) || !Number.isFinite(smokeStats.stdDev)) {
+    return true;
+  }
+  return (
+    smokeStats.dynamicRange < SMOKE_OUTPUT_MIN_DYNAMIC_RANGE
+    || smokeStats.stdDev < SMOKE_OUTPUT_MIN_STD_DEV
+  );
 }
 
 function toStackSnippet(stack) {
@@ -254,12 +346,93 @@ export async function initializeRuntime({
   smokeAssetPath = DEFAULT_SMOKE_ASSET_PATH,
   modelVariant = DEFAULT_GMNET_MODEL_VARIANT,
 } = {}) {
-  const requestedExecutionProviders = [REQUIRED_GMNET_EXECUTION_PROVIDER];
   const session = sessionFactory();
   const smokeAssetUrl = resolveSmokeAssetUrl(smokeAssetPath);
   const loadSmokeImageDataImpl = typeof loadSmokeImageData === 'function'
     ? loadSmokeImageData
     : (context) => loadSmokeImageDataDefault(context);
+  let requestedExecutionProviders = [];
+  const attemptFailures = [];
+  let resolvedExecutionProvider = null;
+
+  function normalizeAttemptFailure(error, provider) {
+    const normalizedProvider = normalizeExecutionProvider(provider);
+    return {
+      provider: normalizedProvider || provider || null,
+      errorCode: typeof error?.code === 'string'
+        ? error.code
+        : RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
+      stepId: typeof error?.stepId === 'string' ? error.stepId : null,
+      message: error?.message || 'Runtime initialization attempt failed.',
+      userMessage: error?.userMessage || error?.message || 'Runtime initialization attempt failed.',
+      resolvedExecutionProvider: normalizeExecutionProvider(
+        error?.diagnostics?.resolvedExecutionProvider || error?.resolvedExecutionProvider || null,
+      ),
+    };
+  }
+
+  async function decodeAndValidateSmokeImageData(currentProvider) {
+    let smokeImageData;
+    try {
+      smokeImageData = await loadSmokeImageDataImpl({
+        runtime,
+        smokeAssetUrl,
+        width: DEFAULT_SMOKE_IMAGE_WIDTH,
+        height: DEFAULT_SMOKE_IMAGE_HEIGHT,
+      });
+    } catch (cause) {
+      throw createInitializationError({
+        errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
+        stepId: 'gmnet-smoke-run',
+        message: cause?.message || 'Failed to load smoke image asset.',
+        userMessage: 'Unable to load the GMNet smoke-test asset.',
+        diagnostics: {
+          smokeAssetUrl,
+          requestedExecutionProviders: [currentProvider],
+        },
+        cause,
+        runtime,
+      });
+    }
+
+    if (!(smokeImageData instanceof ImageData)) {
+      throw createInitializationError({
+        errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
+        stepId: 'gmnet-smoke-run',
+        message: 'Smoke asset decoder did not return ImageData.',
+        userMessage: 'Unable to decode the GMNet smoke-test asset.',
+        diagnostics: {
+          smokeAssetUrl,
+          decodedType: smokeImageData?.constructor?.name || typeof smokeImageData,
+          requestedExecutionProviders: [currentProvider],
+        },
+        runtime,
+      });
+    }
+
+    if (
+      smokeImageData.width !== DEFAULT_SMOKE_IMAGE_WIDTH
+      || smokeImageData.height !== DEFAULT_SMOKE_IMAGE_HEIGHT
+    ) {
+      throw createInitializationError({
+        errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
+        stepId: 'gmnet-smoke-run',
+        message: `Smoke asset dimensions must be ${DEFAULT_SMOKE_IMAGE_WIDTH}x${DEFAULT_SMOKE_IMAGE_HEIGHT}.`,
+        userMessage: 'GMNet smoke-test asset dimensions are invalid.',
+        diagnostics: {
+          smokeAssetUrl,
+          decodedWidth: smokeImageData.width,
+          decodedHeight: smokeImageData.height,
+          expectedWidth: DEFAULT_SMOKE_IMAGE_WIDTH,
+          expectedHeight: DEFAULT_SMOKE_IMAGE_HEIGHT,
+          requestedExecutionProviders: [currentProvider],
+        },
+        runtime,
+      });
+    }
+
+    return smokeImageData;
+  }
 
   await runStep({
     stepId: 'onnx-load',
@@ -276,198 +449,265 @@ export async function initializeRuntime({
     },
   });
 
-  await runStep({
+  requestedExecutionProviders = await runStep({
     stepId: 'webgpu-check',
-    runningNote: 'Checking WebGPU runtime support...',
-    successNote: 'WebGPU runtime is available.',
+    runningNote: 'Checking GPU runtime compatibility...',
+    successNote: 'GPU runtime compatibility confirmed.',
     onProgress,
     runtime,
-    errorCode: RUNTIME_INIT_ERROR_CODES.WEBGPU_UNAVAILABLE,
-    userMessage: 'WebGPU is unavailable in this environment.',
+    errorCode: RUNTIME_INIT_ERROR_CODES.NO_COMPATIBLE_GPU_PROVIDER,
+    userMessage: 'No compatible GPU runtime is available in this environment.',
     fn: async () => {
-      if (!runtime?.navigator?.gpu) {
-        throw new Error('navigator.gpu is unavailable.');
-      }
-      if (typeof runtime.navigator.gpu.requestAdapter === 'function') {
-        const adapter = await runtime.navigator.gpu.requestAdapter();
-        if (!adapter) {
-          throw new Error('No WebGPU adapter was returned.');
+      const providers = [];
+      const webgpuIssues = [];
+      if (runtime?.navigator?.gpu) {
+        if (typeof runtime.navigator.gpu.requestAdapter === 'function') {
+          const adapter = await runtime.navigator.gpu.requestAdapter();
+          if (adapter) {
+            providers.push(REQUIRED_GMNET_EXECUTION_PROVIDER);
+          } else {
+            webgpuIssues.push('No WebGPU adapter was returned.');
+          }
+        } else {
+          providers.push(REQUIRED_GMNET_EXECUTION_PROVIDER);
         }
+      } else {
+        webgpuIssues.push('navigator.gpu is unavailable.');
       }
-    },
-  });
 
-  await runStep({
-    stepId: 'gmnet-session-init',
-    runningNote: 'Initializing GMNet model session...',
-    successNote: 'GMNet session initialized.',
-    onProgress,
-    runtime,
-    errorCode: RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
-    userMessage: 'GMNet session initialization failed.',
-    fn: async () => {
-      await session.init(modelVariant, {
-        forceExecutionProviders: requestedExecutionProviders,
-        forceReload: true,
-      });
-    },
-  });
+      if (hasWebGlSupport(runtime)) {
+        providers.push(GMNET_FALLBACK_EXECUTION_PROVIDER);
+      }
 
-  const resolvedExecutionProvider = await runStep({
-    stepId: 'gmnet-provider-verify',
-    runningNote: 'Verifying GMNet execution provider...',
-    successNote: 'GMNet execution provider verified.',
-    onProgress,
-    runtime,
-    errorCode: RUNTIME_INIT_ERROR_CODES.PROVIDER_MISMATCH,
-    userMessage: 'GMNet did not initialize with WebGPU.',
-    fn: async () => {
-      const resolved = normalizeExecutionProvider(session.activeExecutionProvider);
-      if (resolved !== REQUIRED_GMNET_EXECUTION_PROVIDER) {
+      if (providers.length === 0) {
         throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.PROVIDER_MISMATCH,
-          stepId: 'gmnet-provider-verify',
-          message: `Resolved execution provider "${resolved || 'unknown'}" does not satisfy strict WebGPU mode.`,
-          userMessage: 'GMNet did not initialize with the required WebGPU provider.',
+          errorCode: RUNTIME_INIT_ERROR_CODES.NO_COMPATIBLE_GPU_PROVIDER,
+          stepId: 'webgpu-check',
+          message: webgpuIssues[0] || 'No compatible GPU runtime is available.',
+          userMessage: 'No compatible GPU runtime is available in this environment.',
+          diagnostics: {
+            attemptFailures: [
+              ...webgpuIssues.map((message) => ({
+                provider: REQUIRED_GMNET_EXECUTION_PROVIDER,
+                stepId: 'webgpu-check',
+                errorCode: RUNTIME_INIT_ERROR_CODES.WEBGPU_UNAVAILABLE,
+                message,
+              })),
+              {
+                provider: GMNET_FALLBACK_EXECUTION_PROVIDER,
+                stepId: 'webgpu-check',
+                errorCode: RUNTIME_INIT_ERROR_CODES.NO_COMPATIBLE_GPU_PROVIDER,
+                message: 'WebGL runtime is unavailable in this environment.',
+              },
+            ],
+          },
+          runtime,
+        });
+      }
+
+      return providers;
+    },
+  });
+
+  for (const provider of requestedExecutionProviders) {
+    const providerRequest = [provider];
+
+    try {
+      await runStep({
+        stepId: 'gmnet-session-init',
+        runningNote: `Initializing GMNet model session (${provider})...`,
+        successNote: `GMNet session initialized (${provider}).`,
+        onProgress,
+        runtime,
+        errorCode: RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
+        userMessage: 'GMNet session initialization failed.',
+        fn: async () => {
+          await session.init(modelVariant, {
+            forceExecutionProviders: providerRequest,
+            forceReload: true,
+          });
+        },
+      });
+
+      resolvedExecutionProvider = await runStep({
+        stepId: 'gmnet-provider-verify',
+        runningNote: `Verifying GMNet execution provider (${provider})...`,
+        successNote: 'GMNet execution provider verified.',
+        onProgress,
+        runtime,
+        errorCode: RUNTIME_INIT_ERROR_CODES.PROVIDER_MISMATCH,
+        userMessage: `GMNet did not initialize with ${provider}.`,
+        fn: async () => {
+          const resolved = normalizeExecutionProvider(session.activeExecutionProvider);
+          if (resolved !== provider) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.PROVIDER_MISMATCH,
+              stepId: 'gmnet-provider-verify',
+              message: `Resolved execution provider "${resolved || 'unknown'}" does not match requested "${provider}".`,
+              userMessage: `GMNet did not initialize with ${provider}.`,
+              diagnostics: {
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider: resolved,
+              },
+              runtime,
+            });
+          }
+          return resolved;
+        },
+      });
+
+      await runStep({
+        stepId: 'gmnet-smoke-run',
+        runningNote: `Running GMNet smoke test on 128x128 asset (${provider})...`,
+        successNote: 'GMNet smoke test passed.',
+        onProgress,
+        runtime,
+        errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+        userMessage: 'GMNet smoke test failed.',
+        fn: async () => {
+          const smokeImageData = await decodeAndValidateSmokeImageData(provider);
+
+          let smokeOutput;
+          try {
+            smokeOutput = await session.run(smokeImageData, {
+              gmnetModelVariant: modelVariant,
+              forceExecutionProviders: providerRequest,
+            });
+          } catch (cause) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+              stepId: 'gmnet-smoke-run',
+              message: cause?.message || 'GMNet smoke inference failed.',
+              userMessage: 'GMNet failed to execute the startup smoke test.',
+              diagnostics: {
+                smokeAssetUrl,
+                decodedWidth: smokeImageData.width,
+                decodedHeight: smokeImageData.height,
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider,
+              },
+              cause,
+              runtime,
+            });
+          }
+
+          if (!(smokeOutput instanceof Uint8ClampedArray)) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+              stepId: 'gmnet-smoke-run',
+              message: 'Smoke inference output must be Uint8ClampedArray.',
+              userMessage: 'GMNet smoke test output was invalid.',
+              diagnostics: {
+                smokeAssetUrl,
+                outputType: smokeOutput?.constructor?.name || typeof smokeOutput,
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider,
+              },
+              runtime,
+            });
+          }
+
+          const expectedOutputLength =
+            DEFAULT_SMOKE_IMAGE_WIDTH * DEFAULT_SMOKE_IMAGE_HEIGHT * 4;
+          if (smokeOutput.length !== expectedOutputLength) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+              stepId: 'gmnet-smoke-run',
+              message: `Smoke output length mismatch: expected ${expectedOutputLength}, received ${smokeOutput.length}.`,
+              userMessage: 'GMNet smoke test output size was invalid.',
+              diagnostics: {
+                smokeAssetUrl,
+                expectedOutputLength,
+                actualOutputLength: smokeOutput.length,
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider,
+              },
+              runtime,
+            });
+          }
+
+          const smokeOutputStats = analyzeSmokeOutputRgba(smokeOutput);
+          if (isSmokeOutputNearFlat(smokeOutputStats)) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+              stepId: 'gmnet-smoke-run',
+              message: 'Smoke inference output appears near-flat and is likely invalid.',
+              userMessage: 'GMNet startup smoke test produced an invalid gain map.',
+              diagnostics: {
+                smokeAssetUrl,
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider,
+                smokeOutputStats,
+              },
+              runtime,
+            });
+          }
+
+          return {
+            smokeAssetUrl,
+            decodedWidth: smokeImageData.width,
+            decodedHeight: smokeImageData.height,
+            outputLength: smokeOutput.length,
+            smokeOutputStats,
+          };
+        },
+      });
+
+      break;
+    } catch (error) {
+      if (error?.code === RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED) {
+        throw error;
+      }
+
+      attemptFailures.push(normalizeAttemptFailure(error, provider));
+      const isLastAttempt = attemptFailures.length >= requestedExecutionProviders.length;
+      if (!isLastAttempt) {
+        continue;
+      }
+
+      if (requestedExecutionProviders.length > 1) {
+        throw createInitializationError({
+          errorCode: RUNTIME_INIT_ERROR_CODES.PROVIDER_FALLBACK_EXHAUSTED,
+          stepId: error?.stepId || 'gmnet-smoke-run',
+          message: error?.message || 'GMNet startup attempts were exhausted.',
+          userMessage: 'GMNet startup failed on both WebGPU and WebGL runtimes.',
           diagnostics: {
             requestedExecutionProviders,
-            resolvedExecutionProvider: resolved,
+            resolvedExecutionProvider: normalizeExecutionProvider(
+              error?.diagnostics?.resolvedExecutionProvider || resolvedExecutionProvider,
+            ),
+            attemptFailures,
           },
-          runtime,
-        });
-      }
-      return resolved;
-    },
-  });
-
-  await runStep({
-    stepId: 'gmnet-smoke-run',
-    runningNote: 'Running GMNet smoke test on 128x128 asset...',
-    successNote: 'GMNet smoke test passed.',
-    onProgress,
-    runtime,
-    errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
-    userMessage: 'GMNet smoke test failed.',
-    fn: async () => {
-      let smokeImageData;
-      try {
-        smokeImageData = await loadSmokeImageDataImpl({
-          runtime,
-          smokeAssetUrl,
-          width: DEFAULT_SMOKE_IMAGE_WIDTH,
-          height: DEFAULT_SMOKE_IMAGE_HEIGHT,
-        });
-      } catch (cause) {
-        throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
-          stepId: 'gmnet-smoke-run',
-          message: cause?.message || 'Failed to load smoke image asset.',
-          userMessage: 'Unable to load the GMNet smoke-test asset.',
-          diagnostics: {
-            smokeAssetUrl,
-          },
-          cause,
+          cause: error,
           runtime,
         });
       }
 
-      if (!(smokeImageData instanceof ImageData)) {
-        throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
-          stepId: 'gmnet-smoke-run',
-          message: 'Smoke asset decoder did not return ImageData.',
-          userMessage: 'Unable to decode the GMNet smoke-test asset.',
-          diagnostics: {
-            smokeAssetUrl,
-            decodedType: smokeImageData?.constructor?.name || typeof smokeImageData,
-          },
-          runtime,
-        });
+      if (error?.name === 'RuntimeInitializationError') {
+        error.diagnostics = {
+          ...(error.diagnostics || {}),
+          requestedExecutionProviders,
+          attemptFailures,
+        };
       }
 
-      if (
-        smokeImageData.width !== DEFAULT_SMOKE_IMAGE_WIDTH
-        || smokeImageData.height !== DEFAULT_SMOKE_IMAGE_HEIGHT
-      ) {
-        throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
-          stepId: 'gmnet-smoke-run',
-          message: `Smoke asset dimensions must be ${DEFAULT_SMOKE_IMAGE_WIDTH}x${DEFAULT_SMOKE_IMAGE_HEIGHT}.`,
-          userMessage: 'GMNet smoke-test asset dimensions are invalid.',
-          diagnostics: {
-            smokeAssetUrl,
-            decodedWidth: smokeImageData.width,
-            decodedHeight: smokeImageData.height,
-            expectedWidth: DEFAULT_SMOKE_IMAGE_WIDTH,
-            expectedHeight: DEFAULT_SMOKE_IMAGE_HEIGHT,
-          },
-          runtime,
-        });
-      }
+      throw error;
+    }
+  }
 
-      let smokeOutput;
-      try {
-        smokeOutput = await session.run(smokeImageData, {
-          gmnetModelVariant: modelVariant,
-        });
-      } catch (cause) {
-        throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
-          stepId: 'gmnet-smoke-run',
-          message: cause?.message || 'GMNet smoke inference failed.',
-          userMessage: 'GMNet failed to execute the startup smoke test.',
-          diagnostics: {
-            smokeAssetUrl,
-            decodedWidth: smokeImageData.width,
-            decodedHeight: smokeImageData.height,
-            resolvedExecutionProvider,
-          },
-          cause,
-          runtime,
-        });
-      }
-
-      if (!(smokeOutput instanceof Uint8ClampedArray)) {
-        throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
-          stepId: 'gmnet-smoke-run',
-          message: 'Smoke inference output must be Uint8ClampedArray.',
-          userMessage: 'GMNet smoke test output was invalid.',
-          diagnostics: {
-            smokeAssetUrl,
-            outputType: smokeOutput?.constructor?.name || typeof smokeOutput,
-            resolvedExecutionProvider,
-          },
-          runtime,
-        });
-      }
-
-      const expectedOutputLength =
-        DEFAULT_SMOKE_IMAGE_WIDTH * DEFAULT_SMOKE_IMAGE_HEIGHT * 4;
-      if (smokeOutput.length !== expectedOutputLength) {
-        throw createInitializationError({
-          errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
-          stepId: 'gmnet-smoke-run',
-          message: `Smoke output length mismatch: expected ${expectedOutputLength}, received ${smokeOutput.length}.`,
-          userMessage: 'GMNet smoke test output size was invalid.',
-          diagnostics: {
-            smokeAssetUrl,
-            expectedOutputLength,
-            actualOutputLength: smokeOutput.length,
-            resolvedExecutionProvider,
-          },
-          runtime,
-        });
-      }
-
-      return {
-        smokeAssetUrl,
-        decodedWidth: smokeImageData.width,
-        decodedHeight: smokeImageData.height,
-        outputLength: smokeOutput.length,
-      };
-    },
-  });
+  if (!resolvedExecutionProvider) {
+    throw createInitializationError({
+      errorCode: RUNTIME_INIT_ERROR_CODES.PROVIDER_FALLBACK_EXHAUSTED,
+      stepId: 'gmnet-provider-verify',
+      message: 'GMNet runtime initialization did not resolve an execution provider.',
+      userMessage: 'GMNet runtime initialization failed.',
+      diagnostics: {
+        requestedExecutionProviders,
+        attemptFailures,
+      },
+      runtime,
+    });
+  }
 
   await runStep({
     stepId: 'startup-ready',
@@ -484,5 +724,6 @@ export async function initializeRuntime({
     requestedExecutionProviders,
     resolvedExecutionProvider,
     smokeAssetUrl,
+    attemptFailures,
   };
 }

@@ -280,6 +280,9 @@
     if (normalized === "webgpu") {
       return "WebGPU";
     }
+    if (normalized === "webgl") {
+      return "WebGL";
+    }
     if (normalized === "wasm") {
       return "WASM";
     }
