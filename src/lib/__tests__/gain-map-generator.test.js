@@ -45,6 +45,17 @@ function createFlatGainMapRgba(width = 2, height = 2, value = 0) {
   return data;
 }
 
+function createRuntime(userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36') {
+  return {
+    fetch,
+    document,
+    ImageData,
+    navigator: {
+      userAgent,
+    },
+  };
+}
+
 describe('GmnetGainMapGenerator', () => {
   it('throws when GMNet runtime is unsupported', async () => {
     const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
@@ -83,11 +94,7 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     await expect(
@@ -110,11 +117,7 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     await expect(generator.generate(createTestImageData(), {})).rejects.toThrow(
@@ -135,11 +138,7 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     await generator.generate(createTestImageData(), { gmnetModelVariant: 'synthetic' });
@@ -172,11 +171,7 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     await generator.generate(createTestImageData(), { onStageProgress });
@@ -209,11 +204,7 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     await expect(generator.generate(createTestImageData(), {})).rejects.toThrow(
@@ -247,11 +238,7 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     const result = await generator.generate(createTestImageData(), {});
@@ -289,14 +276,75 @@ describe('GmnetGainMapGenerator', () => {
     const generator = new GmnetGainMapGenerator({
       sessionFactory: () => session,
       buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
-      runtime: {
-        fetch,
-        document,
-        ImageData,
-      },
+      runtime: createRuntime(),
     });
 
     await expect(generator.generate(createTestImageData(), {})).rejects.toThrow(/near-flat/i);
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry with webgl on non-chromium runtimes when webgpu output is near-flat', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    let runtimeListener = null;
+    const run = vi.fn(async () => {
+      runtimeListener?.({ executionProvider: 'webgpu' });
+      return createFlatGainMapRgba();
+    });
+    const session = {
+      run,
+      on: vi.fn((event, callback) => {
+        if (event === 'runtime') {
+          runtimeListener = callback;
+        }
+      }),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:129.0) Gecko/20100101 Firefox/129.0'),
+    });
+
+    await expect(generator.generate(createTestImageData(), {})).rejects.toThrow(/near-flat/i);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries with webgl when webgpu inference throws a runtime error', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    let runtimeListener = null;
+    const run = vi.fn(async (_imageData, options = {}) => {
+      if (Array.isArray(options.forceExecutionProviders) && options.forceExecutionProviders[0] === 'webgl') {
+        runtimeListener?.({ executionProvider: 'webgl' });
+        return createNonFlatGainMapRgba();
+      }
+      runtimeListener?.({ executionProvider: 'webgpu' });
+      throw new Error('webgpu pipeline compile failure');
+    });
+    const session = {
+      run,
+      on: vi.fn((event, callback) => {
+        if (event === 'runtime') {
+          runtimeListener = callback;
+        }
+      }),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+    });
+
+    const result = await generator.generate(createTestImageData(), {});
+    expect(result.gainMapImageData).toBeInstanceOf(ImageData);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][1]).toEqual({
+      gmnetModelVariant: undefined,
+      forceExecutionProviders: ['webgl'],
+    });
   });
 });

@@ -1,5 +1,5 @@
 
-pytorch2.10.0:½²
+pytorch2.10.0:×¸
 ›
 local_inputval_0node_Shape_0"Shape*
 
@@ -2481,20 +2481,52 @@ ReduceMean*
     out = self.act(self.upsampler(self.upconv(x)))
   File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
     return self._conv_forward(input, self.weight, self.bias)
-å	
-	conv2d_61pixel_shufflenode_pixel_shuffle"DepthToSpace*
-mode"CRD *
-	blocksize JÂ
-	namespace´: __main__.export_onnx.<locals>.GMNetWrapper/model: models.modules.GMNet.GMNet/model.upsampler: torch.nn.modules.pixelshuffle.PixelShuffle/pixel_shuffle: aten.pixel_shuffle.defaultJ»
-pkg.torch.onnx.class_hierarchy˜['__main__.export_onnx.<locals>.GMNetWrapper', 'models.modules.GMNet.GMNet', 'torch.nn.modules.pixelshuffle.PixelShuffle', 'aten.pixel_shuffle.default']J›
-pkg.torch.onnx.fx_node€%pixel_shuffle : [num_users=1] = call_function[target=torch.ops.aten.pixel_shuffle.default](args = (%conv2d_61, 2), kwargs = {})JO
-pkg.torch.onnx.name_scopes1['', 'model', 'model.upsampler', 'pixel_shuffle']J’
-pkg.torch.onnx.stack_traceóFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 86, in forward
-    out, _ = self.model(x)
-  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/../GMNet/codes/models/modules/GMNet.py", line 135, in forward
-    out = self.act(self.upsampler(self.upconv(x)))
-  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/pixelshuffle.py", line 62, in forward
-    return F.pixel_shuffle(input, self.upscale_factor)
+K
+	conv2d_61node_pixel_shuffle_shapenode_pixel_shuffle_shape_node"Shape
+£
+node_pixel_shuffle_shape
+node_pixel_shuffle_starts0
+node_pixel_shuffle_ends1
+node_pixel_shuffle_axes0node_pixel_shuffle_nnode_pixel_shuffle_slice_n"Slice
+£
+node_pixel_shuffle_shape
+node_pixel_shuffle_starts2
+node_pixel_shuffle_ends3
+node_pixel_shuffle_axes0node_pixel_shuffle_hnode_pixel_shuffle_slice_h"Slice
+£
+node_pixel_shuffle_shape
+node_pixel_shuffle_starts3
+node_pixel_shuffle_ends4
+node_pixel_shuffle_axes0node_pixel_shuffle_wnode_pixel_shuffle_slice_w"Slice
+í
+node_pixel_shuffle_n
+node_pixel_shuffle_channels
+node_pixel_shuffle_block
+node_pixel_shuffle_block
+node_pixel_shuffle_h
+node_pixel_shuffle_w!node_pixel_shuffle_reshape1_shape node_pixel_shuffle_concat_shape1"Concat*
+axis  
+r
+	conv2d_61
+!node_pixel_shuffle_reshape1_shapenode_pixel_shuffle_reshaped1node_pixel_shuffle_reshape1"Reshape
+}
+node_pixel_shuffle_reshaped1node_pixel_shuffle_transposednode_pixel_shuffle_transpose"	Transpose*
+perm@ @@@@@ 
+f
+node_pixel_shuffle_h
+node_pixel_shuffle_blocknode_pixel_shuffle_h2node_pixel_shuffle_mul_h"Mul
+f
+node_pixel_shuffle_w
+node_pixel_shuffle_blocknode_pixel_shuffle_w2node_pixel_shuffle_mul_w"Mul
+»
+node_pixel_shuffle_n
+node_pixel_shuffle_channels
+node_pixel_shuffle_h2
+node_pixel_shuffle_w2!node_pixel_shuffle_reshape2_shape node_pixel_shuffle_concat_shape2"Concat*
+axis  
+w
+node_pixel_shuffle_transposed
+!node_pixel_shuffle_reshape2_shapepixel_shufflenode_pixel_shuffle_reshape2"Reshape
 Þ
 pixel_shufflerelu_36node_relu_36"ReluJ£
 	namespace•: __main__.export_onnx.<locals>.GMNetWrapper/model: models.modules.GMNet.GMNet/model.act: torch.nn.modules.activation.ReLU/relu_36: aten.relu.defaultJ¨
@@ -2797,7 +2829,7 @@ t;oÇ¹*i@@Bmodel.res3.1.conv2.weightj
 length2304p* Bmodel.conv_last.biasJz(><*VBval_49j
 locationgmnet.onnx.dataj
 offset234432j
-length69696p*Bval_53Jýÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ*Bval_56Jÿÿÿÿÿÿÿÿþÿÿÿÿÿÿÿ*.Bval_68J @                            *Bval_4Jÿÿÿÿÿÿÿÿ*Bval_5J       *Bval_6J       *Bval_57Jÿÿÿÿÿÿÿÿ*Bval_58J       *Bval_59J@       ZÞ
+length69696p*Bval_53Jýÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ*Bval_56Jÿÿÿÿÿÿÿÿþÿÿÿÿÿÿÿ*.Bval_68J @                            *Bval_4Jÿÿÿÿÿÿÿÿ*Bval_5J       *Bval_6J       *Bval_57Jÿÿÿÿÿÿÿÿ*Bval_58J       *Bval_59J@       **Bnode_pixel_shuffle_starts0J        **Bnode_pixel_shuffle_starts1J       **Bnode_pixel_shuffle_starts2J       **Bnode_pixel_shuffle_starts3J       *(Bnode_pixel_shuffle_ends1J       *(Bnode_pixel_shuffle_ends2J       *(Bnode_pixel_shuffle_ends3J       *(Bnode_pixel_shuffle_ends4J       *(Bnode_pixel_shuffle_axes0J        *(Bnode_pixel_shuffle_blockJ       *+Bnode_pixel_shuffle_channelsJ@       ZÞ
 local_input!
 
 

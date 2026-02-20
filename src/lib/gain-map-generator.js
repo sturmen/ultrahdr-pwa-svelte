@@ -7,6 +7,7 @@ import {
 const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const WEBGL_FALLBACK_RETRY_NOTE = 'WebGPU produced an invalid gain map; retrying with WebGL.';
+const WEBGL_FALLBACK_ERROR_RETRY_NOTE = 'WebGPU inference failed; retrying with WebGL.';
 const MIN_GAIN_MAP_DYNAMIC_RANGE = 2;
 const MIN_GAIN_MAP_STD_DEV = 0.25;
 
@@ -16,6 +17,11 @@ function normalizeExecutionProviderName(value) {
   }
   const trimmed = value.trim().toLowerCase();
   return trimmed || null;
+}
+
+function isChromiumRuntime(runtime = globalThis) {
+  const userAgent = String(runtime?.navigator?.userAgent || '');
+  return /chrom(e|ium)|edg\//i.test(userAgent);
 }
 
 function formatExecutionProviderNote(provider) {
@@ -204,21 +210,37 @@ export class GmnetGainMapGenerator {
         INFERENCE_START_NOTE,
         { gmnetExecutionProvider: runtimeExecutionProvider },
       );
-      let { gainMapRgba, gainMapStats } = await runInference();
-      if (isNearFlatGainMap(gainMapStats)) {
-        const activeProvider = resolveCurrentExecutionProvider(runtimeExecutionProvider, session);
-        if (activeProvider === REQUIRED_GMNET_EXECUTION_PROVIDER) {
-          onStageProgress?.(
-            2,
-            WEBGL_FALLBACK_RETRY_NOTE,
-            { gmnetExecutionProvider: GMNET_FALLBACK_EXECUTION_PROVIDER },
-          );
-          const fallbackResult = await runInference({
-            forceExecutionProviders: [GMNET_FALLBACK_EXECUTION_PROVIDER],
-          });
-          gainMapRgba = fallbackResult.gainMapRgba;
-          gainMapStats = fallbackResult.gainMapStats;
+      const runWebglFallback = async (note) => {
+        onStageProgress?.(
+          2,
+          note,
+          { gmnetExecutionProvider: GMNET_FALLBACK_EXECUTION_PROVIDER },
+        );
+        return runInference({
+          forceExecutionProviders: [GMNET_FALLBACK_EXECUTION_PROVIDER],
+        });
+      };
+
+      const canRetryWithWebgl = () =>
+        isChromiumRuntime(this.runtime)
+        && resolveCurrentExecutionProvider(runtimeExecutionProvider, session)
+          === REQUIRED_GMNET_EXECUTION_PROVIDER;
+
+      let inferenceResult;
+      try {
+        inferenceResult = await runInference();
+      } catch (error) {
+        if (!canRetryWithWebgl()) {
+          throw error;
         }
+        inferenceResult = await runWebglFallback(WEBGL_FALLBACK_ERROR_RETRY_NOTE);
+      }
+
+      let { gainMapRgba, gainMapStats } = inferenceResult;
+      if (isNearFlatGainMap(gainMapStats) && canRetryWithWebgl()) {
+        const fallbackResult = await runWebglFallback(WEBGL_FALLBACK_RETRY_NOTE);
+        gainMapRgba = fallbackResult.gainMapRgba;
+        gainMapStats = fallbackResult.gainMapStats;
       }
       if (isNearFlatGainMap(gainMapStats)) {
         throw new Error(

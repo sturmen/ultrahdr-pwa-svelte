@@ -12,10 +12,14 @@ const VARIANT_FILES = {
   realworld: {
     model: 'gmnet-realworld.onnx',
     data: 'gmnet-realworld.onnx.data',
+    inlineModel: 'gmnet-realworld-inline.onnx',
+    webglModel: 'gmnet-realworld-inline-webgl.onnx',
   },
   synthetic: {
     model: 'gmnet-synthetic.onnx',
     data: 'gmnet-synthetic.onnx.data',
+    inlineModel: 'gmnet-synthetic-inline.onnx',
+    webglModel: 'gmnet-synthetic-inline-webgl.onnx',
   },
 };
 const LEGACY_FILES = ['gmnet.onnx', 'gmnet.onnx.data'];
@@ -50,6 +54,39 @@ async function validateModelRuntime(modelPath, modelDataPath) {
   }
 }
 
+function findMetadataShapeByName(metadata, name) {
+  if (!Array.isArray(metadata)) {
+    return null;
+  }
+  const entry = metadata.find((item) => item?.name === name);
+  return Array.isArray(entry?.shape) ? entry.shape : null;
+}
+
+async function validateInlineModelRuntime(modelPath) {
+  const session = await ort.InferenceSession.create(modelPath);
+  expect(session.inputNames).toEqual(['local_input', 'global_input']);
+  expect(session.outputNames).toEqual(['gain_map']);
+
+  const localShape = findMetadataShapeByName(session.inputMetadata, 'local_input');
+  const globalShape = findMetadataShapeByName(session.inputMetadata, 'global_input');
+  expect(localShape).toEqual([1, 3, 128, 128]);
+  expect(globalShape).toEqual([1, 3, 256, 256]);
+
+  const h = 128;
+  const w = 128;
+  const localInputData = new Float32Array(1 * 3 * h * w).fill(0.5);
+  const globalInputData = new Float32Array(1 * 3 * 256 * 256).fill(0.5);
+  const feeds = {
+    local_input: new ort.Tensor('float32', localInputData, [1, 3, h, w]),
+    global_input: new ort.Tensor('float32', globalInputData, [1, 3, 256, 256]),
+  };
+
+  const output = (await session.run(feeds)).gain_map;
+  expect(output).toBeDefined();
+  expect(output.dims).toEqual([1, 1, h, w]);
+  expect(output.data.length).toBe(h * w);
+}
+
 describe('GMNet ONNX model variants', () => {
   for (const [variant, files] of Object.entries(VARIANT_FILES)) {
     const modelPath = path.join(MODELS_ROOT, files.model);
@@ -65,6 +102,19 @@ describe('GMNet ONNX model variants', () => {
 
     it(`${variant} model runs inference with expected dynamic shape output`, async () => {
       await validateModelRuntime(modelPath, modelDataPath);
+    });
+
+    it(`${variant} inline model exists and uses fixed 128x128 local input`, async () => {
+      const inlineModelPath = path.join(MODELS_ROOT, files.inlineModel);
+      expect(fs.existsSync(inlineModelPath)).toBe(true);
+      expect(fs.statSync(inlineModelPath).size).toBeGreaterThan(1024);
+      await validateInlineModelRuntime(inlineModelPath);
+    });
+
+    it(`${variant} webgl compatibility model exists`, () => {
+      const webglModelPath = path.join(MODELS_ROOT, files.webglModel);
+      expect(fs.existsSync(webglModelPath)).toBe(true);
+      expect(fs.statSync(webglModelPath).size).toBeGreaterThan(1024);
     });
   }
 

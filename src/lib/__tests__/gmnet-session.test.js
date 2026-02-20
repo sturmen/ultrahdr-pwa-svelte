@@ -155,7 +155,8 @@ describe('GMNetInferenceSession runtime config', () => {
       2,
     );
 
-    expect(output).toBeInstanceOf(Uint8ClampedArray);
+    expect(output.constructor?.name).toBe('Uint8ClampedArray');
+    expect(output.length).toBe(2 * 2 * 4);
     expect(output.length).toBe(16);
     expect(Array.from(output.slice(0, 4))).toEqual([0, 0, 0, 255]);
     expect(Array.from(output.slice(4, 8))).toEqual([127, 127, 127, 255]);
@@ -249,7 +250,7 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(options.executionProviders).toEqual(['webgl']);
     expect(runtime.fetch).toHaveBeenCalledTimes(1);
     const fetchedUrls = runtime.fetch.mock.calls.map(([url]) => String(url));
-    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline.onnx'))).toBe(true);
+    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline-webgl.onnx'))).toBe(true);
     expect(runtime.fetch.mock.calls[0][1]).toMatchObject({ credentials: 'same-origin' });
     expect(options.externalData).toBeUndefined();
     expect(session.activeExecutionProvider).toBe('webgl');
@@ -457,6 +458,100 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(result.length).toBe(inputWidth * inputHeight * 4);
   });
 
+  it('uses fixed local inference dimensions for webgl and rescales output to original resolution', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+
+    session.session = {
+      run: vi.fn(async (feeds) => {
+        expect(feeds.local_input.dims).toEqual([1, 3, 128, 128]);
+        return { gain_map: { data: new Float32Array(128 * 128).fill(0.5), dims: [1, 1, 128, 128] } };
+      }),
+    };
+    session.activeExecutionProvider = 'webgl';
+
+    const preprocessGlobalSpy = vi
+      .spyOn(session, 'preprocessGlobal')
+      .mockResolvedValue({ kind: 'global' });
+    const preprocessLocalSpy = vi
+      .spyOn(session, 'preprocessLocal')
+      .mockImplementation((_imageData, width, height) => ({
+        kind: 'local',
+        dims: [1, 3, height, width],
+      }));
+
+    const inputWidth = 320;
+    const inputHeight = 240;
+    const image = new ImageData(
+      new Uint8ClampedArray(inputWidth * inputHeight * 4),
+      inputWidth,
+      inputHeight,
+    );
+
+    const result = await session.run(image);
+
+    expect(preprocessGlobalSpy).toHaveBeenCalledTimes(1);
+    expect(preprocessLocalSpy).toHaveBeenCalledTimes(1);
+    const [localImageData, localWidth, localHeight] = preprocessLocalSpy.mock.calls[0];
+    expect(localWidth).toBe(128);
+    expect(localHeight).toBe(128);
+    expect(localImageData.width).toBe(128);
+    expect(localImageData.height).toBe(128);
+    expect(result.constructor?.name).toBe('Uint8ClampedArray');
+    expect(result.length).toBe(inputWidth * inputHeight * 4);
+  });
+
+  it('uses fixed local inference dimensions for firefox webgpu and rescales output to original resolution', async () => {
+    const runtime = {
+      navigator: {
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:129.0) Gecko/20100101 Firefox/129.0',
+      },
+      document,
+      OffscreenCanvas: undefined,
+      ImageData,
+    };
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession({ runtime });
+
+    session.session = {
+      run: vi.fn(async (feeds) => {
+        expect(feeds.local_input.dims).toEqual([1, 3, 128, 128]);
+        return { gain_map: { data: new Float32Array(128 * 128).fill(0.5), dims: [1, 1, 128, 128] } };
+      }),
+    };
+    session.activeExecutionProvider = 'webgpu';
+
+    const preprocessGlobalSpy = vi
+      .spyOn(session, 'preprocessGlobal')
+      .mockResolvedValue({ kind: 'global' });
+    const preprocessLocalSpy = vi
+      .spyOn(session, 'preprocessLocal')
+      .mockImplementation((_imageData, width, height) => ({
+        kind: 'local',
+        dims: [1, 3, height, width],
+      }));
+
+    const inputWidth = 320;
+    const inputHeight = 240;
+    const image = new ImageData(
+      new Uint8ClampedArray(inputWidth * inputHeight * 4),
+      inputWidth,
+      inputHeight,
+    );
+
+    const result = await session.run(image);
+
+    expect(preprocessGlobalSpy).toHaveBeenCalledTimes(1);
+    expect(preprocessLocalSpy).toHaveBeenCalledTimes(1);
+    const [localImageData, localWidth, localHeight] = preprocessLocalSpy.mock.calls[0];
+    expect(localWidth).toBe(128);
+    expect(localHeight).toBe(128);
+    expect(localImageData.width).toBe(128);
+    expect(localImageData.height).toBe(128);
+    expect(result.constructor?.name).toBe('Uint8ClampedArray');
+    expect(result.length).toBe(inputWidth * inputHeight * 4);
+  });
+
   it('handles model output dims that differ from local input by resizing back to expected shape', async () => {
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
@@ -583,7 +678,8 @@ describe('GMNetInferenceSession runtime config', () => {
     const image = new ImageData(new Uint8ClampedArray(2 * 2 * 4), 2, 2);
     const output = await session.run(image, { forceExecutionProviders: ['webgl'] });
 
-    expect(output).toBeInstanceOf(Uint8ClampedArray);
+    expect(output.constructor?.name).toBe('Uint8ClampedArray');
+    expect(output.length).toBe(2 * 2 * 4);
     expect(initSpy).toHaveBeenCalledTimes(1);
     expect(webgpuSession.run).not.toHaveBeenCalled();
     expect(webglSession.run).toHaveBeenCalledTimes(1);

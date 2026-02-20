@@ -35,8 +35,14 @@ function isWebKitRuntime(runtime = globalThis) {
         && !userAgent.includes('edg/');
 }
 
+function isFirefoxRuntime(runtime = globalThis) {
+    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+    return userAgent.includes('firefox/');
+}
+
 const DEFAULT_WASM_THREAD_COUNT = 1;
 const MAX_WASM_THREAD_COUNT = 4;
+const WEBGL_LOCAL_INPUT_SIZE = 128;
 let ortAllModulePromise = null;
 const configuredOrtModules = new WeakSet();
 
@@ -149,12 +155,14 @@ const MODEL_VARIANT_CONFIG = Object.freeze({
     realworld: {
         modelFilename: 'gmnet-realworld.onnx',
         modelDataFilename: 'gmnet-realworld.onnx.data',
-        inlineModelFilename: 'gmnet-realworld-inline.onnx'
+        inlineModelFilename: 'gmnet-realworld-inline.onnx',
+        webglModelFilename: 'gmnet-realworld-inline-webgl.onnx'
     },
     synthetic: {
         modelFilename: 'gmnet-synthetic.onnx',
         modelDataFilename: 'gmnet-synthetic.onnx.data',
-        inlineModelFilename: 'gmnet-synthetic-inline.onnx'
+        inlineModelFilename: 'gmnet-synthetic-inline.onnx',
+        webglModelFilename: 'gmnet-synthetic-inline-webgl.onnx'
     }
 });
 // Current exported artifacts reference this external-data location in the ONNX graph.
@@ -473,7 +481,7 @@ export class GMNetInferenceSession {
             const version = import.meta.env.VITE_APP_ASSET_VERSION || 'dev';
             const variantConfig = MODEL_VARIANT_CONFIG[normalizedVariant];
             const modelFilename = requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER
-                ? variantConfig.inlineModelFilename
+                ? (variantConfig.webglModelFilename || variantConfig.inlineModelFilename)
                 : variantConfig.modelFilename;
             const modelUrl = `${MODEL_BASE_PATH}${modelFilename}?v=${version}`;
             const externalDataUrl = `${MODEL_BASE_PATH}${variantConfig.modelDataFilename}?v=${version}`;
@@ -564,14 +572,33 @@ export class GMNetInferenceSession {
         }
 
         // imageData is RGBA Uint8ClampedArray
-        const inferenceImageData = imageData;
-        const inferenceWidth = inferenceImageData.width;
-        const inferenceHeight = inferenceImageData.height;
+        const sourceWidth = imageData.width;
+        const sourceHeight = imageData.height;
+        const activeProvider = normalizeExecutionProvider(this.activeExecutionProvider);
+        const useFixedLocalInputSize = (
+            activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER
+            || (activeProvider === REQUIRED_GMNET_EXECUTION_PROVIDER && isFirefoxRuntime(this.runtime))
+        );
+        let inferenceImageData = imageData;
+        let inferenceWidth = sourceWidth;
+        let inferenceHeight = sourceHeight;
+        if (
+            useFixedLocalInputSize &&
+            (sourceWidth !== WEBGL_LOCAL_INPUT_SIZE || sourceHeight !== WEBGL_LOCAL_INPUT_SIZE)
+        ) {
+            inferenceWidth = WEBGL_LOCAL_INPUT_SIZE;
+            inferenceHeight = WEBGL_LOCAL_INPUT_SIZE;
+            inferenceImageData = resizeImageData(
+                imageData,
+                inferenceWidth,
+                inferenceHeight
+            );
+        }
 
         // 1. Preprocess
         // Global Input: Resize to 256x256
         console.log('[GMNet session] Starting preprocessGlobal');
-        const globalTensor = await this.preprocessGlobal(inferenceImageData);
+        const globalTensor = await this.preprocessGlobal(imageData);
 
         // Local Input: Original resolution (or downscaled by half if defined)
         console.log('[GMNet session] Starting preprocessLocal');
@@ -615,6 +642,15 @@ export class GMNetInferenceSession {
                 modelOutputDimensions.height,
                 inferenceWidth,
                 inferenceHeight
+            );
+        }
+        if (inferenceWidth !== sourceWidth || inferenceHeight !== sourceHeight) {
+            inferenceOutput = resizeRgbaBuffer(
+                inferenceOutput,
+                inferenceWidth,
+                inferenceHeight,
+                sourceWidth,
+                sourceHeight
             );
         }
 
