@@ -18,8 +18,28 @@ const INFERENCE_TIMEOUT_WASM_MS = 600_000;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const INFERENCE_TIMEOUT_ERROR_MESSAGE = 'Processing worker stalled during GMNet inference.';
 
+export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
+  'onnx-load',
+  'webgpu-check',
+  'gmnet-session-init',
+  'gmnet-provider-verify',
+  'gmnet-smoke-run',
+  'startup-ready',
+]);
+
+export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
+  'onnx-load': 'Load ONNX Runtime',
+  'webgpu-check': 'Check WebGPU availability',
+  'gmnet-session-init': 'Initialize GMNet session',
+  'gmnet-provider-verify': 'Verify GMNet execution provider',
+  'gmnet-smoke-run': 'Run GMNet smoke test (128x128)',
+  'startup-ready': 'Finalize startup readiness',
+});
+
 let workerClientPromise = null;
 let workerClientCreationError = null;
+let lastRuntimeInitProgressEvent = null;
+const runtimeInitProgressListeners = new Set();
 
 function canUseProcessingWorker(runtime = globalThis) {
   return (
@@ -52,6 +72,21 @@ function normalizeWorkerError(raw) {
   if (raw.stack) {
     error.stack = String(raw.stack);
   }
+  if (raw.code) {
+    error.code = String(raw.code);
+  }
+  if (raw.stepId) {
+    error.stepId = String(raw.stepId);
+  }
+  if (raw.userMessage) {
+    error.userMessage = String(raw.userMessage);
+  }
+  if (raw.stackSnippet) {
+    error.stackSnippet = String(raw.stackSnippet);
+  }
+  if (raw.diagnostics && typeof raw.diagnostics === 'object') {
+    error.diagnostics = { ...raw.diagnostics };
+  }
   return error;
 }
 
@@ -67,6 +102,32 @@ function cloneEventDetail(eventDetail) {
       : eventDetail.stageDurationsMs,
     error: eventDetail.error ? { ...eventDetail.error } : eventDetail.error,
   };
+}
+
+function cloneRuntimeInitProgressEvent(eventDetail) {
+  if (!eventDetail || typeof eventDetail !== 'object') {
+    return eventDetail;
+  }
+
+  return {
+    ...eventDetail,
+    diagnostics:
+      eventDetail.diagnostics && typeof eventDetail.diagnostics === 'object'
+        ? { ...eventDetail.diagnostics }
+        : eventDetail.diagnostics,
+  };
+}
+
+function publishRuntimeInitProgress(eventDetail) {
+  const detail = cloneRuntimeInitProgressEvent(eventDetail);
+  lastRuntimeInitProgressEvent = detail;
+  for (const listener of runtimeInitProgressListeners) {
+    try {
+      listener(detail);
+    } catch (callbackError) {
+      console.warn('[Process] Runtime initialization progress callback failed:', callbackError);
+    }
+  }
 }
 
 function publishWorkerTelemetry(eventDetail) {
@@ -370,6 +431,20 @@ function initializeWorkerClient() {
         return;
       }
 
+      if (message.type === 'init-progress') {
+        publishRuntimeInitProgress(message.event);
+        return;
+      }
+
+      if (message.type === 'init-error') {
+        const initError = normalizeWorkerError(message.error);
+        if (!initError.name || initError.name === 'Error') {
+          initError.name = 'RuntimeInitializationError';
+        }
+        rejectInitialization(initError);
+        return;
+      }
+
       if (message.type === 'ready') {
         if (!ready) {
           ready = true;
@@ -530,10 +605,59 @@ async function getWorkerClient() {
   return workerClientPromise;
 }
 
+function createWorkerUnavailableError() {
+  const error = new Error(WORKER_SUPPORT_ERROR);
+  error.name = 'ProcessingWorkerUnavailableError';
+  return error;
+}
+
+function resetRuntimeInitializationState() {
+  workerClientPromise = null;
+  workerClientCreationError = null;
+  lastRuntimeInitProgressEvent = null;
+}
+
+export async function initializeRuntime(options = {}) {
+  const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
+  const forceRetry = Boolean(options?.forceRetry);
+
+  if (forceRetry) {
+    resetRuntimeInitializationState();
+  }
+
+  if (!canUseProcessingWorker()) {
+    const error = createWorkerUnavailableError();
+    error.code = 'RUNTIME_INIT_WORKER_UNAVAILABLE';
+    error.userMessage = 'Processing worker support is unavailable in this environment.';
+    error.stepId = 'webgpu-check';
+    error.diagnostics = {
+      hasWorker: typeof globalThis?.Worker === 'function',
+      hasOffscreenCanvas: typeof globalThis?.OffscreenCanvas !== 'undefined',
+      hasCreateImageBitmap: typeof globalThis?.createImageBitmap === 'function',
+    };
+    throw error;
+  }
+
+  if (onProgress) {
+    runtimeInitProgressListeners.add(onProgress);
+    if (lastRuntimeInitProgressEvent) {
+      onProgress(cloneRuntimeInitProgressEvent(lastRuntimeInitProgressEvent));
+    }
+  }
+
+  try {
+    await getWorkerClient();
+    return { ready: true };
+  } finally {
+    if (onProgress) {
+      runtimeInitProgressListeners.delete(onProgress);
+    }
+  }
+}
+
 export async function processImage(file, options = {}) {
   if (!canUseProcessingWorker()) {
-    const error = new Error(WORKER_SUPPORT_ERROR);
-    error.name = 'ProcessingWorkerUnavailableError';
+    const error = createWorkerUnavailableError();
     throw error;
   }
 

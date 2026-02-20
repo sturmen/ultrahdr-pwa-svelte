@@ -7,6 +7,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createCanvas, loadImage } from 'canvas';
 import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
+import { ensureRuntimeGateReady, getRuntimeGateFailure } from './runtime-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -502,6 +503,14 @@ function extractOutputHeadroom(ultraHdrPath, tempDir) {
 // ============================================================
 
 test.describe('UltraHDR PWA E2E Tests', () => {
+    test.describe.configure({ mode: 'serial' });
+
+    test.beforeEach(async ({ page }, testInfo) => {
+        const failureReason = getRuntimeGateFailure(testInfo.project.name);
+        test.skip(Boolean(failureReason), failureReason || '');
+        await page.goto('/');
+        await ensureRuntimeGateReady(page, testInfo);
+    });
 
     test.describe('Single Image Processing', () => {
         test('should process a single SDR image and produce a valid UltraHDR JPEG', async ({ page }) => {
@@ -969,26 +978,18 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             await context.close();
         });
 
-        test('should show error when WASM fails to load', async ({ browser }) => {
+        test('should fail loudly during startup when GMNet smoke asset cannot be loaded', async ({ browser }) => {
             const context = await browser.newContext({ serviceWorkers: 'block' });
             const page = await context.newPage();
 
-            // Intercept UltraHDR WASM wrapper requests (including versioned query strings) and abort them.
-            await page.route('**/ultrahdr_wasm.wasm*', route => route.abort());
-            await page.route('**/ultrahdr_wasm.js*', route => route.abort());
+            // Block startup smoke asset so initialization fails before UI unlocks.
+            await page.route('**/models/gmnet-smoke-128.png*', route => route.abort());
 
             await page.goto('/');
+            await expect(page.getByTestId('runtime-init-failure')).toBeVisible();
+            await expect(page.getByText(/runtime_init_smoke_asset_failed/i)).toBeVisible();
+            await expect(page.getByTestId('upload-drop-zone')).toHaveCount(0);
 
-            // Upload an image (this will trigger WASM loading)
-            await uploadFiles(page, [SDR_IMAGE]);
-
-            const hasError = await page.waitForFunction(() => {
-                const errorEl = document.querySelector('.error');
-                const bodyText = document.body.innerText.toLowerCase();
-                return !!(errorEl || bodyText.includes('error') || bodyText.includes('failed'));
-            }, undefined, { timeout: 10_000 }).then(() => true).catch(() => false);
-
-            expect(hasError).toBe(true);
             await context.close();
         });
     });

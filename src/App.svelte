@@ -2,6 +2,12 @@
   import { onMount, tick } from "svelte";
   import DropZone from "./lib/DropZone.svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
+  import InitializationGate from "./lib/InitializationGate.svelte";
+  import {
+    initializeRuntime,
+    RUNTIME_INIT_STEP_LABELS,
+    RUNTIME_INIT_STEP_ORDER,
+  } from "./lib/processing.js";
   import { consumeSharedFilesFromLaunch } from "./lib/share-target-launch.js";
   import { loadQueueState } from "./lib/share-store.js";
   import { createDefaultPwaUpdateState, createPwaUpdateCoordinator } from "./lib/pwa-updater.js";
@@ -17,6 +23,197 @@
   let isProcessingBusy = false;
   let pwaUpdateState = createDefaultPwaUpdateState();
   let pwaUpdateCoordinator = null;
+  let runtimeInitState = "running";
+  let runtimeInitSteps = createRuntimeInitSteps();
+  let runtimeInitFailure = null;
+  let runtimeInitRunId = 0;
+  let appDisposed = false;
+
+  function createRuntimeInitSteps() {
+    return RUNTIME_INIT_STEP_ORDER.map((stepId) => ({
+      id: stepId,
+      label: RUNTIME_INIT_STEP_LABELS[stepId] || stepId,
+      status: "pending",
+      note: "",
+      diagnostics: null,
+      errorCode: null,
+    }));
+  }
+
+  function withStackSnippet(stack) {
+    if (typeof stack !== "string" || stack.length === 0) {
+      return null;
+    }
+    return stack
+      .split("\n")
+      .slice(0, 8)
+      .join("\n");
+  }
+
+  function findRuntimeStepLabel(stepId) {
+    return (
+      RUNTIME_INIT_STEP_LABELS[stepId] ||
+      runtimeInitSteps.find((step) => step.id === stepId)?.label ||
+      stepId ||
+      "Unknown step"
+    );
+  }
+
+  function updateRuntimeStep(stepId, changes = {}) {
+    if (!stepId) {
+      return;
+    }
+    const existingIndex = runtimeInitSteps.findIndex((step) => step.id === stepId);
+    if (existingIndex === -1) {
+      runtimeInitSteps = [
+        ...runtimeInitSteps,
+        {
+          id: stepId,
+          label: findRuntimeStepLabel(stepId),
+          status: "pending",
+          note: "",
+          diagnostics: null,
+          errorCode: null,
+          ...changes,
+        },
+      ];
+      return;
+    }
+
+    runtimeInitSteps = runtimeInitSteps.map((step, index) =>
+      index === existingIndex
+        ? {
+            ...step,
+            ...changes,
+          }
+        : step,
+    );
+  }
+
+  function applyRuntimeProgressEvent(event) {
+    if (!event || typeof event !== "object") {
+      return;
+    }
+    const stepId = event.stepId;
+    if (!stepId) {
+      return;
+    }
+    updateRuntimeStep(stepId, {
+      label: event.stepLabel || findRuntimeStepLabel(stepId),
+      status: event.status || "pending",
+      note: event.note || "",
+      diagnostics:
+        event.diagnostics && typeof event.diagnostics === "object"
+          ? { ...event.diagnostics }
+          : null,
+      errorCode: typeof event.errorCode === "string" ? event.errorCode : null,
+    });
+  }
+
+  function buildRuntimeInitFailure(error) {
+    const stepId =
+      typeof error?.stepId === "string" && error.stepId.length > 0
+        ? error.stepId
+        : "onnx-load";
+    const errorCode =
+      typeof error?.code === "string" && error.code.length > 0
+        ? error.code
+        : "RUNTIME_INIT_UNKNOWN";
+    const userMessage =
+      typeof error?.userMessage === "string" && error.userMessage.length > 0
+        ? error.userMessage
+        : error?.message || "Runtime initialization failed.";
+    const diagnostics = {
+      ...(error?.diagnostics && typeof error.diagnostics === "object"
+        ? { ...error.diagnostics }
+        : {}),
+      errorCode,
+      stepId,
+      message: error?.message || userMessage,
+      stackSnippet: error?.stackSnippet || withStackSnippet(error?.stack),
+    };
+
+    return {
+      stepId,
+      stepLabel: findRuntimeStepLabel(stepId),
+      errorCode,
+      userMessage,
+      message: error?.message || userMessage,
+      diagnostics,
+    };
+  }
+
+  async function runRuntimeInitialization({ forceRetry = false } = {}) {
+    const runId = ++runtimeInitRunId;
+    runtimeInitState = "running";
+    runtimeInitFailure = null;
+    runtimeInitSteps = createRuntimeInitSteps();
+
+    try {
+      await initializeRuntime({
+        forceRetry,
+        onProgress: (event) => {
+          if (appDisposed || runId !== runtimeInitRunId) {
+            return;
+          }
+          applyRuntimeProgressEvent(event);
+        },
+      });
+      if (appDisposed || runId !== runtimeInitRunId) {
+        return false;
+      }
+      runtimeInitState = "ready";
+      return true;
+    } catch (error) {
+      if (appDisposed || runId !== runtimeInitRunId) {
+        return false;
+      }
+      runtimeInitFailure = buildRuntimeInitFailure(error);
+      runtimeInitState = "failed";
+      updateRuntimeStep(runtimeInitFailure.stepId, {
+        status: "failed",
+        note: runtimeInitFailure.userMessage,
+        errorCode: runtimeInitFailure.errorCode,
+        diagnostics: runtimeInitFailure.diagnostics,
+      });
+      return false;
+    }
+  }
+
+  async function initializeLaunchContext() {
+    launchIntent = parseLaunchIntent(
+      typeof window !== "undefined" ? window.location.search : "",
+    );
+    const sharedFiles = await consumeSharedFilesFromLaunch();
+    if (sharedFiles.length > 0) {
+      files = sharedFiles;
+      launchSource = "share-target";
+    } else {
+      launchSource = "regular";
+      try {
+        const persistedQueue = await loadQueueState();
+        if (persistedQueue?.hasPending) {
+          restoreNotice = "Previous queue could not be restored. Please re-add files.";
+        }
+      } catch (e) {
+        console.warn("[App] Unable to load persisted queue state:", e);
+      }
+    }
+    shareLaunchChecked = true;
+    await maybeAutoPickImages();
+  }
+
+  async function bootApp({ forceRetry = false } = {}) {
+    if (!forceRetry && runtimeInitState === "ready") {
+      return;
+    }
+    shareLaunchChecked = false;
+    const initialized = await runRuntimeInitialization({ forceRetry });
+    if (!initialized || appDisposed) {
+      return;
+    }
+    await initializeLaunchContext();
+  }
 
   function handleFiles(event) {
     files = Array.from(event.detail);
@@ -65,7 +262,12 @@
     await pwaUpdateCoordinator?.applyUpdate();
   }
 
+  function handleRuntimeRetry() {
+    void bootApp({ forceRetry: true });
+  }
+
   onMount(() => {
+    appDisposed = false;
     pwaUpdateCoordinator = createPwaUpdateCoordinator({
       onStateChange: (nextState) => {
         pwaUpdateState = nextState;
@@ -73,43 +275,33 @@
       isBusy: () => isProcessingBusy,
     });
 
-    (async () => {
-      launchIntent = parseLaunchIntent(
-        typeof window !== "undefined" ? window.location.search : "",
-      );
-      const sharedFiles = await consumeSharedFilesFromLaunch();
-      if (sharedFiles.length > 0) {
-        files = sharedFiles;
-        launchSource = "share-target";
-      } else {
-        launchSource = "regular";
-        try {
-          const persistedQueue = await loadQueueState();
-          if (persistedQueue?.hasPending) {
-            restoreNotice = "Previous queue could not be restored. Please re-add files.";
-          }
-        } catch (e) {
-          console.warn("[App] Unable to load persisted queue state:", e);
-        }
-      }
-      shareLaunchChecked = true;
-      await maybeAutoPickImages();
-    })();
+    void bootApp();
 
     return () => {
+      appDisposed = true;
       pwaUpdateCoordinator?.dispose();
       pwaUpdateCoordinator = null;
     };
   });
 </script>
 
-<main class="app-shell" data-testid="app-shell">
+<main class="app-shell" data-testid="app-shell" data-runtime-init-state={runtimeInitState}>
   <header class="app-header">
     <h1>UltraHDR Converter</h1>
   </header>
 
   <section class="content-area" aria-live="polite">
-    {#if activeView === "about"}
+    {#if runtimeInitState === "ready"}
+      <span class="runtime-ready-marker" data-testid="runtime-init-ready">Runtime ready</span>
+    {/if}
+    {#if runtimeInitState !== "ready"}
+      <InitializationGate
+        state={runtimeInitState}
+        steps={runtimeInitSteps}
+        failure={runtimeInitFailure}
+        on:retry={handleRuntimeRetry}
+      />
+    {:else if activeView === "about"}
       <article class="about-page" data-testid="about-page">
         <h2>About UltraHDR Converter</h2>
         <p>
@@ -171,31 +363,33 @@
     <p class="footer-compatibility">
       <b>Try Google Chrome on Windows/macOS if you run into issues.</b>
     </p>
-    {#if activeView === "about"}
-      <button class="footer-link" type="button" on:click={openConverter}>Back to Converter</button>
-    {:else}
-      <button class="footer-link" type="button" on:click={openAbout}>About</button>
-    {/if}
-    {#if pwaUpdateState.updateAvailable}
-      {#if pwaUpdateState.pendingUntilIdle}
-        <span class="footer-update" data-testid="pwa-update-pending">
-          Update downloaded. It can be applied when processing is idle.
-        </span>
+    {#if runtimeInitState === "ready"}
+      {#if activeView === "about"}
+        <button class="footer-link" type="button" on:click={openConverter}>Back to Converter</button>
       {:else}
-        <span class="footer-update" data-testid="pwa-update-available">
-          A newer version is ready.
-          <button
-            class="footer-link footer-update-action"
-            type="button"
-            on:click={applyAppUpdate}
-            disabled={pwaUpdateState.applying}
-          >
-            {pwaUpdateState.applying ? "Updating..." : "Update now"}
-          </button>
-        </span>
+        <button class="footer-link" type="button" on:click={openAbout}>About</button>
       {/if}
-    {:else if pwaUpdateState.checking}
-      <span class="footer-update" data-testid="pwa-update-checking">Checking for updates...</span>
+      {#if pwaUpdateState.updateAvailable}
+        {#if pwaUpdateState.pendingUntilIdle}
+          <span class="footer-update" data-testid="pwa-update-pending">
+            Update downloaded. It can be applied when processing is idle.
+          </span>
+        {:else}
+          <span class="footer-update" data-testid="pwa-update-available">
+            A newer version is ready.
+            <button
+              class="footer-link footer-update-action"
+              type="button"
+              on:click={applyAppUpdate}
+              disabled={pwaUpdateState.applying}
+            >
+              {pwaUpdateState.applying ? "Updating..." : "Update now"}
+            </button>
+          </span>
+        {/if}
+      {:else if pwaUpdateState.checking}
+        <span class="footer-update" data-testid="pwa-update-checking">Checking for updates...</span>
+      {/if}
     {/if}
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a>
     <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
@@ -220,6 +414,18 @@
 
   .content-area {
     min-height: 40vh;
+  }
+
+  .runtime-ready-marker {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    border: 0;
+    white-space: nowrap;
   }
 
   .drop-container {

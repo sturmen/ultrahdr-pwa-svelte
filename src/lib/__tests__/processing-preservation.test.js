@@ -373,6 +373,87 @@ describe('processImage UltraHDR preservation path', () => {
         expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
     });
 
+    it('normalizes multichannel gain-map metadata for rotated preserved UltraHDR output', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(true);
+
+        decoderInstance.getGainMapMetadata.mockReturnValueOnce({
+            gainMapMin: [0.8, 0.9, 1.0],
+            gainMapMax: [2.2, 2.4, 2.6],
+            gamma: [1.0, 1.1, 1.2],
+            offsetSdr: [0.0, 0.1, 0.2],
+            offsetHdr: [0.0, 0.2, 0.4],
+            hdrCapacityMin: 1.0,
+            hdrCapacityMax: 2.6
+        });
+
+        const originalImage = global.Image;
+        global.Image = class MockImage {
+            constructor() {
+                this.width = 1;
+                this.height = 1;
+            }
+
+            set src(_value) {
+                setTimeout(() => {
+                    if (this.onload) this.onload();
+                }, 0);
+            }
+        };
+
+        const originalCreateElement = document.createElement.bind(document);
+        const canvasSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
+            if (tagName !== 'canvas') {
+                return originalCreateElement(tagName);
+            }
+
+            return {
+                width: 1,
+                height: 1,
+                getContext: vi.fn(() => ({
+                    drawImage: vi.fn(),
+                    getImageData: vi.fn(() =>
+                        new ImageData(new Uint8ClampedArray([200, 150, 100, 255]), 1, 1)
+                    ),
+                    putImageData: vi.fn(),
+                    save: vi.fn(),
+                    restore: vi.fn(),
+                    translate: vi.fn(),
+                    rotate: vi.fn()
+                })),
+                toBlob: vi.fn((callback) => {
+                    callback(new Blob([baseUhdrBytes], { type: 'image/jpeg' }));
+                })
+            };
+        });
+
+        const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
+
+        await processImage(file, {
+            rotation: 90,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        global.Image = originalImage;
+
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.objectContaining({
+                gainMapMin: [0.8, 0.8, 0.8],
+                gainMapMax: [2.2, 2.2, 2.2],
+                gamma: [1.0, 1.0, 1.0],
+                offsetSdr: [0.0, 0.0, 0.0],
+                offsetHdr: [0.0, 0.0, 0.0]
+            })
+        );
+
+        expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
+    });
+
     it('passes extracted HEIC EXIF payload to encoder when stripExif=false', async () => {
         const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');

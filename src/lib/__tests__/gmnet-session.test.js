@@ -25,6 +25,7 @@ vi.mock('onnxruntime-web/webgpu', () => {
 describe('GMNetInferenceSession runtime config', () => {
   let originalNavigatorGpuDescriptor;
   let originalNavigatorHardwareConcurrencyDescriptor;
+  let originalNavigatorUserAgentDescriptor;
   let originalCrossOriginIsolatedDescriptor;
 
   beforeEach(() => {
@@ -36,6 +37,12 @@ describe('GMNetInferenceSession runtime config', () => {
       originalNavigatorHardwareConcurrencyDescriptor = Object.getOwnPropertyDescriptor(
         Navigator.prototype,
         'hardwareConcurrency',
+      );
+    }
+    if (!originalNavigatorUserAgentDescriptor) {
+      originalNavigatorUserAgentDescriptor = Object.getOwnPropertyDescriptor(
+        Navigator.prototype,
+        'userAgent',
       );
     }
     if (!originalCrossOriginIsolatedDescriptor) {
@@ -57,6 +64,11 @@ describe('GMNetInferenceSession runtime config', () => {
       );
     } else {
       Reflect.deleteProperty(Navigator.prototype, 'hardwareConcurrency');
+    }
+    if (originalNavigatorUserAgentDescriptor) {
+      Object.defineProperty(Navigator.prototype, 'userAgent', originalNavigatorUserAgentDescriptor);
+    } else {
+      Reflect.deleteProperty(Navigator.prototype, 'userAgent');
     }
     if (originalCrossOriginIsolatedDescriptor) {
       Object.defineProperty(globalThis, 'crossOriginIsolated', originalCrossOriginIsolatedDescriptor);
@@ -110,7 +122,7 @@ describe('GMNetInferenceSession runtime config', () => {
     const output = session.postprocess(
       { data: new Float32Array([0, 0.5, 1, 2]) },
       2,
-      2
+      2,
     );
 
     expect(output).toBeInstanceOf(Uint8ClampedArray);
@@ -122,10 +134,17 @@ describe('GMNetInferenceSession runtime config', () => {
   });
 
   it('initializes default realworld ORT session with explicit external ONNX data mapping', async () => {
+    Object.defineProperty(Navigator.prototype, 'gpu', {
+      configurable: true,
+      value: {},
+    });
     const ort = await import('onnxruntime-web/webgpu');
     ort.env.wasm = {};
     ort.env.webgpu = {};
-    ort.InferenceSession.create.mockResolvedValueOnce({ run: vi.fn() });
+    ort.InferenceSession.create.mockResolvedValueOnce({
+      run: vi.fn(),
+      executionProviders: ['webgpu'],
+    });
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
@@ -134,7 +153,7 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(ort.InferenceSession.create).toHaveBeenCalledTimes(1);
     const [modelUrl, options] = ort.InferenceSession.create.mock.calls[0];
     expect(String(modelUrl)).toContain('/models/gmnet-realworld.onnx');
-    expect(options.executionProviders).toEqual(['wasm']);
+    expect(options.executionProviders).toEqual(['webgpu']);
     expect(options.externalData).toEqual([
       {
         path: 'gmnet.onnx.data',
@@ -143,7 +162,40 @@ describe('GMNetInferenceSession runtime config', () => {
     ]);
   });
 
-  it('prefers webgpu execution provider when GPU is available', async () => {
+  it('fails fast when webgpu runtime is unavailable', async () => {
+    const ort = await import('onnxruntime-web/webgpu');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+    ort.InferenceSession.create.mockClear();
+
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession({
+      runtime: {
+        navigator: {},
+      },
+    });
+
+    await expect(session.init()).rejects.toMatchObject({
+      name: 'GmnetWebGpuUnavailableError',
+    });
+    expect(ort.InferenceSession.create).not.toHaveBeenCalled();
+  });
+
+  it('does not set WebGPU powerPreference on Windows', async () => {
+    Object.defineProperty(Navigator.prototype, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    });
+    const ort = await import('onnxruntime-web/webgpu');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+
+    await import('../gmnet-session.js');
+
+    expect(ort.env.webgpu.powerPreference).toBeUndefined();
+  });
+
+  it('emits runtime telemetry with webgpu as the active execution provider', async () => {
     Object.defineProperty(Navigator.prototype, 'gpu', {
       configurable: true,
       value: {},
@@ -152,25 +204,9 @@ describe('GMNetInferenceSession runtime config', () => {
     ort.env.wasm = {};
     ort.env.webgpu = {};
     ort.InferenceSession.create.mockClear();
-    ort.InferenceSession.create.mockResolvedValueOnce({ run: vi.fn() });
-
-    const { GMNetInferenceSession } = await import('../gmnet-session.js');
-    const session = new GMNetInferenceSession();
-    await session.init();
-
-    expect(ort.InferenceSession.create).toHaveBeenCalledTimes(1);
-    const [, options] = ort.InferenceSession.create.mock.calls[0];
-    expect(options.executionProviders).toEqual(['webgpu', 'wasm']);
-  });
-
-  it('emits runtime telemetry with the active execution provider', async () => {
-    const ort = await import('onnxruntime-web/webgpu');
-    ort.env.wasm = {};
-    ort.env.webgpu = {};
-    ort.InferenceSession.create.mockClear();
     ort.InferenceSession.create.mockResolvedValueOnce({
       run: vi.fn(),
-      executionProviders: ['wasm'],
+      executionProviders: ['webgpu'],
     });
     const runtimeListener = vi.fn();
 
@@ -181,20 +217,24 @@ describe('GMNetInferenceSession runtime config', () => {
 
     expect(runtimeListener).toHaveBeenCalledWith(
       expect.objectContaining({
-        executionProvider: 'wasm',
-        requestedExecutionProviders: expect.arrayContaining(['wasm']),
+        executionProvider: 'webgpu',
+        requestedExecutionProviders: ['webgpu'],
       }),
     );
   });
 
   it('logs the selected execution provider to console during init', async () => {
+    Object.defineProperty(Navigator.prototype, 'gpu', {
+      configurable: true,
+      value: {},
+    });
     const ort = await import('onnxruntime-web/webgpu');
     ort.env.wasm = {};
     ort.env.webgpu = {};
     ort.InferenceSession.create.mockClear();
     ort.InferenceSession.create.mockResolvedValueOnce({
       run: vi.fn(),
-      executionProviders: ['wasm'],
+      executionProviders: ['webgpu'],
     });
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
 
@@ -203,19 +243,23 @@ describe('GMNetInferenceSession runtime config', () => {
     await session.init();
 
     expect(infoSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/\[GMNet\] Execution provider: wasm/i),
+      expect.stringMatching(/\[GMNet\] Execution provider: webgpu/i),
     );
     infoSpy.mockRestore();
   });
 
   it('re-emits runtime telemetry when reusing a cached variant session', async () => {
+    Object.defineProperty(Navigator.prototype, 'gpu', {
+      configurable: true,
+      value: {},
+    });
     const ort = await import('onnxruntime-web/webgpu');
     ort.env.wasm = {};
     ort.env.webgpu = {};
     ort.InferenceSession.create.mockClear();
     ort.InferenceSession.create.mockResolvedValueOnce({
       run: vi.fn(),
-      executionProviders: ['wasm'],
+      executionProviders: ['webgpu'],
     });
     const runtimeListener = vi.fn();
 
@@ -228,16 +272,24 @@ describe('GMNetInferenceSession runtime config', () => {
 
     expect(runtimeListener).toHaveBeenCalledWith(
       expect.objectContaining({
-        executionProvider: 'wasm',
+        executionProvider: 'webgpu',
         modelVariant: 'realworld',
       }),
     );
   });
 
   it('loads the synthetic model variant when requested', async () => {
+    Object.defineProperty(Navigator.prototype, 'gpu', {
+      configurable: true,
+      value: {},
+    });
     const ort = await import('onnxruntime-web/webgpu');
     ort.env.wasm = {};
-    ort.InferenceSession.create.mockResolvedValue({ run: vi.fn() });
+    ort.env.webgpu = {};
+    ort.InferenceSession.create.mockResolvedValue({
+      run: vi.fn(),
+      executionProviders: ['webgpu'],
+    });
     ort.InferenceSession.create.mockClear();
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
@@ -246,6 +298,7 @@ describe('GMNetInferenceSession runtime config', () => {
 
     const [modelUrl, options] = ort.InferenceSession.create.mock.calls[0];
     expect(String(modelUrl)).toContain('/models/gmnet-synthetic.onnx');
+    expect(options.executionProviders).toEqual(['webgpu']);
     expect(options.externalData).toEqual([
       {
         path: 'gmnet.onnx.data',
@@ -265,6 +318,7 @@ describe('GMNetInferenceSession runtime config', () => {
         return { gain_map: { data: new Float32Array(h * w).fill(0.5) } };
       }),
     };
+    session.activeExecutionProvider = 'webgpu';
 
     const preprocessGlobalSpy = vi
       .spyOn(session, 'preprocessGlobal')
@@ -278,7 +332,11 @@ describe('GMNetInferenceSession runtime config', () => {
 
     const inputWidth = 1200;
     const inputHeight = 1200;
-    const image = new ImageData(new Uint8ClampedArray(inputWidth * inputHeight * 4), inputWidth, inputHeight);
+    const image = new ImageData(
+      new Uint8ClampedArray(inputWidth * inputHeight * 4),
+      inputWidth,
+      inputHeight,
+    );
 
     const result = await session.run(image);
 
@@ -307,6 +365,7 @@ describe('GMNetInferenceSession runtime config', () => {
         },
       })),
     };
+    session.activeExecutionProvider = 'webgpu';
 
     vi.spyOn(session, 'preprocessGlobal').mockResolvedValue({ kind: 'global' });
     vi.spyOn(session, 'preprocessLocal').mockImplementation((_imageData, width, height) => ({
@@ -321,7 +380,29 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(result.length).toBe(2 * 2 * 4);
   });
 
-  it('falls back to wasm and retries once when webgpu inference fails at runtime', async () => {
+  it('throws when runtime resolves non-webgpu provider', async () => {
+    Object.defineProperty(Navigator.prototype, 'gpu', {
+      configurable: true,
+      value: {},
+    });
+    const ort = await import('onnxruntime-web/webgpu');
+    ort.env.wasm = {};
+    ort.env.webgpu = {};
+    ort.InferenceSession.create.mockClear();
+    ort.InferenceSession.create.mockResolvedValueOnce({
+      run: vi.fn(),
+      executionProviders: ['wasm'],
+    });
+
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+
+    await expect(session.init()).rejects.toMatchObject({
+      name: 'GmnetExecutionProviderMismatchError',
+    });
+  });
+
+  it('does not retry with wasm when webgpu inference fails at runtime', async () => {
     Object.defineProperty(Navigator.prototype, 'gpu', {
       configurable: true,
       value: {},
@@ -337,30 +418,16 @@ describe('GMNetInferenceSession runtime config', () => {
         throw new Error('webgpu pipeline compile failure');
       }),
     };
-    const wasmSession = {
-      executionProviders: ['wasm'],
-      run: vi.fn(async () => ({
-        gain_map: {
-          data: new Float32Array(4).fill(0.5),
-          dims: [1, 1, 2, 2],
-        },
-      })),
-    };
-    ort.InferenceSession.create
-      .mockResolvedValueOnce(webgpuSession)
-      .mockResolvedValueOnce(wasmSession);
+    ort.InferenceSession.create.mockResolvedValueOnce(webgpuSession);
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
     const image = new ImageData(new Uint8ClampedArray(2 * 2 * 4), 2, 2);
 
-    const output = await session.run(image);
+    await expect(session.run(image)).rejects.toThrow(/webgpu pipeline compile failure/i);
 
-    expect(ort.InferenceSession.create).toHaveBeenCalledTimes(2);
+    expect(ort.InferenceSession.create).toHaveBeenCalledTimes(1);
     expect(webgpuSession.run).toHaveBeenCalledTimes(1);
-    expect(wasmSession.run).toHaveBeenCalledTimes(1);
-    expect(output).toBeInstanceOf(Uint8ClampedArray);
-    expect(output.length).toBe(2 * 2 * 4);
   });
 
   it('logs inference runtime details including provider and cpu thread/core counts', async () => {
@@ -379,7 +446,7 @@ describe('GMNetInferenceSession runtime config', () => {
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
-    session.activeExecutionProvider = 'wasm';
+    session.activeExecutionProvider = 'webgpu';
     session.session = {
       run: vi.fn(async () => ({
         gain_map: {
@@ -401,7 +468,7 @@ describe('GMNetInferenceSession runtime config', () => {
 
     expect(
       logSpy.mock.calls.some(([message]) =>
-        /Executing inference.*provider:\s*wasm.*cpu cores:\s*4\/8/i.test(String(message)),
+        /Executing inference.*provider:\s*webgpu.*cpu cores:\s*n\/a\/8/i.test(String(message)),
       ),
     ).toBe(true);
     logSpy.mockRestore();

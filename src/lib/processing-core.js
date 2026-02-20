@@ -1028,14 +1028,30 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
                 : await rotateImageData(gainMapImageData, rotation))
             : gainMapImageData;
 
+        const gainMapIsMonochrome = isMonochromeGainMapImageData(rotatedGainMapImageData);
+        const gainMapMetadataIsSingleChannel = isSingleChannelGainMapMetadata(compressedMetadata);
+        const needsSingleChannelNormalization = !gainMapIsMonochrome || !gainMapMetadataIsSingleChannel;
+        const encoderGainMapImageData = needsSingleChannelNormalization && !gainMapIsMonochrome
+            ? toMonochromeGainMapImageData(rotatedGainMapImageData)
+            : rotatedGainMapImageData;
+        const encoderGainMapMetadata = needsSingleChannelNormalization
+            ? toSingleChannelGainMapMetadata(compressedMetadata)
+            : compressedMetadata;
+
+        if (needsSingleChannelNormalization) {
+            console.warn(
+                '[Process] Normalizing gain-map payload to single-channel metadata for XMP-compatible encoding'
+            );
+        }
+
         // The current WASM wrapper expects compressed base and gain map inputs
         // when bypassing gain-map computation.
         const sdrJpegBytes = telemetry
             ? await telemetry.runStage('encode-sdr-to-jpeg', async () => imageDataToJpegBytes(rotatedSdrImageData, quality))
             : await imageDataToJpegBytes(rotatedSdrImageData, quality);
         const gainMapJpegBytes = telemetry
-            ? await telemetry.runStage('encode-gain-map-to-jpeg', async () => imageDataToJpegBytes(rotatedGainMapImageData, quality))
-            : await imageDataToJpegBytes(rotatedGainMapImageData, quality);
+            ? await telemetry.runStage('encode-gain-map-to-jpeg', async () => imageDataToJpegBytes(encoderGainMapImageData, quality))
+            : await imageDataToJpegBytes(encoderGainMapImageData, quality);
 
         let finalExifPayload = exifPayload;
         if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
@@ -1056,11 +1072,11 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
                 encoder.setCompressedBaseImage(baseJpegForEncoder);
             });
             await telemetry.runStage('encode-set-gain-map-image', async () => {
-                encoder.setCompressedGainMapImage(gainMapJpegBytes, compressedMetadata);
+                encoder.setCompressedGainMapImage(gainMapJpegBytes, encoderGainMapMetadata);
             });
         } else {
             encoder.setCompressedBaseImage(baseJpegForEncoder);
-            encoder.setCompressedGainMapImage(gainMapJpegBytes, compressedMetadata);
+            encoder.setCompressedGainMapImage(gainMapJpegBytes, encoderGainMapMetadata);
         }
 
         if (!options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
@@ -1092,6 +1108,64 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
     } finally {
         encoder.destroy();
     }
+}
+
+function isMonochromeGainMapImageData(imageData) {
+    if (!imageData || !imageData.data) {
+        return true;
+    }
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+        if (data[i] !== data[i + 1] || data[i] !== data[i + 2]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function toMonochromeGainMapImageData(imageData) {
+    if (!imageData || !imageData.data) {
+        return imageData;
+    }
+    const monochromeData = new Uint8ClampedArray(imageData.data.length);
+    for (let i = 0; i < imageData.data.length; i += 4) {
+        const gray = Math.round((imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3);
+        monochromeData[i] = gray;
+        monochromeData[i + 1] = gray;
+        monochromeData[i + 2] = gray;
+        monochromeData[i + 3] = imageData.data[i + 3];
+    }
+    return new ImageData(monochromeData, imageData.width, imageData.height);
+}
+
+function isSingleChannelGainMapMetadata(metadata) {
+    if (!metadata) {
+        return true;
+    }
+    const channelKeys = ['gainMapMin', 'gainMapMax', 'gamma', 'offsetSdr', 'offsetHdr'];
+    return channelKeys.every((key) => {
+        const values = metadata[key];
+        if (!Array.isArray(values) || values.length < 3) {
+            return true;
+        }
+        return values[0] === values[1] && values[0] === values[2];
+    });
+}
+
+function toSingleChannelGainMapMetadata(metadata) {
+    const normalized = {
+        ...metadata
+    };
+    const channelKeys = ['gainMapMin', 'gainMapMax', 'gamma', 'offsetSdr', 'offsetHdr'];
+    for (const key of channelKeys) {
+        const values = metadata?.[key];
+        if (!Array.isArray(values) || values.length === 0) {
+            continue;
+        }
+        const channel0 = values[0];
+        normalized[key] = [channel0, channel0, channel0];
+    }
+    return normalized;
 }
 
 async function imageDataToJpegBytes(imageData, quality = 0.95) {

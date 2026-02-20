@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const chromiumWebGpuArgs = [
+    '--enable-unsafe-webgpu',
+    '--ignore-gpu-blocklist',
+    '--use-angle=metal',
+];
+
 export default defineConfig({
     testDir: './tests/e2e',
     fullyParallel: false,
@@ -17,7 +23,13 @@ export default defineConfig({
     projects: [
         {
             name: 'chromium',
-            use: { ...devices['Desktop Chrome'] },
+            use: {
+                ...devices['Desktop Chrome'],
+                headless: process.env.CI ? true : false,
+                launchOptions: {
+                    args: chromiumWebGpuArgs,
+                },
+            },
             testIgnore: '**/mobile.spec.js',
         },
         {

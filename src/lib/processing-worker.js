@@ -1,14 +1,34 @@
 import { processImage as processImageCore } from './processing-core.js';
+import { initializeRuntime as initializeRuntimeChecks } from './runtime-initialization.js';
 
 const activeJobs = new Map();
+let runtimeInitializationPromise = null;
+let runtimeInitializationResult = null;
+let runtimeInitializationError = null;
 
 function normalizeError(error) {
   if (error instanceof Error) {
-    return {
+    const normalized = {
       name: error.name,
       message: error.message,
       stack: error.stack,
     };
+    if (typeof error.code === 'string') {
+      normalized.code = error.code;
+    }
+    if (typeof error.stepId === 'string') {
+      normalized.stepId = error.stepId;
+    }
+    if (typeof error.userMessage === 'string') {
+      normalized.userMessage = error.userMessage;
+    }
+    if (error.diagnostics && typeof error.diagnostics === 'object') {
+      normalized.diagnostics = error.diagnostics;
+    }
+    if (typeof error.stackSnippet === 'string') {
+      normalized.stackSnippet = error.stackSnippet;
+    }
+    return normalized;
   }
 
   return {
@@ -26,6 +46,58 @@ function postError(jobId, error) {
   });
 }
 
+function postInitError(error) {
+  self.postMessage({
+    type: 'init-error',
+    error: normalizeError(error),
+  });
+}
+
+async function ensureRuntimeInitialized() {
+  if (runtimeInitializationResult) {
+    return runtimeInitializationResult;
+  }
+  if (runtimeInitializationError) {
+    throw runtimeInitializationError;
+  }
+  if (runtimeInitializationPromise) {
+    return runtimeInitializationPromise;
+  }
+
+  runtimeInitializationPromise = initializeRuntimeChecks({
+    onProgress: (event) => {
+      self.postMessage({
+        type: 'init-progress',
+        event,
+      });
+    },
+  })
+    .then((result) => {
+      runtimeInitializationResult = result || {};
+      runtimeInitializationError = null;
+      return runtimeInitializationResult;
+    })
+    .catch((error) => {
+      runtimeInitializationResult = null;
+      runtimeInitializationError = error;
+      throw error;
+    })
+    .finally(() => {
+      runtimeInitializationPromise = null;
+    });
+
+  return runtimeInitializationPromise;
+}
+
+async function handleInitMessage() {
+  try {
+    await ensureRuntimeInitialized();
+    self.postMessage({ type: 'ready' });
+  } catch (error) {
+    postInitError(error);
+  }
+}
+
 async function handleProcessMessage(message) {
   const jobId = Number(message?.jobId);
   if (!Number.isFinite(jobId)) {
@@ -41,6 +113,7 @@ async function handleProcessMessage(message) {
   activeJobs.set(jobId, controller);
 
   try {
+    await ensureRuntimeInitialized();
     const file = message.file;
     const options = message.options || {};
     const blob = await processImageCore(file, {
@@ -75,7 +148,7 @@ self.addEventListener('message', (event) => {
   }
 
   if (message.type === 'init') {
-    self.postMessage({ type: 'ready' });
+    void handleInitMessage();
     return;
   }
 

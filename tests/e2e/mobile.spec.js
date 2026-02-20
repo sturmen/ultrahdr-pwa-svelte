@@ -2,6 +2,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { ensureRuntimeGateReady, getRuntimeGateFailure } from './runtime-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +41,15 @@ async function waitForProcessing(page, expectedResults = 1) {
 }
 
 test.describe('Mobile smoke tests', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  test.beforeEach(async ({ page }, testInfo) => {
+    const failureReason = getRuntimeGateFailure(testInfo.project.name);
+    test.skip(Boolean(failureReason), failureReason || '');
+    await page.goto('/');
+    await ensureRuntimeGateReady(page, testInfo);
+  });
+
   test('processes one image, keeps mobile UI usable, and avoids horizontal overflow', async ({ page }) => {
     await page.goto('/');
     await uploadSingleFile(page, SDR_IMAGE);

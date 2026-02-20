@@ -20,6 +20,7 @@ vi.mock('../processing-core.js', () => ({
 
 class MockWorker {
   static instances = [];
+  static onInit = null;
   static onProcess = null;
   static onCancel = null;
 
@@ -47,6 +48,10 @@ class MockWorker {
     this.posted.push(message);
 
     if (message.type === 'init') {
+      if (typeof MockWorker.onInit === 'function') {
+        MockWorker.onInit(this, message);
+        return;
+      }
       queueMicrotask(() => {
         this.emit('message', { data: { type: 'ready' } });
       });
@@ -111,6 +116,7 @@ describe('processing worker wrapper', () => {
     vi.resetModules();
     processImageCoreMock.mockClear();
     MockWorker.instances = [];
+    MockWorker.onInit = null;
     MockWorker.onProcess = null;
     MockWorker.onCancel = null;
     delete window[PIPELINE_STATE_KEY];
@@ -157,6 +163,93 @@ describe('processing worker wrapper', () => {
       name: 'ProcessingWorkerInitError',
     });
     expect(processImageCoreMock).not.toHaveBeenCalled();
+  });
+
+  it('initializeRuntime emits init-progress updates before resolving ready', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+    const onProgress = vi.fn();
+    MockWorker.onInit = (worker) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'init-progress',
+            event: {
+              stepId: 'webgpu-check',
+              status: 'running',
+              note: 'Checking WebGPU runtime support...',
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'init-progress',
+            event: {
+              stepId: 'webgpu-check',
+              status: 'passed',
+              note: 'WebGPU runtime is available.',
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        worker.emit('message', { data: { type: 'ready' } });
+      });
+    };
+
+    const { initializeRuntime } = await import('../processing.js');
+    await initializeRuntime({ onProgress });
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepId: 'webgpu-check',
+        status: 'running',
+      }),
+    );
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepId: 'webgpu-check',
+        status: 'passed',
+      }),
+    );
+  });
+
+  it('initializeRuntime rejects with structured init-error payload from worker', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+    MockWorker.onInit = (worker) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'init-error',
+            error: {
+              name: 'RuntimeInitializationError',
+              message: 'WebGPU is unavailable in this environment.',
+              code: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
+              stepId: 'webgpu-check',
+              userMessage: 'WebGPU is unavailable in this environment.',
+              diagnostics: {
+                hasNavigatorGpu: false,
+              },
+            },
+          },
+        });
+      });
+    };
+
+    const { initializeRuntime } = await import('../processing.js');
+    await expect(initializeRuntime()).rejects.toMatchObject({
+      name: 'RuntimeInitializationError',
+      code: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
+      stepId: 'webgpu-check',
+      diagnostics: expect.objectContaining({
+        hasNavigatorGpu: false,
+      }),
+    });
   });
 
   it('uses worker processing and forwards progress telemetry', async () => {
