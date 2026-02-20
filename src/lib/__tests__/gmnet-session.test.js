@@ -674,6 +674,42 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(capability.attempts.length).toBeGreaterThan(0);
   });
 
+  it('probes above 2048 by default so 8192 output remains reachable', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+    session.activeExecutionProvider = 'webgpu';
+    session.activeModelVariant = 'realworld';
+    session.session = {};
+
+    vi.spyOn(session, 'createProbeImageData').mockImplementation((candidateLongEdge) => ({
+      width: candidateLongEdge,
+      height: candidateLongEdge,
+      data: new Uint8ClampedArray(4),
+    }));
+    vi.spyOn(session, 'run').mockResolvedValue(new Uint8ClampedArray(4));
+
+    let thrownError;
+    try {
+      await session.resolveGainMapCapability({ timeoutMs: 250 });
+    } catch (error) {
+      thrownError = error;
+    }
+
+    expect(thrownError).toMatchObject({
+      name: 'GmnetCapabilityProbeError',
+      diagnostics: expect.objectContaining({
+        provider: 'webgpu',
+        attempts: expect.any(Array),
+      }),
+    });
+
+    const attemptedCandidates = thrownError.diagnostics.attempts
+      .map((attempt) => Number(attempt?.candidateLongEdge))
+      .filter((candidateLongEdge) => Number.isFinite(candidateLongEdge));
+    expect(attemptedCandidates.length).toBeGreaterThan(0);
+    expect(Math.max(...attemptedCandidates)).toBeGreaterThan(2048);
+  });
+
   it('fails probe with diagnostics when no webgpu candidate passes', async () => {
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
