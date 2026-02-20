@@ -35,14 +35,14 @@ function isWebKitRuntime(runtime = globalThis) {
         && !userAgent.includes('edg/');
 }
 
-function isFirefoxRuntime(runtime = globalThis) {
-    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
-    return userAgent.includes('firefox/');
-}
-
 const DEFAULT_WASM_THREAD_COUNT = 1;
 const MAX_WASM_THREAD_COUNT = 4;
 const WEBGL_LOCAL_INPUT_SIZE = 128;
+const DEFAULT_PROBE_MIN_LONG_EDGE = 128;
+const DEFAULT_PROBE_MAX_LONG_EDGE = 2048;
+const DEFAULT_PROBE_TIMEOUT_MS = 12_000;
+const PROBE_MIN_DYNAMIC_RANGE = 2;
+const PROBE_MIN_STD_DEV = 0.25;
 let ortAllModulePromise = null;
 const configuredOrtModules = new WeakSet();
 
@@ -308,6 +308,125 @@ function createSessionCacheKey(modelVariant, provider) {
     return `${normalizedVariant}:${normalizedProvider}`;
 }
 
+function normalizeLongEdgeLimit(value, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 1) {
+        return fallback;
+    }
+    return Math.floor(numeric);
+}
+
+function resolveScaledDimensionsForLongEdge(width, height, maxLongEdge) {
+    const sourceWidth = Math.max(1, Math.floor(Number(width) || 1));
+    const sourceHeight = Math.max(1, Math.floor(Number(height) || 1));
+    const normalizedMax = normalizeLongEdgeLimit(maxLongEdge, 0);
+    if (normalizedMax <= 0) {
+        return { width: sourceWidth, height: sourceHeight, changed: false };
+    }
+    const sourceLongEdge = Math.max(sourceWidth, sourceHeight);
+    if (sourceLongEdge <= normalizedMax) {
+        return { width: sourceWidth, height: sourceHeight, changed: false };
+    }
+    const scale = normalizedMax / sourceLongEdge;
+    const nextWidth = Math.max(1, Math.floor(sourceWidth * scale));
+    const nextHeight = Math.max(1, Math.floor(sourceHeight * scale));
+    return {
+        width: nextWidth,
+        height: nextHeight,
+        changed: nextWidth !== sourceWidth || nextHeight !== sourceHeight,
+    };
+}
+
+function analyzeRgbaOutputStats(rgba) {
+    const pixelCount = Math.floor((rgba?.length || 0) / 4);
+    if (pixelCount <= 0) {
+        return {
+            pixelCount: 0,
+            min: 0,
+            max: 0,
+            mean: 0,
+            stdDev: 0,
+            dynamicRange: 0,
+        };
+    }
+
+    let min = 255;
+    let max = 0;
+    let sum = 0;
+    let sumSq = 0;
+
+    for (let index = 0; index < pixelCount; index += 1) {
+        const value = rgba[index * 4];
+        if (value < min) {
+            min = value;
+        }
+        if (value > max) {
+            max = value;
+        }
+        sum += value;
+        sumSq += value * value;
+    }
+
+    const mean = sum / pixelCount;
+    const variance = Math.max(0, (sumSq / pixelCount) - (mean * mean));
+    const stdDev = Math.sqrt(variance);
+    return {
+        pixelCount,
+        min,
+        max,
+        mean,
+        stdDev,
+        dynamicRange: max - min,
+    };
+}
+
+function isProbeOutputNearFlat(stats) {
+    if (!stats || typeof stats !== 'object') {
+        return true;
+    }
+    if (
+        !Number.isFinite(stats.dynamicRange)
+        || !Number.isFinite(stats.stdDev)
+    ) {
+        return true;
+    }
+    return stats.dynamicRange < PROBE_MIN_DYNAMIC_RANGE || stats.stdDev < PROBE_MIN_STD_DEV;
+}
+
+function createCapabilityProbeError(message, diagnostics = {}, cause = null) {
+    const error = new Error(message || 'Failed to resolve GMNet gain-map capability.');
+    error.name = 'GmnetCapabilityProbeError';
+    error.diagnostics = diagnostics;
+    if (cause) {
+        error.cause = cause;
+    }
+    return error;
+}
+
+function runWithTimeout(promise, timeoutMs, timeoutMessage = 'Operation timed out') {
+    const normalizedTimeoutMs = Number(timeoutMs);
+    if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
+        return promise;
+    }
+    return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            const timeoutError = new Error(timeoutMessage);
+            timeoutError.name = 'GmnetCapabilityProbeTimeoutError';
+            reject(timeoutError);
+        }, normalizedTimeoutMs);
+        promise.then(
+            (value) => {
+                clearTimeout(timeoutId);
+                resolve(value);
+            },
+            (error) => {
+                clearTimeout(timeoutId);
+                reject(error);
+            },
+        );
+    });
+}
+
 function resizeImageData(imageData, targetWidth, targetHeight) {
     if (imageData.width === targetWidth && imageData.height === targetHeight) {
         return imageData;
@@ -548,6 +667,184 @@ export class GMNetInferenceSession {
         }
     }
 
+    createProbeImageData(size) {
+        const normalizedSize = Math.max(1, Math.floor(Number(size) || 1));
+        const data = new Uint8ClampedArray(normalizedSize * normalizedSize * 4);
+        for (let y = 0; y < normalizedSize; y += 1) {
+            for (let x = 0; x < normalizedSize; x += 1) {
+                const index = (y * normalizedSize + x) * 4;
+                const horizontal = normalizedSize > 1 ? Math.floor((x / (normalizedSize - 1)) * 255) : 127;
+                const vertical = normalizedSize > 1 ? Math.floor((y / (normalizedSize - 1)) * 255) : 127;
+                const checker = ((x >> 4) + (y >> 4)) % 2 === 0 ? 32 : -32;
+                const value = Math.max(0, Math.min(255, Math.floor((horizontal + vertical) / 2 + checker)));
+                data[index] = value;
+                data[index + 1] = value;
+                data[index + 2] = value;
+                data[index + 3] = 255;
+            }
+        }
+        return new ImageData(data, normalizedSize, normalizedSize);
+    }
+
+    async resolveGainMapCapability(options = {}) {
+        const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
+        const requestedProviders = Array.isArray(options?.forceExecutionProviders)
+            ? options.forceExecutionProviders
+            : undefined;
+        const normalizedRequestedProviders = Array.isArray(requestedProviders)
+            ? requestedProviders
+                .map((provider) => normalizeExecutionProvider(provider))
+                .filter((provider) => SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider))
+            : [];
+        const requestedProvider = normalizedRequestedProviders.length === 1
+            ? normalizedRequestedProviders[0]
+            : null;
+        const shouldForceReload = Boolean(requestedProvider)
+            && normalizeExecutionProvider(this.activeExecutionProvider) !== requestedProvider;
+        if (!this.session || this.activeModelVariant !== requestedVariant || shouldForceReload) {
+            await this.init(requestedVariant, {
+                forceExecutionProviders: requestedProviders,
+                forceReload: shouldForceReload,
+            });
+        }
+
+        const provider = normalizeExecutionProvider(
+            this.activeExecutionProvider || resolveActiveExecutionProvider(this.session)
+        );
+        if (!provider) {
+            throw createCapabilityProbeError(
+                'GMNet provider must be initialized before probing capability.',
+                { provider: null, attempts: [] },
+            );
+        }
+
+        const timeoutMs = normalizeLongEdgeLimit(options.timeoutMs, DEFAULT_PROBE_TIMEOUT_MS);
+        const attempts = [];
+
+        const evaluateCandidate = async (candidateLongEdge) => {
+            const startedAtMs = Date.now();
+            const attempt = {
+                candidateLongEdge,
+                status: 'running',
+                durationMs: 0,
+            };
+            try {
+                const probeImage = this.createProbeImageData(candidateLongEdge);
+                const output = await runWithTimeout(
+                    this.run(probeImage, {
+                        gmnetModelVariant: requestedVariant,
+                        forceExecutionProviders: [provider],
+                        probeMode: true,
+                    }),
+                    timeoutMs,
+                    `GMNet capability probe timed out at ${candidateLongEdge}px.`,
+                );
+                if (!(output instanceof Uint8ClampedArray)) {
+                    throw new Error(
+                        `Capability probe expected Uint8ClampedArray output, received "${output?.constructor?.name || typeof output}".`,
+                    );
+                }
+                const expectedLength = candidateLongEdge * candidateLongEdge * 4;
+                if (output.length !== expectedLength) {
+                    throw new Error(
+                        `Capability probe output length mismatch for ${candidateLongEdge}px: expected ${expectedLength}, got ${output.length}.`,
+                    );
+                }
+                const stats = analyzeRgbaOutputStats(output);
+                if (isProbeOutputNearFlat(stats)) {
+                    throw new Error(
+                        `Capability probe output near-flat at ${candidateLongEdge}px (range=${stats.dynamicRange}, std=${stats.stdDev.toFixed(3)}).`,
+                    );
+                }
+                attempt.status = 'passed';
+                attempt.stats = stats;
+                return attempt;
+            } catch (error) {
+                attempt.status = 'failed';
+                attempt.error = {
+                    name: error?.name || 'Error',
+                    message: error?.message || String(error),
+                };
+                return attempt;
+            } finally {
+                attempt.durationMs = Math.max(0, Date.now() - startedAtMs);
+                attempts.push(attempt);
+            }
+        };
+
+        if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+            const attempt = await evaluateCandidate(WEBGL_LOCAL_INPUT_SIZE);
+            if (attempt.status !== 'passed') {
+                throw createCapabilityProbeError(
+                    'Failed to verify fixed WebGL GMNet capability.',
+                    {
+                        provider,
+                        source: 'fixed-model',
+                        attempts,
+                    },
+                );
+            }
+            return {
+                provider,
+                gainMapMaxLongEdge: WEBGL_LOCAL_INPUT_SIZE,
+                outputMaxLongEdge: WEBGL_LOCAL_INPUT_SIZE * 2,
+                source: 'fixed-model',
+                attempts,
+            };
+        }
+
+        if (provider !== REQUIRED_GMNET_EXECUTION_PROVIDER) {
+            throw createCapabilityProbeError(
+                `Unsupported GMNet provider "${provider}" for capability probing.`,
+                { provider, attempts },
+            );
+        }
+
+        let probeMinLongEdge = normalizeLongEdgeLimit(options.minLongEdge, DEFAULT_PROBE_MIN_LONG_EDGE);
+        let probeMaxLongEdge = normalizeLongEdgeLimit(options.maxLongEdge, DEFAULT_PROBE_MAX_LONG_EDGE);
+        if (probeMinLongEdge > probeMaxLongEdge) {
+            const temp = probeMinLongEdge;
+            probeMinLongEdge = probeMaxLongEdge;
+            probeMaxLongEdge = temp;
+        }
+
+        let low = probeMinLongEdge;
+        let high = probeMaxLongEdge;
+        let best = 0;
+
+        while (low <= high) {
+            const candidate = Math.floor((low + high) / 2);
+            const attempt = await evaluateCandidate(candidate);
+            if (attempt.status === 'passed') {
+                best = candidate;
+                low = candidate + 1;
+            } else {
+                high = candidate - 1;
+            }
+        }
+
+        if (best < probeMinLongEdge) {
+            throw createCapabilityProbeError(
+                'Failed to find a valid WebGPU GMNet capability candidate.',
+                {
+                    provider,
+                    source: 'probe',
+                    minLongEdge: probeMinLongEdge,
+                    maxLongEdge: probeMaxLongEdge,
+                    attempts,
+                },
+            );
+        }
+
+        return {
+            provider,
+            gainMapMaxLongEdge: best,
+            outputMaxLongEdge: best * 2,
+            source: 'probe',
+            attempts,
+        };
+    }
+
     async run(imageData, options = {}) {
         console.log('[GMNet session] run called');
         const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
@@ -575,10 +872,9 @@ export class GMNetInferenceSession {
         const sourceWidth = imageData.width;
         const sourceHeight = imageData.height;
         const activeProvider = normalizeExecutionProvider(this.activeExecutionProvider);
-        const useFixedLocalInputSize = (
-            activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER
-            || (activeProvider === REQUIRED_GMNET_EXECUTION_PROVIDER && isFirefoxRuntime(this.runtime))
-        );
+        const useFixedLocalInputSize = activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER;
+        const probeMode = options?.probeMode === true;
+        const localInputMaxLongEdge = normalizeLongEdgeLimit(options?.localInputMaxLongEdge, 0);
         let inferenceImageData = imageData;
         let inferenceWidth = sourceWidth;
         let inferenceHeight = sourceHeight;
@@ -593,6 +889,21 @@ export class GMNetInferenceSession {
                 inferenceWidth,
                 inferenceHeight
             );
+        } else if (!probeMode && localInputMaxLongEdge > 0) {
+            const constrainedDims = resolveScaledDimensionsForLongEdge(
+                sourceWidth,
+                sourceHeight,
+                localInputMaxLongEdge,
+            );
+            if (constrainedDims.changed) {
+                inferenceWidth = constrainedDims.width;
+                inferenceHeight = constrainedDims.height;
+                inferenceImageData = resizeImageData(
+                    imageData,
+                    inferenceWidth,
+                    inferenceHeight,
+                );
+            }
         }
 
         // 1. Preprocess

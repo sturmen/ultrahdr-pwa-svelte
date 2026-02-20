@@ -15,6 +15,18 @@ async function uploadSingleFile(page, filePath) {
   await page.locator('#file-upload').setInputFiles(filePath);
 }
 
+async function readRuntimeProvider(page) {
+  const marker = await page.getByTestId('runtime-init-provider').textContent();
+  const match = /runtime provider:\s*([a-z0-9_-]+)/i.exec(marker || '');
+  return (match?.[1] || '').trim().toLowerCase() || null;
+}
+
+async function setCapabilityOverride(page, override) {
+  await page.evaluate((value) => {
+    window.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE = value;
+  }, override);
+}
+
 async function waitForProcessing(page, expectedResults = 1) {
   const startedAt = Date.now();
 
@@ -123,5 +135,27 @@ test.describe('Mobile smoke tests', () => {
     await expect(page.getByText(/1 item\(s\) selected/i)).toBeVisible();
     await expect(page.locator('.share-btn')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /^Download/i })).toBeVisible();
+  });
+
+  test('shows capability restriction banner and export warning when capped by override', async ({ page }) => {
+    const runtimeProvider = await readRuntimeProvider(page);
+    await setCapabilityOverride(page, {
+      provider: runtimeProvider || 'webgl',
+      gainMapMaxLongEdge: 128,
+      outputMaxLongEdge: 256,
+      source: 'test-override',
+      attempts: [],
+    });
+
+    await uploadSingleFile(page, SDR_IMAGE);
+    await waitForProcessing(page, 1);
+
+    await page.getByTestId('tab-convert').click();
+    await expect(page.getByTestId('capability-restriction-banner')).toBeVisible();
+    await expect(page.getByTestId('capability-restriction-banner')).toContainText('256');
+
+    await page.getByTestId('tab-results').click();
+    await page.getByTestId('mobile-action-bar').getByRole('button', { name: /export/i }).click();
+    await expect(page.getByTestId('export-capability-restriction')).toBeVisible();
   });
 });

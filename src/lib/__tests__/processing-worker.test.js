@@ -299,6 +299,65 @@ describe('processing worker wrapper', () => {
     expect(Array.isArray(window[PIPELINE_HISTORY_KEY])).toBe(true);
   });
 
+  it('forwards gmnet capability progress payloads without mutation', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+
+    MockWorker.onProcess = (worker, message) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'progress',
+            jobId: message.jobId,
+            event: {
+              phase: 'stage-progress',
+              stage: 'probe-gmnet-capability',
+              gmnetExecutionProvider: 'webgl',
+              gmnetCapabilitySource: 'fixed-model',
+              gmnetCapability: {
+                provider: 'webgl',
+                gainMapMaxLongEdge: 128,
+                outputMaxLongEdge: 256,
+                source: 'fixed-model',
+                attempts: [{ candidateLongEdge: 128, status: 'passed' }],
+              },
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        const buffer = new Uint8Array([1, 2, 3]).buffer;
+        worker.emit('message', {
+          data: {
+            type: 'result',
+            jobId: message.jobId,
+            mimeType: 'image/jpeg',
+            buffer,
+          },
+        });
+      });
+    };
+
+    const { processImage } = await import('../processing.js');
+    const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
+    const onProgress = vi.fn();
+
+    await processImage(file, { onProgress });
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'probe-gmnet-capability',
+        gmnetCapabilitySource: 'fixed-model',
+        gmnetCapability: expect.objectContaining({
+          provider: 'webgl',
+          gainMapMaxLongEdge: 128,
+          outputMaxLongEdge: 256,
+        }),
+      }),
+    );
+  });
+
   it('sends cancel message and returns AbortError when aborted', async () => {
     globalThis.Worker = MockWorker;
     globalThis.OffscreenCanvas = class OffscreenCanvas {};

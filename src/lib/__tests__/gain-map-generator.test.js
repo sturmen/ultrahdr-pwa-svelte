@@ -142,9 +142,13 @@ describe('GmnetGainMapGenerator', () => {
     });
 
     await generator.generate(createTestImageData(), { gmnetModelVariant: 'synthetic' });
-    expect(run).toHaveBeenCalledWith(expect.any(ImageData), {
-      gmnetModelVariant: 'synthetic',
-    });
+    expect(run).toHaveBeenCalledWith(
+      expect.any(ImageData),
+      expect.objectContaining({
+        gmnetModelVariant: 'synthetic',
+        localInputMaxLongEdge: expect.any(Number),
+      }),
+    );
   });
 
   it('emits inference start note and execution provider telemetry', async () => {
@@ -244,9 +248,13 @@ describe('GmnetGainMapGenerator', () => {
     const result = await generator.generate(createTestImageData(), {});
     expect(result.gainMapImageData).toBeInstanceOf(ImageData);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[0][1]).toEqual({ gmnetModelVariant: undefined });
+    expect(run.mock.calls[0][1]).toEqual({
+      gmnetModelVariant: undefined,
+      localInputMaxLongEdge: expect.any(Number),
+    });
     expect(run.mock.calls[1][1]).toEqual({
       gmnetModelVariant: undefined,
+      localInputMaxLongEdge: expect.any(Number),
       forceExecutionProviders: ['webgl'],
     });
   });
@@ -344,7 +352,143 @@ describe('GmnetGainMapGenerator', () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1][1]).toEqual({
       gmnetModelVariant: undefined,
+      localInputMaxLongEdge: expect.any(Number),
       forceExecutionProviders: ['webgl'],
     });
+  });
+
+  it('resolves capability by probing on non-firefox runtimes and caches per provider', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const capability = {
+      provider: 'webgpu',
+      gainMapMaxLongEdge: 640,
+      outputMaxLongEdge: 1280,
+      source: 'probe',
+      attempts: [{ candidateLongEdge: 640, status: 'passed' }],
+    };
+    const session = {
+      run: vi.fn(async () => createNonFlatGainMapRgba()),
+      resolveGainMapCapability: vi.fn(async () => capability),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+    });
+
+    const first = await generator.resolveCapability({ gmnetModelVariant: 'realworld' });
+    const second = await generator.resolveCapability({ gmnetModelVariant: 'realworld' });
+
+    expect(first).toEqual(capability);
+    expect(second).toEqual(capability);
+    expect(session.resolveGainMapCapability).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves capability by probing on firefox runtimes', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const capability = {
+      provider: 'webgpu',
+      gainMapMaxLongEdge: 512,
+      outputMaxLongEdge: 1024,
+      source: 'probe',
+      attempts: [{ candidateLongEdge: 512, status: 'passed' }],
+    };
+    const session = {
+      run: vi.fn(async () => createNonFlatGainMapRgba()),
+      resolveGainMapCapability: vi.fn(async () => capability),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:129.0) Gecko/20100101 Firefox/129.0'),
+    });
+
+    const resolved = await generator.resolveCapability({ gmnetModelVariant: 'realworld' });
+
+    expect(resolved).toEqual(capability);
+    expect(session.resolveGainMapCapability).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses capabilityHint to skip probing when hint is valid', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const session = {
+      run: vi.fn(async () => createNonFlatGainMapRgba()),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 512,
+        outputMaxLongEdge: 1024,
+        source: 'probe',
+        attempts: [],
+      })),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+    });
+
+    const hint = {
+      provider: 'webgpu',
+      gainMapMaxLongEdge: 320,
+      outputMaxLongEdge: 640,
+      source: 'cache',
+      attempts: [],
+    };
+    const resolved = await generator.resolveCapability({ capabilityHint: hint });
+
+    expect(resolved).toEqual(hint);
+    expect(session.resolveGainMapCapability).not.toHaveBeenCalled();
+  });
+
+  it('emits capability metadata in stage progress during generate()', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    let runtimeListener = null;
+    const capability = {
+      provider: 'webgpu',
+      gainMapMaxLongEdge: 512,
+      outputMaxLongEdge: 1024,
+      source: 'probe',
+      attempts: [{ candidateLongEdge: 512, status: 'passed' }],
+    };
+    const session = {
+      run: vi.fn(async () => {
+        runtimeListener?.({ executionProvider: 'webgpu' });
+        return createNonFlatGainMapRgba();
+      }),
+      resolveGainMapCapability: vi.fn(async () => capability),
+      on: vi.fn((event, callback) => {
+        if (event === 'runtime') {
+          runtimeListener = callback;
+        }
+      }),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+    const onStageProgress = vi.fn();
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+    });
+
+    await generator.generate(createTestImageData(), { onStageProgress });
+
+    expect(onStageProgress).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.stringMatching(/capability/i),
+      expect.objectContaining({
+        gmnetCapability: expect.objectContaining({
+          provider: 'webgpu',
+          gainMapMaxLongEdge: 512,
+          outputMaxLongEdge: 1024,
+        }),
+      }),
+    );
   });
 });

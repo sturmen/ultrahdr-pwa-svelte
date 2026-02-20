@@ -321,6 +321,143 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByText(/stage \d+%/i)).not.toBeInTheDocument();
   });
 
+  it('renders capability restriction warning when browser runtime caps export resolution', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const now = Date.now();
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'probe-gmnet-capability',
+        stageProgress: 100,
+        note: 'GMNet capability resolved',
+        timestamp: now,
+        gmnetExecutionProvider: 'webgl',
+        gmnetCapabilitySource: 'fixed-model',
+        gmnetCapability: {
+          provider: 'webgl',
+          gainMapMaxLongEdge: 128,
+          outputMaxLongEdge: 256,
+          source: 'fixed-model',
+          attempts: [{ candidateLongEdge: 128, status: 'passed' }],
+        },
+      });
+      options.onProgress?.({
+        phase: 'pipeline-complete',
+        stage: 'pipeline',
+        elapsedMs: 5,
+        stageDurationsMs: { pipeline: 5 },
+        fileIndex: 0,
+        totalFiles: 1,
+        timestamp: now + 1,
+      });
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-restriction-banner')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('capability-restriction-banner')).toHaveTextContent(/webgl/i);
+    expect(screen.getByTestId('capability-restriction-banner')).toHaveTextContent(/128/i);
+    expect(screen.getByTestId('capability-restriction-banner')).toHaveTextContent(/256/i);
+
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
+    expect(screen.getByTestId('export-capability-restriction')).toBeInTheDocument();
+  });
+
+  it('shows current-file downscale notice when capability restriction is applied', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const now = Date.now();
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'probe-gmnet-capability',
+        stageProgress: 100,
+        note: 'GMNet capability resolved',
+        timestamp: now,
+        gmnetExecutionProvider: 'webgl',
+        gmnetCapabilitySource: 'fixed-model',
+        gmnetCapability: {
+          provider: 'webgl',
+          gainMapMaxLongEdge: 128,
+          outputMaxLongEdge: 256,
+          source: 'fixed-model',
+          attempts: [],
+        },
+      });
+      options.onProgress?.({
+        phase: 'stage-complete',
+        stage: 'constrain-sdr-image',
+        timestamp: now + 1,
+        constrainedByCapability: true,
+      });
+      options.onProgress?.({
+        phase: 'pipeline-complete',
+        stage: 'pipeline',
+        elapsedMs: 5,
+        stageDurationsMs: { pipeline: 5 },
+        fileIndex: 0,
+        totalFiles: 1,
+        timestamp: now + 2,
+      });
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-restriction-current-file')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('capability-restriction-current-file')).toHaveTextContent(/downscaled/i);
+  });
+
+  it('does not render capability warning when output cap is non-restrictive', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const now = Date.now();
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'probe-gmnet-capability',
+        stageProgress: 100,
+        note: 'GMNet capability resolved',
+        timestamp: now,
+        gmnetExecutionProvider: 'webgpu',
+        gmnetCapabilitySource: 'probe',
+        gmnetCapability: {
+          provider: 'webgpu',
+          gainMapMaxLongEdge: 4096,
+          outputMaxLongEdge: 8192,
+          source: 'probe',
+          attempts: [],
+        },
+      });
+      options.onProgress?.({
+        phase: 'pipeline-complete',
+        stage: 'pipeline',
+        elapsedMs: 5,
+        stageDurationsMs: { pipeline: 5 },
+        fileIndex: 0,
+        totalFiles: 1,
+        timestamp: now + 1,
+      });
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
+  });
+
   it('pauses after the current file and resumes queued work only when resumed', async () => {
     const firstFileGate = createDeferred();
 

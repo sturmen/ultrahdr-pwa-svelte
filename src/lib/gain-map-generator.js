@@ -114,6 +114,30 @@ export function isGmnetRuntimeSupported(runtime = globalThis) {
   );
 }
 
+function normalizeCapabilityRecord(input) {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+  const provider = normalizeExecutionProviderName(input.provider);
+  const gainMapMaxLongEdge = Number(input.gainMapMaxLongEdge);
+  const outputMaxLongEdge = Number(input.outputMaxLongEdge);
+  if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
+    return null;
+  }
+  const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
+    ? Math.floor(outputMaxLongEdge)
+    : Math.floor(gainMapMaxLongEdge * 2);
+  return {
+    provider,
+    gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
+    outputMaxLongEdge: normalizedOutputMaxLongEdge,
+    source: typeof input.source === 'string' && input.source.length > 0
+      ? input.source
+      : 'probe',
+    attempts: Array.isArray(input.attempts) ? input.attempts : [],
+  };
+}
+
 export class GmnetGainMapGenerator {
   constructor({
     sessionFactory = () => new GMNetInferenceSession(),
@@ -136,6 +160,7 @@ export class GmnetGainMapGenerator {
     this.runtime = runtime;
     this.isSupported = isSupported;
     this.session = null;
+    this.capabilityByProvider = new Map();
   }
 
   getSession() {
@@ -143,6 +168,57 @@ export class GmnetGainMapGenerator {
       this.session = this.sessionFactory();
     }
     return this.session;
+  }
+
+  async resolveCapability(options = {}) {
+    const session = this.getSession();
+    const hintCapability = normalizeCapabilityRecord(options?.capabilityHint);
+    if (hintCapability) {
+      this.capabilityByProvider.set(hintCapability.provider, hintCapability);
+      return hintCapability;
+    }
+
+    const normalizedForcedProviders = Array.isArray(options?.forceExecutionProviders)
+      ? options.forceExecutionProviders
+        .map((provider) => normalizeExecutionProviderName(provider))
+        .filter(Boolean)
+      : [];
+    const requestedProvider = normalizedForcedProviders.length === 1
+      ? normalizedForcedProviders[0]
+      : null;
+    if (requestedProvider && this.capabilityByProvider.has(requestedProvider)) {
+      return this.capabilityByProvider.get(requestedProvider);
+    }
+    if (!requestedProvider && this.capabilityByProvider.size === 1) {
+      return Array.from(this.capabilityByProvider.values())[0];
+    }
+
+    if (typeof session.resolveGainMapCapability !== 'function') {
+      const fallbackProvider = requestedProvider
+        || normalizeExecutionProviderName(session?.activeExecutionProvider)
+        || REQUIRED_GMNET_EXECUTION_PROVIDER;
+      const fallbackCapability = {
+        provider: fallbackProvider,
+        gainMapMaxLongEdge: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 128 : 4096,
+        outputMaxLongEdge: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 256 : 8192,
+        source: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 'fixed-model' : 'legacy-default',
+        attempts: [],
+      };
+      this.capabilityByProvider.set(fallbackCapability.provider, fallbackCapability);
+      return fallbackCapability;
+    }
+
+    const resolvedCapability = normalizeCapabilityRecord(
+      await session.resolveGainMapCapability({
+        gmnetModelVariant: options?.gmnetModelVariant,
+        forceExecutionProviders: options?.forceExecutionProviders,
+      }),
+    );
+    if (!resolvedCapability) {
+      throw new Error('GMNet capability probe returned an invalid response.');
+    }
+    this.capabilityByProvider.set(resolvedCapability.provider, resolvedCapability);
+    return resolvedCapability;
   }
 
   async generate(imageData, options = {}) {
@@ -157,6 +233,20 @@ export class GmnetGainMapGenerator {
     const session = this.getSession();
     const onStageProgress =
       typeof options.onStageProgress === 'function' ? options.onStageProgress : null;
+    const capability = await this.resolveCapability({
+      gmnetModelVariant: options.gmnetModelVariant,
+      forceExecutionProviders: options.forceExecutionProviders,
+      capabilityHint: options.gmnetCapabilityHint,
+    });
+    onStageProgress?.(
+      0,
+      `GMNet capability resolved (${capability.provider}, gain-map max ${capability.gainMapMaxLongEdge}px).`,
+      {
+        gmnetCapability: capability,
+        gmnetCapabilitySource: capability.source,
+        gmnetExecutionProvider: capability.provider,
+      },
+    );
 
     let progressHandler = null;
     let runtimeHandler = null;
@@ -188,6 +278,7 @@ export class GmnetGainMapGenerator {
       const runInference = async (runOptions = {}) => {
         const gainMapRgba = await session.run(imageData, {
           gmnetModelVariant: options.gmnetModelVariant,
+          localInputMaxLongEdge: capability?.gainMapMaxLongEdge,
           ...runOptions,
         });
         const expectedLength = imageData.width * imageData.height * 4;
@@ -208,13 +299,21 @@ export class GmnetGainMapGenerator {
       onStageProgress?.(
         0,
         INFERENCE_START_NOTE,
-        { gmnetExecutionProvider: runtimeExecutionProvider },
+        {
+          gmnetExecutionProvider: runtimeExecutionProvider,
+          gmnetCapability: capability,
+          gmnetCapabilitySource: capability?.source || null,
+        },
       );
       const runWebglFallback = async (note) => {
         onStageProgress?.(
           2,
           note,
-          { gmnetExecutionProvider: GMNET_FALLBACK_EXECUTION_PROVIDER },
+          {
+            gmnetExecutionProvider: GMNET_FALLBACK_EXECUTION_PROVIDER,
+            gmnetCapability: capability,
+            gmnetCapabilitySource: capability?.source || null,
+          },
         );
         return runInference({
           forceExecutionProviders: [GMNET_FALLBACK_EXECUTION_PROVIDER],
@@ -251,7 +350,11 @@ export class GmnetGainMapGenerator {
       onStageProgress?.(
         100,
         'AI Inference Complete',
-        { gmnetExecutionProvider: resolveCurrentExecutionProvider(runtimeExecutionProvider, session) },
+        {
+          gmnetExecutionProvider: resolveCurrentExecutionProvider(runtimeExecutionProvider, session),
+          gmnetCapability: capability,
+          gmnetCapabilitySource: capability?.source || null,
+        },
       );
 
       return {

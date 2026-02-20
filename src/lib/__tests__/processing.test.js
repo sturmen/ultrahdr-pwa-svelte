@@ -8,8 +8,12 @@ const { runMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../gmnet-session.js', () => {
+  const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
+  const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
+
   class GMNetInferenceSession {
     constructor() {
+      this.activeExecutionProvider = REQUIRED_GMNET_EXECUTION_PROVIDER;
       this.listeners = {
         progress: [],
       };
@@ -49,7 +53,11 @@ vi.mock('../gmnet-session.js', () => {
     }
   }
 
-  return { GMNetInferenceSession };
+  return {
+    GMNetInferenceSession,
+    GMNET_FALLBACK_EXECUTION_PROVIDER,
+    REQUIRED_GMNET_EXECUTION_PROVIDER,
+  };
 });
 
 function createImageData(width = 2, height = 2) {
@@ -94,9 +102,9 @@ describe('GMNet-only gain map generation', () => {
   it('forwards gmnetModelVariant to GMNet inference', async () => {
     await generateGainMapData(createImageData(), { gmnetModelVariant: 'synthetic' });
 
-    expect(runMock).toHaveBeenCalledWith(expect.any(ImageData), {
+    expect(runMock).toHaveBeenCalledWith(expect.any(ImageData), expect.objectContaining({
       gmnetModelVariant: 'synthetic',
-    });
+    }));
   });
 
   it('hard-fails when useGmnet is disabled', async () => {
@@ -124,7 +132,7 @@ describe('GMNet-only gain map generation', () => {
       100,
       'AI Inference Complete',
       expect.objectContaining({
-        gmnetExecutionProvider: null,
+        gmnetExecutionProvider: 'webgpu',
       }),
     );
   });

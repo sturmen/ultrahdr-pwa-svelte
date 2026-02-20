@@ -82,9 +82,12 @@
   let aiModelStatusVisible = false;
   let aiModelStatusMessage = "";
   let aiModelStatusProgress = 0;
+  let pipelineGmnetCapability = null;
+  let capabilityRestrictionAppliedToCurrentFile = false;
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
+  const DEFAULT_MAX_OUTPUT_LONG_EDGE = 8192;
 
   const PROGRESS_STAGE_ORDER = [
     "wasm-load",
@@ -94,6 +97,7 @@
     "read-input-data-url",
     "extract-exif",
     "decode-image-data",
+    "probe-gmnet-capability",
     "constrain-sdr-image",
     "apply-rotation",
     "prepare-gmnet-input",
@@ -120,6 +124,7 @@
     "read-input-data-url": "Reading image",
     "extract-exif": "Extracting metadata",
     "decode-image-data": "Decoding pixels",
+    "probe-gmnet-capability": "Probing GMNet capability",
     "constrain-sdr-image": "Constraining output dimensions",
     "apply-rotation": "Applying rotation",
     "prepare-gmnet-input": "Preparing GMNet input",
@@ -186,6 +191,14 @@
     queueCompletedCount > 0;
   $: showPipelineStatusCard =
     processing || latestPipelineEvent || showPipelineCompleteSummary;
+  $: capabilityOutputMaxLongEdge = Number.isFinite(
+    Number(pipelineGmnetCapability?.outputMaxLongEdge),
+  )
+    ? Math.floor(Number(pipelineGmnetCapability.outputMaxLongEdge))
+    : null;
+  $: capabilityIsRestrictive = Number.isFinite(capabilityOutputMaxLongEdge)
+    && capabilityOutputMaxLongEdge > 0
+    && capabilityOutputMaxLongEdge < DEFAULT_MAX_OUTPUT_LONG_EDGE;
   $: if (showStalePrompt && staleCount === 0) {
     showStalePrompt = false;
   }
@@ -254,6 +267,37 @@
     }
     const normalized = value.trim().toLowerCase();
     return normalized || null;
+  }
+
+  function normalizeGmnetCapability(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const provider = normalizeExecutionProvider(value.provider || value.gmnetExecutionProvider);
+    const gainMapMaxLongEdge = Number(value.gainMapMaxLongEdge);
+    const outputMaxLongEdge = Number(value.outputMaxLongEdge);
+    if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
+      return null;
+    }
+    const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
+      ? Math.floor(outputMaxLongEdge)
+      : Math.floor(gainMapMaxLongEdge * 2);
+    return {
+      provider,
+      gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
+      outputMaxLongEdge: normalizedOutputMaxLongEdge,
+      source: typeof value.source === "string" && value.source.length > 0
+        ? value.source
+        : (typeof value.gmnetCapabilitySource === "string" ? value.gmnetCapabilitySource : "probe"),
+    };
+  }
+
+  function formatLongEdge(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return "unknown";
+    }
+    return `${Math.floor(numeric)}px`;
   }
 
   function parseExecutionProviderFromNote(note) {
@@ -353,6 +397,7 @@
     pipelineFileLabel = "";
     pipelineFileName = "";
     activeProgressFileIndex = null;
+    capabilityRestrictionAppliedToCurrentFile = false;
     resetAiModelStatus();
   }
 
@@ -375,6 +420,20 @@
     const executionProvider = resolveExecutionProviderFromEvent(event);
     if (executionProvider) {
       pipelineExecutionProvider = executionProvider;
+    }
+    const gmnetCapability = normalizeGmnetCapability(event?.gmnetCapability);
+    if (gmnetCapability) {
+      pipelineGmnetCapability = gmnetCapability;
+    }
+
+    if (phase === "pipeline-start") {
+      capabilityRestrictionAppliedToCurrentFile = false;
+    }
+    if (
+      event?.stage === "constrain-sdr-image"
+      && event?.constrainedByCapability === true
+    ) {
+      capabilityRestrictionAppliedToCurrentFile = true;
     }
 
     if (Number.isFinite(fileIndex) && fileIndex !== activeProgressFileIndex) {
@@ -1352,6 +1411,38 @@
             </div>
           </div>
 
+          {#if capabilityIsRestrictive}
+            <section
+              class="capability-restriction card"
+              data-testid="capability-restriction-banner"
+              role="status"
+            >
+              <p>
+                Browser capability limits output quality in this session.
+              </p>
+              <p class="help-text">
+                Runtime: {formatExecutionProviderLabel(pipelineGmnetCapability?.provider)}
+                • Gain map max: {formatLongEdge(
+                  pipelineGmnetCapability?.gainMapMaxLongEdge,
+                )}
+                • Max output long edge: {formatLongEdge(
+                  pipelineGmnetCapability?.outputMaxLongEdge,
+                )}
+              </p>
+              <p class="help-text">
+                Larger inputs will be downscaled before export.
+              </p>
+              {#if capabilityRestrictionAppliedToCurrentFile}
+                <p
+                  class="help-text"
+                  data-testid="capability-restriction-current-file"
+                >
+                  Current file was downscaled due to browser capability.
+                </p>
+              {/if}
+            </section>
+          {/if}
+
           <div class="actions compact-actions">
             <input
               type="file"
@@ -1917,6 +2008,27 @@
         {/if}
       </p>
 
+      {#if capabilityIsRestrictive}
+        <section
+          class="capability-restriction card"
+          data-testid="export-capability-restriction"
+          role="status"
+        >
+          <p>
+            Export quality is limited by browser runtime capability.
+          </p>
+          <p class="help-text">
+            Runtime: {formatExecutionProviderLabel(pipelineGmnetCapability?.provider)}
+            • Gain map max: {formatLongEdge(
+              pipelineGmnetCapability?.gainMapMaxLongEdge,
+            )}
+            • Max output long edge: {formatLongEdge(
+              pipelineGmnetCapability?.outputMaxLongEdge,
+            )}
+          </p>
+        </section>
+      {/if}
+
       <div class="sheet-actions">
         {#if selectedIndices.size > 1}
           <div class="download-separate-action">
@@ -2272,6 +2384,28 @@
   .stale-prompt p {
     margin: 0;
     font-size: 0.9rem;
+  }
+
+  .capability-restriction {
+    border-color: color-mix(
+      in srgb,
+      var(--queue-warning, #f59e0b) 60%,
+      var(--border-subtle)
+    );
+    background: color-mix(
+      in srgb,
+      var(--queue-warning, #f59e0b) 10%,
+      var(--surface-muted)
+    );
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.7rem 0.8rem;
+  }
+
+  .capability-restriction p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-color);
   }
 
   .stale-actions {

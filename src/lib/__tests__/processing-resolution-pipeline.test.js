@@ -25,6 +25,19 @@ const {
 
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
+    async resolveCapability(options = {}) {
+      if (options?.capabilityHint) {
+        return options.capabilityHint;
+      }
+      return {
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 4096,
+        outputMaxLongEdge: 8192,
+        source: 'probe',
+        attempts: [{ candidateLongEdge: 4096, status: 'passed' }],
+      };
+    }
+
     async generate(imageData) {
       gmnetCalls.push({ width: imageData.width, height: imageData.height });
       const size = imageData.width * imageData.height * 4;
@@ -179,5 +192,67 @@ describe('processing fixed-resolution generated pipeline', () => {
 
     expect(gmnetCalls).toHaveLength(1);
     expect(gmnetCalls[0]).toEqual({ width: 3000, height: 2000 });
+  });
+
+  it('applies capability-driven output clamp using 2x long-edge rule', async () => {
+    decodeDimensions.width = 6000;
+    decodeDimensions.height = 4000;
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      gmnetCapabilityHint: {
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 1000,
+        outputMaxLongEdge: 2000,
+        source: 'cache',
+        attempts: [],
+      },
+    });
+
+    expect(gmnetCalls).toHaveLength(1);
+    expect(gmnetCalls[0]).toEqual({ width: 1000, height: 666 });
+    expect(jpegEncodeCanvasSizes).toEqual(
+      expect.arrayContaining([
+        { width: 2000, height: 1333 },
+        { width: 1000, height: 666 },
+      ]),
+    );
+  });
+
+  it('emits probe-gmnet-capability stage before constrain-sdr-image', async () => {
+    decodeDimensions.width = 6000;
+    decodeDimensions.height = 4000;
+    const onProgress = vi.fn();
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      gmnetCapabilityHint: {
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 1000,
+        outputMaxLongEdge: 2000,
+        source: 'cache',
+        attempts: [],
+      },
+      onProgress,
+    });
+
+    const stageEvents = onProgress.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event?.phase === 'stage-start')
+      .map((event) => event.stage);
+    const probeIndex = stageEvents.indexOf('probe-gmnet-capability');
+    const constrainIndex = stageEvents.indexOf('constrain-sdr-image');
+    expect(probeIndex).toBeGreaterThanOrEqual(0);
+    expect(constrainIndex).toBeGreaterThanOrEqual(0);
+    expect(probeIndex).toBeLessThan(constrainIndex);
   });
 });

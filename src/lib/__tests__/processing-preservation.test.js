@@ -512,6 +512,7 @@ describe('processImage UltraHDR preservation path', () => {
         const stages = onProgress.mock.calls
             .map(([event]) => event?.stage)
             .filter(Boolean);
+        expect(stages).not.toContain('probe-gmnet-capability');
         expect(stages).not.toContain('constrain-sdr-image');
         expect(stages).not.toContain('prepare-gmnet-input');
         expect(stages).not.toContain('generate-gain-map');

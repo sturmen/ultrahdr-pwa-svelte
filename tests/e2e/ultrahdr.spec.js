@@ -498,6 +498,18 @@ function relativeDelta(a, b) {
     return Math.abs(a - b) / denom;
 }
 
+async function readRuntimeProvider(page) {
+    const marker = await page.getByTestId('runtime-init-provider').textContent();
+    const match = /runtime provider:\s*([a-z0-9_-]+)/i.exec(marker || '');
+    return (match?.[1] || '').trim().toLowerCase() || null;
+}
+
+async function setCapabilityOverride(page, override) {
+    await page.evaluate((value) => {
+        window.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE = value;
+    }, override);
+}
+
 function extractHeicHeadroom(heicPath) {
     const xmpXml = execFileSync('exiftool', ['-a', '-b', '-XMP', heicPath], { stdio: 'pipe' }).toString('utf8');
     const match = xmpXml.match(/<HDRGainMap:HDRGainMapHeadroom>\s*([0-9.+\-eE]+)\s*<\/HDRGainMap:HDRGainMapHeadroom>/i)
@@ -596,7 +608,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(hasGainMapXMP(jpegData)).toBe(true);
         });
 
-        test('should generate gain map at quarter-pixel resolution for SDR inputs', async ({ page, browserName }) => {
+        test('should generate gain map at quarter-pixel resolution for processed SDR inputs', async ({ page, browserName }) => {
             test.setTimeout(180_000);
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-scale-${browserName}-`));
             try {
@@ -609,15 +621,47 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 fs.writeFileSync(outputJpegPath, outputBuffer);
 
                 const outputGainMapPath = extractUltraHdrGainMapJpeg(outputJpegPath, tempDir);
-                const sourceBitmap = await loadBitmap(SDR_IMAGE);
+                const outputSdrBitmap = await loadBitmap(outputJpegPath);
                 const outputGainMapBitmap = await loadBitmap(outputGainMapPath);
 
-                expect(outputGainMapBitmap.width).toBe(Math.max(1, Math.floor(sourceBitmap.width * 0.5)));
-                expect(outputGainMapBitmap.height).toBe(Math.max(1, Math.floor(sourceBitmap.height * 0.5)));
+                expect(outputGainMapBitmap.width).toBe(Math.max(1, Math.floor(outputSdrBitmap.width * 0.5)));
+                expect(outputGainMapBitmap.height).toBe(Math.max(1, Math.floor(outputSdrBitmap.height * 0.5)));
 
                 const gainMapStats = computeGrayscaleStats(outputGainMapBitmap);
                 expect(gainMapStats.dynamicRange).toBeGreaterThanOrEqual(2);
                 expect(gainMapStats.stdDev).toBeGreaterThan(0.25);
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        });
+
+        test('should apply capability override clamp and show restriction warning', async ({ page, browserName }) => {
+            test.setTimeout(180_000);
+            const runtimeProvider = await readRuntimeProvider(page);
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-capability-cap-${browserName}-`));
+            try {
+                await setCapabilityOverride(page, {
+                    provider: runtimeProvider || 'webgpu',
+                    gainMapMaxLongEdge: 256,
+                    outputMaxLongEdge: 512,
+                    source: 'test-override',
+                    attempts: [],
+                });
+
+                await uploadFiles(page, [SDR_IMAGE]);
+                await waitForProcessing(page);
+
+                await expect(page.getByTestId('capability-restriction-banner')).toBeVisible();
+                await expect(page.getByTestId('capability-restriction-banner')).toContainText('512');
+
+                const outputBuffer = await downloadFirstResult(page);
+                const outputJpegPath = path.join(tempDir, 'output-ultrahdr.jpg');
+                fs.writeFileSync(outputJpegPath, outputBuffer);
+
+                const outputGainMapPath = extractUltraHdrGainMapJpeg(outputJpegPath, tempDir);
+                const outputGainMapBitmap = await loadBitmap(outputGainMapPath);
+                expect(outputGainMapBitmap.width).toBe(256);
+                expect(outputGainMapBitmap.height).toBe(144);
             } finally {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }

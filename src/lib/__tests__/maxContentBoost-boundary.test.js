@@ -8,7 +8,14 @@ const { runMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../gmnet-session.js', () => {
+  const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
+  const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
+
   class GMNetInferenceSession {
+    constructor() {
+      this.activeExecutionProvider = REQUIRED_GMNET_EXECUTION_PROVIDER;
+    }
+
     on() {}
     off() {}
 
@@ -27,7 +34,11 @@ vi.mock('../gmnet-session.js', () => {
     }
   }
 
-  return { GMNetInferenceSession };
+  return {
+    GMNetInferenceSession,
+    GMNET_FALLBACK_EXECUTION_PROVIDER,
+    REQUIRED_GMNET_EXECUTION_PROVIDER,
+  };
 });
 
 function createImageData() {

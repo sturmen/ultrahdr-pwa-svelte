@@ -17,6 +17,7 @@ const INFERENCE_TIMEOUT_FIREFOX_MS = 600_000;
 const INFERENCE_TIMEOUT_WASM_MS = 600_000;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const INFERENCE_TIMEOUT_ERROR_MESSAGE = 'Processing worker stalled during GMNet inference.';
+const GMNET_CAPABILITY_CACHE_KEY_PREFIX = 'ultrahdr:gmnet-capability:v1';
 
 export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'onnx-load',
@@ -170,6 +171,151 @@ function normalizeExecutionProvider(value) {
   }
   const normalized = value.trim().toLowerCase();
   return normalized || null;
+}
+
+function normalizeGmnetCapability(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const provider = normalizeExecutionProvider(value.provider || value.gmnetExecutionProvider);
+  const gainMapMaxLongEdge = Number(value.gainMapMaxLongEdge);
+  const outputMaxLongEdge = Number(value.outputMaxLongEdge);
+  if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
+    return null;
+  }
+  const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
+    ? Math.floor(outputMaxLongEdge)
+    : Math.floor(gainMapMaxLongEdge * 2);
+  return {
+    provider,
+    gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
+    outputMaxLongEdge: normalizedOutputMaxLongEdge,
+    source: typeof value.source === 'string' && value.source.length > 0
+      ? value.source
+      : (typeof value.gmnetCapabilitySource === 'string' ? value.gmnetCapabilitySource : 'probe'),
+    attempts: Array.isArray(value.attempts) ? value.attempts : [],
+    cachedAt: Number.isFinite(Number(value.cachedAt)) ? Number(value.cachedAt) : Date.now(),
+  };
+}
+
+function getCapabilityCacheStorageKey(runtime = globalThis) {
+  const navigatorRef = runtime?.navigator || {};
+  const fingerprint = [
+    String(navigatorRef.userAgent || ''),
+    String(navigatorRef.platform || ''),
+    Number(navigatorRef.hardwareConcurrency || 0) || 0,
+    runtime?.crossOriginIsolated === true ? 1 : 0,
+    navigatorRef.gpu ? 1 : 0,
+  ].join('|');
+  const appVersion = import.meta.env.VITE_APP_VERSION || 'dev';
+  const assetVersion = import.meta.env.VITE_APP_ASSET_VERSION || 'dev-unversioned-app';
+  const wasmAssetVersion = import.meta.env.VITE_WASM_ASSET_VERSION || 'dev-unversioned';
+  return `${GMNET_CAPABILITY_CACHE_KEY_PREFIX}:${appVersion}:${assetVersion}:${wasmAssetVersion}:${fingerprint}`;
+}
+
+function readCapabilityCacheRecord(runtime = globalThis) {
+  try {
+    if (!runtime?.localStorage || typeof runtime.localStorage.getItem !== 'function') {
+      return null;
+    }
+    const raw = runtime.localStorage.getItem(getCapabilityCacheStorageKey(runtime));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    return parsed;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function writeCapabilityCacheRecord(runtime = globalThis, record = null) {
+  try {
+    if (!runtime?.localStorage || typeof runtime.localStorage.setItem !== 'function') {
+      return;
+    }
+    runtime.localStorage.setItem(
+      getCapabilityCacheStorageKey(runtime),
+      JSON.stringify(record || {}),
+    );
+  } catch (_error) {
+    // Cache writes are best-effort only.
+  }
+}
+
+function resolveRequestedProviderFromOptions(options = {}) {
+  const forceExecutionProviders = Array.isArray(options?.forceExecutionProviders)
+    ? options.forceExecutionProviders
+    : [];
+  const normalizedProviders = forceExecutionProviders
+    .map((provider) => normalizeExecutionProvider(provider))
+    .filter(Boolean);
+  return normalizedProviders.length === 1 ? normalizedProviders[0] : null;
+}
+
+function getCachedCapabilityHint(runtime = globalThis, options = {}) {
+  const record = readCapabilityCacheRecord(runtime);
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const byProvider = record.byProvider && typeof record.byProvider === 'object'
+    ? record.byProvider
+    : {};
+  const requestedProvider = resolveRequestedProviderFromOptions(options);
+  if (requestedProvider && byProvider[requestedProvider]) {
+    return normalizeGmnetCapability(byProvider[requestedProvider]);
+  }
+
+  const preferredOrder = ['webgpu', 'webgl'];
+  for (const provider of preferredOrder) {
+    const capability = normalizeGmnetCapability(byProvider[provider]);
+    if (capability) {
+      return capability;
+    }
+  }
+
+  for (const entry of Object.values(byProvider)) {
+    const capability = normalizeGmnetCapability(entry);
+    if (capability) {
+      return capability;
+    }
+  }
+
+  return null;
+}
+
+function getTestCapabilityOverride(runtime = globalThis) {
+  const override = runtime?.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE;
+  const normalized = normalizeGmnetCapability(override);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    ...normalized,
+    source: normalized.source || 'test-override',
+  };
+}
+
+function persistCapabilityHint(runtime = globalThis, capabilityInput = null) {
+  const capability = normalizeGmnetCapability(capabilityInput);
+  if (!capability) {
+    return;
+  }
+  const currentRecord = readCapabilityCacheRecord(runtime) || {};
+  const nextRecord = {
+    ...currentRecord,
+    updatedAt: Date.now(),
+    byProvider: {
+      ...(currentRecord.byProvider && typeof currentRecord.byProvider === 'object'
+        ? currentRecord.byProvider
+        : {}),
+      [capability.provider]: capability,
+    },
+  };
+  writeCapabilityCacheRecord(runtime, nextRecord);
 }
 
 function resolveInferenceTimeoutMs(runtime = globalThis, executionProvider = null) {
@@ -533,6 +679,7 @@ function initializeWorkerClient() {
         if (detail && typeof detail === 'object') {
           job.lastProgressDetail = cloneEventDetail(detail);
           updateInferenceTimeoutForProvider(jobId, job, detail.gmnetExecutionProvider);
+          persistCapabilityHint(globalThis, detail.gmnetCapability);
         }
         if (
           job.awaitingWasmLoadCompletion &&
@@ -673,6 +820,23 @@ export async function processImage(file, options = {}) {
   }
 
   const client = await getWorkerClient();
+  const explicitHint = normalizeGmnetCapability(options?.gmnetCapabilityHint);
+  const testOverrideHint = explicitHint ? null : getTestCapabilityOverride(globalThis);
+  const cachedHint = explicitHint || testOverrideHint
+    ? null
+    : getCachedCapabilityHint(globalThis, options);
+  const mergedOptions = { ...options };
+  if (explicitHint) {
+    mergedOptions.gmnetCapabilityHint = explicitHint;
+  } else if (testOverrideHint) {
+    mergedOptions.gmnetCapabilityHint = testOverrideHint;
+  } else if (cachedHint) {
+    mergedOptions.gmnetCapabilityHint = cachedHint;
+  }
 
-  return client.process(file, options);
+  return client.process(file, mergedOptions);
+}
+
+export function __getCapabilityCacheStorageKeyForTests() {
+  return getCapabilityCacheStorageKey(globalThis);
 }
