@@ -73,20 +73,6 @@ function resolveWasmThreadCount(runtime = globalThis) {
     return Math.max(2, boundedCount);
 }
 
-function resolveCpuCoreUsageForProvider(provider, ortModule, runtime = globalThis) {
-    const normalizedProvider = typeof provider === 'string' ? provider.toLowerCase() : 'unknown';
-    const availableCores = resolveHardwareConcurrency(runtime);
-    const configuredWasmThreads = Number(ortModule?.env?.wasm?.numThreads);
-    if (
-        normalizedProvider === 'wasm' &&
-        Number.isFinite(configuredWasmThreads) &&
-        configuredWasmThreads >= 1
-    ) {
-        return `${Math.min(Math.floor(configuredWasmThreads), availableCores)}/${availableCores}`;
-    }
-    return `n/a/${availableCores}`;
-}
-
 function configureOrtRuntime(ortModule, runtime = globalThis) {
     if (!ortModule || typeof ortModule !== 'object') {
         return;
@@ -720,15 +706,21 @@ export class GMNetInferenceSession {
 
         const timeoutMs = normalizeLongEdgeLimit(options.timeoutMs, DEFAULT_PROBE_TIMEOUT_MS);
         const attempts = [];
+        const attemptedCandidates = new Set();
 
         const evaluateCandidate = async (candidateLongEdge) => {
             const startedAtMs = Date.now();
+            const candidateResolution = `${candidateLongEdge}x${candidateLongEdge}`;
             const attempt = {
                 candidateLongEdge,
                 status: 'running',
                 durationMs: 0,
             };
             try {
+                this.emit('capability-probe', { candidate: candidateLongEdge, provider, phase: 'testing' });
+                console.log(
+                    `[GMNet capability probe] Testing ${candidateResolution} (${provider})...`,
+                );
                 const probeImage = this.createProbeImageData(candidateLongEdge);
                 const output = await runWithTimeout(
                     this.run(probeImage, {
@@ -740,24 +732,39 @@ export class GMNetInferenceSession {
                     `GMNet capability probe timed out at ${candidateLongEdge}px.`,
                 );
                 if (!(output instanceof Uint8ClampedArray)) {
-                    throw new Error(
-                        `Capability probe expected Uint8ClampedArray output, received "${output?.constructor?.name || typeof output}".`,
-                    );
+                    attempt.status = 'failed';
+                    attempt.error = {
+                        name: 'InvalidOutputType',
+                        message: `Capability probe expected Uint8ClampedArray output, received "${output?.constructor?.name || typeof output}".`,
+                    };
+                    console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
+                    return attempt;
                 }
                 const expectedLength = candidateLongEdge * candidateLongEdge * 4;
                 if (output.length !== expectedLength) {
-                    throw new Error(
-                        `Capability probe output length mismatch for ${candidateLongEdge}px: expected ${expectedLength}, got ${output.length}.`,
-                    );
+                    attempt.status = 'failed';
+                    attempt.error = {
+                        name: 'LengthMismatch',
+                        message: `Capability probe output length mismatch for ${candidateLongEdge}px: expected ${expectedLength}, got ${output.length}.`,
+                    };
+                    console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
+                    return attempt;
                 }
                 const stats = analyzeRgbaOutputStats(output);
                 if (isProbeOutputNearFlat(stats)) {
-                    throw new Error(
-                        `Capability probe output near-flat at ${candidateLongEdge}px (range=${stats.dynamicRange}, std=${stats.stdDev.toFixed(3)}).`,
-                    );
+                    attempt.status = 'failed';
+                    attempt.error = {
+                        name: 'NearFlatOutput',
+                        message: `Capability probe output near-flat at ${candidateLongEdge}px (range=${stats.dynamicRange}, std=${stats.stdDev.toFixed(3)}).`,
+                    };
+                    console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
+                    return attempt;
                 }
                 attempt.status = 'passed';
                 attempt.stats = stats;
+                console.log(
+                    `[GMNet capability probe] Passed ${candidateResolution} (${provider}).`,
+                );
                 return attempt;
             } catch (error) {
                 attempt.status = 'failed';
@@ -765,40 +772,41 @@ export class GMNetInferenceSession {
                     name: error?.name || 'Error',
                     message: error?.message || String(error),
                 };
+                console.warn(
+                    `[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`,
+                );
+
+                try {
+                    console.warn(`[GMNet capability probe] Re-initializing session to recover from candidate crash...`);
+                    if (typeof this.session?.release === 'function') {
+                        await this.session.release();
+                    }
+                } catch (e) {
+                    // Ignore release errors on a crashed session
+                }
+                this.session = null;
+                try {
+                    await this.init(requestedVariant, {
+                        forceExecutionProviders: [provider],
+                        forceReload: true,
+                    });
+                } catch (initError) {
+                    console.error(`[GMNet capability probe] Fatal error attempting to recover session:`, initError);
+                }
+
                 return attempt;
             } finally {
                 attempt.durationMs = Math.max(0, Date.now() - startedAtMs);
                 attempts.push(attempt);
+                attemptedCandidates.add(candidateLongEdge);
+                this.emit('capability-probe', {
+                    candidate: candidateLongEdge,
+                    provider,
+                    phase: attempt.status,
+                    error: attempt.error
+                });
             }
         };
-
-        if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
-            const attempt = await evaluateCandidate(WEBGL_LOCAL_INPUT_SIZE);
-            if (attempt.status !== 'passed') {
-                throw createCapabilityProbeError(
-                    'Failed to verify fixed WebGL GMNet capability.',
-                    {
-                        provider,
-                        source: 'fixed-model',
-                        attempts,
-                    },
-                );
-            }
-            return {
-                provider,
-                gainMapMaxLongEdge: WEBGL_LOCAL_INPUT_SIZE,
-                outputMaxLongEdge: WEBGL_LOCAL_INPUT_SIZE * 2,
-                source: 'fixed-model',
-                attempts,
-            };
-        }
-
-        if (provider !== REQUIRED_GMNET_EXECUTION_PROVIDER) {
-            throw createCapabilityProbeError(
-                `Unsupported GMNet provider "${provider}" for capability probing.`,
-                { provider, attempts },
-            );
-        }
 
         let probeMinLongEdge = normalizeLongEdgeLimit(options.minLongEdge, DEFAULT_PROBE_MIN_LONG_EDGE);
         let probeMaxLongEdge = normalizeLongEdgeLimit(options.maxLongEdge, DEFAULT_PROBE_MAX_LONG_EDGE);
@@ -811,9 +819,37 @@ export class GMNetInferenceSession {
         let low = probeMinLongEdge;
         let high = probeMaxLongEdge;
         let best = 0;
+        const binarySearchRangeSize = Math.max(1, probeMaxLongEdge - probeMinLongEdge + 1);
+        const requestedMaxAttempts = Number(options.maxAttempts);
+        const maxBinarySearchAttempts = Number.isFinite(requestedMaxAttempts) && requestedMaxAttempts > 0
+            ? Math.max(1, Math.floor(requestedMaxAttempts))
+            : Math.ceil(Math.log2(binarySearchRangeSize)) + 2;
+        let binarySearchAttemptCount = 0;
+        let lastCandidate = null;
 
-        while (low <= high) {
+        // Optimistically test the maximum possible capability first.
+        const maxAttempt = await evaluateCandidate(probeMaxLongEdge);
+        binarySearchAttemptCount += 1;
+        if (maxAttempt.status === 'passed') {
+            return {
+                provider,
+                gainMapMaxLongEdge: probeMaxLongEdge,
+                outputMaxLongEdge: probeMaxLongEdge * 2,
+                source: 'probe-optimistic',
+                attempts,
+            };
+        } else {
+            // It failed at the max, so the high end of our binary search must be lower.
+            high = probeMaxLongEdge - 1;
+        }
+
+        while (low <= high && binarySearchAttemptCount < maxBinarySearchAttempts) {
             const candidate = Math.floor((low + high) / 2);
+            if (candidate === lastCandidate) {
+                break;
+            }
+            lastCandidate = candidate;
+            binarySearchAttemptCount += 1;
             const attempt = await evaluateCandidate(candidate);
             if (attempt.status === 'passed') {
                 best = candidate;
@@ -823,9 +859,22 @@ export class GMNetInferenceSession {
             }
         }
 
+        if (low <= high && binarySearchAttemptCount >= maxBinarySearchAttempts) {
+            throw createCapabilityProbeError(
+                `GMNet capability probe exceeded ${maxBinarySearchAttempts} binary-search attempts.`,
+                {
+                    provider,
+                    source: 'probe',
+                    minLongEdge: probeMinLongEdge,
+                    maxLongEdge: probeMaxLongEdge,
+                    attempts,
+                },
+            );
+        }
+
         if (best < probeMinLongEdge) {
             throw createCapabilityProbeError(
-                'Failed to find a valid WebGPU GMNet capability candidate.',
+                `Failed to find a valid ${provider} GMNet capability candidate.`,
                 {
                     provider,
                     source: 'probe',
@@ -923,13 +972,8 @@ export class GMNetInferenceSession {
 
         const inferenceProvider = this.activeExecutionProvider
             || resolveActiveExecutionProvider(this.session);
-        const cpuCoreUsage = resolveCpuCoreUsageForProvider(
-            inferenceProvider,
-            this.activeOrtModule,
-            this.runtime,
-        );
         console.log(
-            `[GMNet session] Executing inference (provider: ${inferenceProvider}, cpu cores: ${cpuCoreUsage})...`
+            `[GMNet session] Executing inference (provider: ${inferenceProvider})...`
         );
         let results;
         results = await this.session.run(feeds);

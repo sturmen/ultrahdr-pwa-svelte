@@ -10,6 +10,8 @@ const DEFAULT_SMOKE_IMAGE_WIDTH = 128;
 const DEFAULT_SMOKE_IMAGE_HEIGHT = 128;
 const SMOKE_OUTPUT_MIN_DYNAMIC_RANGE = 8;
 const SMOKE_OUTPUT_MIN_STD_DEV = 1.5;
+const STARTUP_CAPABILITY_PROBE_TIMEOUT_MS = 15_000;
+const STARTUP_CAPABILITY_PROBE_MAX_LONG_EDGE = 4_096;
 
 export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'onnx-load',
@@ -45,6 +47,30 @@ function normalizeExecutionProvider(value) {
   }
   const normalized = value.trim().toLowerCase();
   return normalized || null;
+}
+
+function normalizeGmnetCapability(value, fallbackProvider = null) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const provider = normalizeExecutionProvider(value.provider) || normalizeExecutionProvider(fallbackProvider);
+  const gainMapMaxLongEdge = Number(value.gainMapMaxLongEdge);
+  const outputMaxLongEdge = Number(value.outputMaxLongEdge);
+  if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
+    return null;
+  }
+  const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
+    ? Math.floor(outputMaxLongEdge)
+    : Math.floor(gainMapMaxLongEdge * 2);
+  return {
+    provider,
+    gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
+    outputMaxLongEdge: normalizedOutputMaxLongEdge,
+    source: typeof value.source === 'string' && value.source.length > 0
+      ? value.source
+      : 'probe',
+    attempts: Array.isArray(value.attempts) ? value.attempts : [],
+  };
 }
 
 function hasWebGlSupport(runtime = globalThis) {
@@ -344,6 +370,7 @@ export async function initializeRuntime({
   sessionFactory = () => new GMNetInferenceSession({ runtime }),
   loadSmokeImageData,
   smokeAssetPath = DEFAULT_SMOKE_ASSET_PATH,
+  forceSmokeFailure = false,
   modelVariant = DEFAULT_GMNET_MODEL_VARIANT,
 } = {}) {
   const session = sessionFactory();
@@ -354,6 +381,7 @@ export async function initializeRuntime({
   let requestedExecutionProviders = [];
   const attemptFailures = [];
   let resolvedExecutionProvider = null;
+  let gmnetCapability = null;
 
   function normalizeAttemptFailure(error, provider) {
     const normalizedProvider = normalizeExecutionProvider(provider);
@@ -565,6 +593,90 @@ export async function initializeRuntime({
         errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
         userMessage: 'GMNet smoke test failed.',
         fn: async () => {
+          if (forceSmokeFailure) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
+              stepId: 'gmnet-smoke-run',
+              message: 'GMNet smoke asset failure was forced for runtime validation.',
+              userMessage: 'Unable to load the GMNet smoke-test asset.',
+              diagnostics: {
+                smokeAssetUrl,
+                forceSmokeFailure: true,
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider,
+              },
+              runtime,
+            });
+          }
+
+          let resolvedCapability = null;
+          let probeFeedbackHandler = null;
+          if (typeof session.resolveGainMapCapability === 'function') {
+            try {
+              probeFeedbackHandler = (event) => {
+                if (!event?.candidate) return;
+                let verb = 'Testing';
+                if (event.phase === 'passed') verb = 'Passed';
+                if (event.phase === 'failed') verb = 'Failed';
+                emitStepProgress(
+                  onProgress,
+                  'gmnet-smoke-run',
+                  'running',
+                  `${verb} ${event.candidate}x${event.candidate} capability (${event.provider || provider})...`
+                );
+              };
+              session.on('capability-probe', probeFeedbackHandler);
+
+              resolvedCapability = normalizeGmnetCapability(
+                await session.resolveGainMapCapability({
+                  gmnetModelVariant: modelVariant,
+                  forceExecutionProviders: providerRequest,
+                  maxLongEdge: STARTUP_CAPABILITY_PROBE_MAX_LONG_EDGE,
+                  timeoutMs: STARTUP_CAPABILITY_PROBE_TIMEOUT_MS,
+                  maxAttempts: 15,
+                }),
+                provider,
+              );
+            } catch (cause) {
+              throw createInitializationError({
+                errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+                stepId: 'gmnet-smoke-run',
+                message: cause?.message || 'GMNet capability probe failed.',
+                userMessage: 'GMNet capability probing failed during startup.',
+                diagnostics: {
+                  smokeAssetUrl,
+                  requestedExecutionProviders: providerRequest,
+                  resolvedExecutionProvider,
+                  capabilityAttempts: Array.isArray(cause?.diagnostics?.attempts)
+                    ? cause.diagnostics.attempts
+                    : [],
+                },
+                cause,
+                runtime,
+              });
+            } finally {
+              if (probeFeedbackHandler) {
+                session.off('capability-probe', probeFeedbackHandler);
+              }
+            }
+          }
+
+          if (!resolvedCapability) {
+            throw createInitializationError({
+              errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+              stepId: 'gmnet-smoke-run',
+              message: 'GMNet capability probe did not return a valid capability record.',
+              userMessage: 'GMNet capability probing failed during startup.',
+              diagnostics: {
+                smokeAssetUrl,
+                requestedExecutionProviders: providerRequest,
+                resolvedExecutionProvider,
+              },
+              runtime,
+            });
+          }
+          gmnetCapability = resolvedCapability;
+
           const smokeImageData = await decodeAndValidateSmokeImageData(provider);
 
           let smokeOutput;
@@ -572,6 +684,7 @@ export async function initializeRuntime({
             smokeOutput = await session.run(smokeImageData, {
               gmnetModelVariant: modelVariant,
               forceExecutionProviders: providerRequest,
+              localInputMaxLongEdge: resolvedCapability.gainMapMaxLongEdge,
             });
           } catch (cause) {
             throw createInitializationError({
@@ -585,6 +698,7 @@ export async function initializeRuntime({
                 decodedHeight: smokeImageData.height,
                 requestedExecutionProviders: providerRequest,
                 resolvedExecutionProvider,
+                gmnetCapability: resolvedCapability,
               },
               cause,
               runtime,
@@ -602,6 +716,7 @@ export async function initializeRuntime({
                 outputType: smokeOutput?.constructor?.name || typeof smokeOutput,
                 requestedExecutionProviders: providerRequest,
                 resolvedExecutionProvider,
+                gmnetCapability: resolvedCapability,
               },
               runtime,
             });
@@ -621,6 +736,7 @@ export async function initializeRuntime({
                 actualOutputLength: smokeOutput.length,
                 requestedExecutionProviders: providerRequest,
                 resolvedExecutionProvider,
+                gmnetCapability: resolvedCapability,
               },
               runtime,
             });
@@ -638,6 +754,7 @@ export async function initializeRuntime({
                 requestedExecutionProviders: providerRequest,
                 resolvedExecutionProvider,
                 smokeOutputStats,
+                gmnetCapability: resolvedCapability,
               },
               runtime,
             });
@@ -649,6 +766,7 @@ export async function initializeRuntime({
             decodedHeight: smokeImageData.height,
             outputLength: smokeOutput.length,
             smokeOutputStats,
+            gmnetCapability: resolvedCapability,
           };
         },
       });
@@ -717,12 +835,13 @@ export async function initializeRuntime({
     runtime,
     errorCode: RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
     userMessage: 'Startup checks did not complete successfully.',
-    fn: async () => {},
+    fn: async () => { },
   });
 
   return {
     requestedExecutionProviders,
     resolvedExecutionProvider,
+    gmnetCapability,
     smokeAssetUrl,
     attemptFailures,
   };

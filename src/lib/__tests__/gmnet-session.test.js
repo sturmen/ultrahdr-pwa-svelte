@@ -341,7 +341,7 @@ describe('GMNetInferenceSession runtime config', () => {
       run: vi.fn(),
       executionProviders: ['webgpu'],
     });
-    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => { });
 
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
@@ -627,7 +627,7 @@ describe('GMNetInferenceSession runtime config', () => {
         provider: 'webgl',
         gainMapMaxLongEdge: 128,
         outputMaxLongEdge: 256,
-        source: 'fixed-model',
+        source: 'probe',
       }),
     );
     expect(Array.isArray(capability.attempts)).toBe(true);
@@ -667,11 +667,129 @@ describe('GMNetInferenceSession runtime config', () => {
     });
 
     expect(capability.provider).toBe('webgpu');
-    expect(capability.source).toBe('probe');
+    expect(capability.source).toBe('probe-optimistic');
     expect(capability.gainMapMaxLongEdge).toBe(512);
     expect(capability.outputMaxLongEdge).toBe(1024);
     expect(Array.isArray(capability.attempts)).toBe(true);
     expect(capability.attempts.length).toBeGreaterThan(0);
+  });
+
+  it('logs per-resolution startup probe attempts and outcomes', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+    session.activeExecutionProvider = 'webgpu';
+    const mockSession = {
+      release: vi.fn(),
+      run: vi.fn(async (feeds) => {
+        const size = feeds.local_input.dims[2];
+        if (size > 256) {
+          throw new Error(`probe rejected at ${size}`);
+        }
+        const data = new Float32Array(size * size);
+        for (let i = 0; i < data.length; i += 1) {
+          data[i] = (i % 256) / 255;
+        }
+        return {
+          gain_map: {
+            data,
+            dims: [1, 1, size, size],
+          },
+        };
+      }),
+    };
+    session.session = mockSession;
+    vi.spyOn(session, 'init').mockImplementation(async () => {
+      session.session = mockSession;
+    });
+
+    vi.spyOn(session, 'preprocessGlobal').mockResolvedValue({ kind: 'global' });
+    vi.spyOn(session, 'preprocessLocal').mockImplementation((_imageData, width, height) => ({
+      kind: 'local',
+      dims: [1, 3, height, width],
+    }));
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+    try {
+      const capability = await session.resolveGainMapCapability({
+        minLongEdge: 128,
+        maxLongEdge: 512,
+        timeoutMs: 250,
+      });
+
+      expect(capability.gainMapMaxLongEdge).toBeLessThanOrEqual(256);
+      expect(
+        logSpy.mock.calls.some(([message]) =>
+          /\[GMNet capability probe\].*Testing\s+\d+x\d+/i.test(String(message)),
+        ),
+      ).toBe(true);
+      expect(
+        logSpy.mock.calls.some(([message]) =>
+          /\[GMNet capability probe\].*Passed\s+\d+x\d+/i.test(String(message)),
+        ),
+      ).toBe(true);
+      expect(
+        warnSpy.mock.calls.some(([message]) =>
+          /\[GMNet capability probe\].*Failed\s+\d+x\d+/i.test(String(message)),
+        ),
+      ).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('honors maxAttempts when probing webgpu capability', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+    session.activeExecutionProvider = 'webgpu';
+    const mockSession = {
+      release: vi.fn(),
+      run: vi.fn(async (feeds) => {
+        const size = feeds.local_input.dims[2];
+        if (size >= 512) {
+          throw new Error('simulated rejection top bound');
+        }
+        const data = new Float32Array(size * size);
+        for (let i = 0; i < data.length; i += 1) {
+          data[i] = (i % 256) / 255;
+        }
+        return {
+          gain_map: {
+            data,
+            dims: [1, 1, size, size],
+          },
+        };
+      }),
+    };
+    session.session = mockSession;
+    vi.spyOn(session, 'init').mockImplementation(async () => {
+      session.session = mockSession;
+    });
+
+    vi.spyOn(session, 'preprocessGlobal').mockResolvedValue({ kind: 'global' });
+    vi.spyOn(session, 'preprocessLocal').mockImplementation((_imageData, width, height) => ({
+      kind: 'local',
+      dims: [1, 3, height, width],
+    }));
+
+    await expect(
+      session.resolveGainMapCapability({
+        minLongEdge: 128,
+        maxLongEdge: 512,
+        timeoutMs: 250,
+        maxAttempts: 1,
+      }),
+    ).rejects.toMatchObject({
+      name: 'GmnetCapabilityProbeError',
+      diagnostics: expect.objectContaining({
+        attempts: expect.arrayContaining([
+          expect.objectContaining({
+            candidateLongEdge: expect.any(Number),
+          }),
+        ]),
+      }),
+    });
   });
 
   it('probes above 2048 by default so 8192 output remains reachable', async () => {
@@ -914,7 +1032,7 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(webglSession.run).toHaveBeenCalledTimes(1);
   });
 
-  it('logs inference runtime details including provider and cpu thread/core counts', async () => {
+  it('logs inference runtime details including provider only', async () => {
     Object.defineProperty(globalThis, 'crossOriginIsolated', {
       configurable: true,
       value: true,
@@ -944,7 +1062,7 @@ describe('GMNetInferenceSession runtime config', () => {
       kind: 'local',
       dims: [1, 3, height, width],
     }));
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
     logSpy.mockClear();
     const image = new ImageData(new Uint8ClampedArray(2 * 2 * 4), 2, 2);
 
@@ -952,9 +1070,14 @@ describe('GMNetInferenceSession runtime config', () => {
 
     expect(
       logSpy.mock.calls.some(([message]) =>
-        /Executing inference.*provider:\s*webgpu.*cpu cores:\s*n\/a\/8/i.test(String(message)),
+        /Executing inference.*provider:\s*webgpu/i.test(String(message)),
       ),
     ).toBe(true);
+    expect(
+      logSpy.mock.calls.some(([message]) =>
+        /cpu cores:/i.test(String(message)),
+      ),
+    ).toBe(false);
     logSpy.mockRestore();
   });
 });

@@ -53,7 +53,41 @@ function postInitError(error) {
   });
 }
 
-async function ensureRuntimeInitialized() {
+function normalizeRuntimeInitializationOptions(rawOptions) {
+  if (!rawOptions || typeof rawOptions !== 'object') {
+    return {};
+  }
+
+  const normalized = {};
+
+  if (typeof rawOptions.smokeAssetPath === 'string') {
+    const smokeAssetPath = rawOptions.smokeAssetPath.trim();
+    if (smokeAssetPath.length > 0) {
+      normalized.smokeAssetPath = smokeAssetPath;
+    }
+  }
+
+  if (typeof rawOptions.modelVariant === 'string') {
+    const modelVariant = rawOptions.modelVariant.trim();
+    if (modelVariant.length > 0) {
+      normalized.modelVariant = modelVariant;
+    }
+  }
+
+  const forceSmokeFailure = rawOptions.forceSmokeFailure;
+  if (
+    forceSmokeFailure === true
+    || forceSmokeFailure === 1
+    || forceSmokeFailure === '1'
+    || (typeof forceSmokeFailure === 'string' && forceSmokeFailure.trim().toLowerCase() === 'true')
+  ) {
+    normalized.forceSmokeFailure = true;
+  }
+
+  return normalized;
+}
+
+async function ensureRuntimeInitialized(initOptions = null) {
   if (runtimeInitializationResult) {
     return runtimeInitializationResult;
   }
@@ -64,6 +98,8 @@ async function ensureRuntimeInitialized() {
     return runtimeInitializationPromise;
   }
 
+  const runtimeInitializationOptions = normalizeRuntimeInitializationOptions(initOptions);
+
   runtimeInitializationPromise = initializeRuntimeChecks({
     onProgress: (event) => {
       self.postMessage({
@@ -71,6 +107,7 @@ async function ensureRuntimeInitialized() {
         event,
       });
     },
+    ...runtimeInitializationOptions,
   })
     .then((result) => {
       runtimeInitializationResult = result || {};
@@ -89,9 +126,9 @@ async function ensureRuntimeInitialized() {
   return runtimeInitializationPromise;
 }
 
-async function handleInitMessage() {
+async function handleInitMessage(message) {
   try {
-    const runtime = await ensureRuntimeInitialized();
+    const runtime = await ensureRuntimeInitialized(message?.options);
     self.postMessage({ type: 'ready', runtime });
   } catch (error) {
     postInitError(error);
@@ -113,11 +150,22 @@ async function handleProcessMessage(message) {
   activeJobs.set(jobId, controller);
 
   try {
-    await ensureRuntimeInitialized();
+    const runtime = await ensureRuntimeInitialized();
     const file = message.file;
     const options = message.options || {};
+    const runtimeCapabilityHint =
+      runtime && typeof runtime === 'object' && runtime.gmnetCapability && typeof runtime.gmnetCapability === 'object'
+        ? runtime.gmnetCapability
+        : null;
+    const processOptions =
+      options.gmnetCapabilityHint || !runtimeCapabilityHint
+        ? options
+        : {
+          ...options,
+          gmnetCapabilityHint: runtimeCapabilityHint,
+        };
     const blob = await processImageCore(file, {
-      ...options,
+      ...processOptions,
       abortSignal: controller.signal,
       onProgress: (event) => {
         self.postMessage({ type: 'progress', jobId, event });
@@ -148,7 +196,7 @@ self.addEventListener('message', (event) => {
   }
 
   if (message.type === 'init') {
-    void handleInitMessage();
+    void handleInitMessage(message);
     return;
   }
 

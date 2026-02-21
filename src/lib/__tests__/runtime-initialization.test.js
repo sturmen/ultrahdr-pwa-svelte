@@ -38,7 +38,7 @@ function createWebGlDocument() {
       height: 0,
       getContext: (type) => {
         if (type === 'webgl' || type === 'experimental-webgl') {
-          return { clear: () => {} };
+          return { clear: () => { } };
         }
         return null;
       },
@@ -67,6 +67,13 @@ function createRuntimeWithGpuAndWebGl() {
 describe('runtime initialization', () => {
   it('emits progress events in checklist order and succeeds with webgpu on first attempt', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
+    const resolveGainMapCapability = vi.fn(async () => ({
+      provider: 'webgpu',
+      gainMapMaxLongEdge: 3072,
+      outputMaxLongEdge: 6144,
+      source: 'probe',
+      attempts: [{ candidateLongEdge: 3072, status: 'passed' }],
+    }));
     const init = vi.fn(async (_variant, options = {}) => {
       const provider = options.forceExecutionProviders?.[0];
       runtime.navigator.gpu.requestAdapter.mockResolvedValueOnce({ name: 'mock-adapter' });
@@ -76,6 +83,9 @@ describe('runtime initialization', () => {
     const session = {
       init,
       run,
+      resolveGainMapCapability,
+      on: vi.fn(),
+      off: vi.fn(),
       activeExecutionProvider: 'webgpu',
     };
     const progressEvents = [];
@@ -98,6 +108,12 @@ describe('runtime initialization', () => {
         forceExecutionProviders: ['webgpu'],
       }),
     );
+    expect(resolveGainMapCapability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gmnetModelVariant: 'realworld',
+        forceExecutionProviders: ['webgpu'],
+      }),
+    );
 
     const runningOrder = progressEvents
       .filter((event) => event.status === 'running')
@@ -109,6 +125,13 @@ describe('runtime initialization', () => {
     expect(runningOrder).toEqual(RUNTIME_INIT_STEP_ORDER);
     expect(passedOrder).toEqual(RUNTIME_INIT_STEP_ORDER);
     expect(result.resolvedExecutionProvider).toBe('webgpu');
+    expect(result.gmnetCapability).toEqual(
+      expect.objectContaining({
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 3072,
+        outputMaxLongEdge: 6144,
+      }),
+    );
   });
 
   it('retries with webgl when webgpu smoke inference fails', async () => {
@@ -120,12 +143,21 @@ describe('runtime initialization', () => {
         attemptOrder.push(provider);
         session.activeExecutionProvider = provider;
       }),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: session.activeExecutionProvider,
+        gainMapMaxLongEdge: session.activeExecutionProvider === 'webgpu' ? 2048 : 128,
+        outputMaxLongEdge: session.activeExecutionProvider === 'webgpu' ? 4096 : 256,
+        source: session.activeExecutionProvider === 'webgpu' ? 'probe' : 'fixed-model',
+        attempts: [{ candidateLongEdge: session.activeExecutionProvider === 'webgpu' ? 2048 : 128, status: 'passed' }],
+      })),
       run: vi.fn(async () => {
         if (session.activeExecutionProvider === 'webgpu') {
           throw new Error('webgpu compile failure');
         }
         return createSmokeOutputRgba();
       }),
+      on: vi.fn(),
+      off: vi.fn(),
       activeExecutionProvider: null,
     };
 
@@ -137,6 +169,13 @@ describe('runtime initialization', () => {
 
     expect(attemptOrder).toEqual(['webgpu', 'webgl']);
     expect(result.resolvedExecutionProvider).toBe('webgl');
+    expect(result.gmnetCapability).toEqual(
+      expect.objectContaining({
+        provider: 'webgl',
+        gainMapMaxLongEdge: 128,
+        outputMaxLongEdge: 256,
+      }),
+    );
   });
 
   it('fails with NO_COMPATIBLE_GPU_PROVIDER when neither webgpu nor webgl is available', async () => {
@@ -155,6 +194,7 @@ describe('runtime initialization', () => {
         runtime,
         sessionFactory: () => ({
           init: vi.fn(),
+          resolveGainMapCapability: vi.fn(),
           run: vi.fn(),
           activeExecutionProvider: null,
         }),
@@ -172,9 +212,18 @@ describe('runtime initialization', () => {
       init: vi.fn(async (_variant, options = {}) => {
         session.activeExecutionProvider = options.forceExecutionProviders?.[0] || null;
       }),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: session.activeExecutionProvider,
+        gainMapMaxLongEdge: 128,
+        outputMaxLongEdge: 256,
+        source: 'probe',
+        attempts: [],
+      })),
       run: vi.fn(async () => {
         throw new Error(`smoke failed on ${session.activeExecutionProvider}`);
       }),
+      on: vi.fn(),
+      off: vi.fn(),
       activeExecutionProvider: null,
     };
 
@@ -197,7 +246,16 @@ describe('runtime initialization', () => {
       init: vi.fn(async (_variant, options = {}) => {
         session.activeExecutionProvider = options.forceExecutionProviders?.[0] || null;
       }),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: session.activeExecutionProvider,
+        gainMapMaxLongEdge: 128,
+        outputMaxLongEdge: 256,
+        source: 'probe',
+        attempts: [],
+      })),
       run: vi.fn(async () => createSmokeOutputRgba()),
+      on: vi.fn(),
+      off: vi.fn(),
       activeExecutionProvider: null,
     };
 
@@ -216,6 +274,40 @@ describe('runtime initialization', () => {
     });
   });
 
+  it('fails with RUNTIME_INIT_SMOKE_ASSET_FAILED when forceSmokeFailure is enabled', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || null;
+      }),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: session.activeExecutionProvider,
+        gainMapMaxLongEdge: 128,
+        outputMaxLongEdge: 256,
+        source: 'probe',
+        attempts: [],
+      })),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: null,
+    };
+
+    await expect(
+      initializeRuntime({
+        runtime,
+        forceSmokeFailure: true,
+        sessionFactory: () => session,
+        loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      }),
+    ).rejects.toMatchObject({
+      name: 'RuntimeInitializationError',
+      code: RUNTIME_INIT_ERROR_CODES.SMOKE_ASSET_FAILED,
+      stepId: 'gmnet-smoke-run',
+    });
+    expect(session.run).not.toHaveBeenCalled();
+  });
+
   it('fails with RUNTIME_INIT_SMOKE_INFERENCE_FAILED when smoke inference output is flat', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     runtime.document = undefined;
@@ -224,7 +316,16 @@ describe('runtime initialization', () => {
       init: vi.fn(async (_variant, options = {}) => {
         session.activeExecutionProvider = options.forceExecutionProviders?.[0] || null;
       }),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: session.activeExecutionProvider,
+        gainMapMaxLongEdge: 128,
+        outputMaxLongEdge: 256,
+        source: 'probe',
+        attempts: [],
+      })),
       run: vi.fn(async () => new Uint8ClampedArray(128 * 128 * 4)),
+      on: vi.fn(),
+      off: vi.fn(),
       activeExecutionProvider: null,
     };
 

@@ -160,6 +160,9 @@
     runtimeInitSteps = createRuntimeInitSteps();
 
     try {
+      const runtimeInitOptions = resolveRuntimeInitOverrides(
+        typeof window !== "undefined" ? window.location.search : "",
+      );
       const runtimeResult = await initializeRuntime({
         forceRetry,
         onProgress: (event) => {
@@ -168,6 +171,7 @@
           }
           applyRuntimeProgressEvent(event);
         },
+        ...(runtimeInitOptions ? { runtimeInitOptions } : {}),
       });
       if (appDisposed || runId !== runtimeInitRunId) {
         return false;
@@ -255,6 +259,27 @@
       action: action || null,
       tab: tab || null,
     };
+  }
+
+  function resolveRuntimeInitOverrides(search) {
+    const params = new URLSearchParams(search || "");
+    const smokeAssetPath = params.get("__uhdr_test_smoke_asset_path");
+    const modelVariant = params.get("__uhdr_test_model_variant");
+    const forceSmokeFailure = params.get("__uhdr_test_force_smoke_failure");
+    const options = {};
+    if (typeof smokeAssetPath === "string" && smokeAssetPath.trim().length > 0) {
+      options.smokeAssetPath = smokeAssetPath.trim();
+    }
+    if (typeof modelVariant === "string" && modelVariant.trim().length > 0) {
+      options.modelVariant = modelVariant.trim();
+    }
+    if (
+      forceSmokeFailure === "1"
+      || (typeof forceSmokeFailure === "string" && forceSmokeFailure.trim().toLowerCase() === "true")
+    ) {
+      options.forceSmokeFailure = true;
+    }
+    return Object.keys(options).length > 0 ? options : null;
   }
 
   async function maybeAutoPickImages() {

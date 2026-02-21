@@ -9,7 +9,8 @@ const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
 const WORKER_MESSAGE_ERROR = 'Processing worker returned an unexpected response.';
 const WORKER_STALL_ERROR = 'Processing worker stalled before WASM initialization completed.';
 const WORKER_WASM_LOAD_TIMEOUT_MS = 20_000;
-const WORKER_INIT_TIMEOUT_MS = 15_000;
+const WORKER_INIT_TIMEOUT_DEFAULT_MS = 240_000;
+const WORKER_INIT_TIMEOUT_FIREFOX_MS = 300_000;
 const INFERENCE_STAGE_NAME = 'generate-gain-map';
 const INFERENCE_HEARTBEAT_INTERVAL_MS = 5_000;
 const INFERENCE_TIMEOUT_DEFAULT_MS = 180_000;
@@ -299,6 +300,73 @@ function getTestCapabilityOverride(runtime = globalThis) {
   };
 }
 
+function sanitizeRuntimeInitOptions(rawOptions) {
+  if (!rawOptions || typeof rawOptions !== 'object') {
+    return {};
+  }
+
+  const normalized = {};
+
+  if (typeof rawOptions.smokeAssetPath === 'string') {
+    const smokeAssetPath = rawOptions.smokeAssetPath.trim();
+    if (smokeAssetPath.length > 0) {
+      normalized.smokeAssetPath = smokeAssetPath;
+    }
+  }
+
+  if (typeof rawOptions.modelVariant === 'string') {
+    const modelVariant = rawOptions.modelVariant.trim();
+    if (modelVariant.length > 0) {
+      normalized.modelVariant = modelVariant;
+    }
+  }
+
+  const forceSmokeFailure = rawOptions.forceSmokeFailure;
+  if (
+    forceSmokeFailure === true
+    || forceSmokeFailure === 1
+    || forceSmokeFailure === '1'
+    || (typeof forceSmokeFailure === 'string' && forceSmokeFailure.trim().toLowerCase() === 'true')
+  ) {
+    normalized.forceSmokeFailure = true;
+  }
+
+  return normalized;
+}
+
+function readRuntimeInitOptionsFromQuery(runtime = globalThis) {
+  const search = typeof runtime?.location?.search === 'string'
+    ? runtime.location.search
+    : '';
+  if (!search) {
+    return {};
+  }
+
+  try {
+    const params = new URLSearchParams(search);
+    const smokeAssetPath = params.get('__uhdr_test_smoke_asset_path');
+    const modelVariant = params.get('__uhdr_test_model_variant');
+    const forceSmokeFailure = params.get('__uhdr_test_force_smoke_failure');
+    return sanitizeRuntimeInitOptions({
+      smokeAssetPath,
+      modelVariant,
+      forceSmokeFailure,
+    });
+  } catch (_error) {
+    return {};
+  }
+}
+
+function getTestRuntimeInitOptions(runtime = globalThis) {
+  const queryOptions = readRuntimeInitOptionsFromQuery(runtime);
+  const globalOptions = sanitizeRuntimeInitOptions(runtime?.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS);
+  const merged = {
+    ...queryOptions,
+    ...globalOptions,
+  };
+  return Object.keys(merged).length > 0 ? merged : null;
+}
+
 function persistCapabilityHint(runtime = globalThis, capabilityInput = null) {
   const capability = normalizeGmnetCapability(capabilityInput);
   if (!capability) {
@@ -327,6 +395,12 @@ function resolveInferenceTimeoutMs(runtime = globalThis, executionProvider = nul
     : INFERENCE_TIMEOUT_DEFAULT_MS;
 }
 
+function resolveWorkerInitTimeoutMs(runtime = globalThis) {
+  return isFirefoxRuntime(runtime)
+    ? WORKER_INIT_TIMEOUT_FIREFOX_MS
+    : WORKER_INIT_TIMEOUT_DEFAULT_MS;
+}
+
 function formatInferenceStatusNote(provider, elapsedMs = 0) {
   const normalizedProvider =
     typeof provider === 'string' && provider.trim().length > 0
@@ -340,7 +414,7 @@ function formatInferenceStatusNote(provider, elapsedMs = 0) {
   return `${INFERENCE_START_NOTE}${runtimeSuffix} Still running (${elapsedSeconds}s).`;
 }
 
-function initializeWorkerClient() {
+function initializeWorkerClient(initOptions = null) {
   if (!canUseProcessingWorker()) {
     return Promise.resolve(null);
   }
@@ -598,6 +672,7 @@ function initializeWorkerClient() {
           runtimeMetadata = message.runtime && typeof message.runtime === 'object'
             ? { ...message.runtime }
             : {};
+          persistCapabilityHint(globalThis, runtimeMetadata.gmnetCapability);
           initializationSettled = true;
           resolve({
             runtime: runtimeMetadata,
@@ -731,7 +806,15 @@ function initializeWorkerClient() {
       job.reject(new Error(WORKER_MESSAGE_ERROR));
     });
 
-    worker.postMessage({ type: 'init' });
+    const explicitRuntimeInitOptions = sanitizeRuntimeInitOptions(initOptions);
+    const testRuntimeInitOptions = getTestRuntimeInitOptions(globalThis);
+    const runtimeInitOptions = Object.keys(explicitRuntimeInitOptions).length > 0
+      ? explicitRuntimeInitOptions
+      : testRuntimeInitOptions;
+    worker.postMessage({
+      type: 'init',
+      ...(runtimeInitOptions ? { options: runtimeInitOptions } : {}),
+    });
 
     setTimeout(() => {
       if (!ready) {
@@ -739,16 +822,16 @@ function initializeWorkerClient() {
         timeoutError.name = 'ProcessingWorkerInitTimeout';
         rejectInitialization(timeoutError);
       }
-    }, WORKER_INIT_TIMEOUT_MS);
+    }, resolveWorkerInitTimeoutMs(globalThis));
   });
 }
 
-async function getWorkerClient() {
+async function getWorkerClient(initOptions = null) {
   if (workerClientPromise) {
     return workerClientPromise;
   }
 
-  workerClientPromise = initializeWorkerClient().catch((error) => {
+  workerClientPromise = initializeWorkerClient(initOptions).catch((error) => {
     workerClientPromise = null;
     workerClientCreationError = error;
     throw error;
@@ -772,6 +855,7 @@ function resetRuntimeInitializationState() {
 export async function initializeRuntime(options = {}) {
   const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
   const forceRetry = Boolean(options?.forceRetry);
+  const runtimeInitOptions = sanitizeRuntimeInitOptions(options?.runtimeInitOptions);
 
   if (forceRetry) {
     resetRuntimeInitializationState();
@@ -798,7 +882,7 @@ export async function initializeRuntime(options = {}) {
   }
 
   try {
-    const client = await getWorkerClient();
+    const client = await getWorkerClient(runtimeInitOptions);
     const runtimeMetadata = client?.runtime && typeof client.runtime === 'object'
       ? { ...client.runtime }
       : {};
@@ -822,6 +906,9 @@ export async function processImage(file, options = {}) {
   const client = await getWorkerClient();
   const explicitHint = normalizeGmnetCapability(options?.gmnetCapabilityHint);
   const testOverrideHint = explicitHint ? null : getTestCapabilityOverride(globalThis);
+  const startupRuntimeHint = explicitHint || testOverrideHint
+    ? null
+    : normalizeGmnetCapability(client?.runtime?.gmnetCapability);
   const cachedHint = explicitHint || testOverrideHint
     ? null
     : getCachedCapabilityHint(globalThis, options);
@@ -830,6 +917,8 @@ export async function processImage(file, options = {}) {
     mergedOptions.gmnetCapabilityHint = explicitHint;
   } else if (testOverrideHint) {
     mergedOptions.gmnetCapabilityHint = testOverrideHint;
+  } else if (startupRuntimeHint) {
+    mergedOptions.gmnetCapabilityHint = startupRuntimeHint;
   } else if (cachedHint) {
     mergedOptions.gmnetCapabilityHint = cachedHint;
   }

@@ -15,7 +15,7 @@ async function readReadyProvider(page) {
 }
 
 export async function ensureRuntimeGateReady(page, testInfo, options = {}) {
-  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 25_000;
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 240_000;
   const expectedProvider = typeof options.expectedProvider === 'string'
     ? options.expectedProvider.trim().toLowerCase()
     : null;

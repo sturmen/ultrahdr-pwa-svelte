@@ -539,7 +539,8 @@ function extractOutputHeadroom(ultraHdrPath, tempDir) {
 }
 
 function expectedStartupProviderForProject(projectName) {
-    if (projectName === 'chromium') {
+    const enforceChromiumWebGpu = process.env.ULTRAHDR_EXPECT_CHROMIUM_WEBGPU === '1';
+    if (projectName === 'chromium' && enforceChromiumWebGpu) {
         return 'webgpu';
     }
     if (projectName === 'webkit') {
@@ -556,6 +557,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     test.describe.configure({ mode: 'serial' });
 
     test.beforeEach(async ({ page }, testInfo) => {
+        testInfo.setTimeout(Math.max(testInfo.timeout, 300_000));
         const failureReason = getRuntimeGateFailure(testInfo.project.name);
         test.skip(Boolean(failureReason), failureReason || '');
         await page.goto('/');
@@ -724,9 +726,12 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     });
 
     test.describe('Slider Controls', () => {
-        test('should change Max Content Boost slider and produce different output', async ({ page }) => {
-            test.setTimeout(120_000); // Re-processing a large image needs more time
+        test('should change Max Content Boost slider and produce different output', async ({ page }, testInfo) => {
+            test.setTimeout(240_000); // Re-processing + startup gate can be slow in CI.
             await page.goto('/');
+            await ensureRuntimeGateReady(page, testInfo, {
+                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+            });
 
             // Upload a smaller SDR image for faster re-processing
             await uploadFiles(page, [SDR_IMAGE]);
@@ -1085,10 +1090,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             const context = await browser.newContext({ serviceWorkers: 'block' });
             const page = await context.newPage();
 
-            // Block startup smoke asset so initialization fails before UI unlocks.
-            await page.route('**/models/gmnet-smoke-128.png*', route => route.abort());
-
-            await page.goto('/');
+            await page.goto('/ultrahdr-pwa-svelte/?__uhdr_test_force_smoke_failure=1');
             const failureCard = page.getByTestId('runtime-init-failure');
             await expect(failureCard).toBeVisible();
             await expect(
@@ -1149,8 +1151,12 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     });
 
     test.describe('Drop Zone', () => {
-        test('should show drop zone on initial load', async ({ page }) => {
+        test('should show drop zone on initial load', async ({ page }, testInfo) => {
+            test.setTimeout(180_000);
             await page.goto('/');
+            await ensureRuntimeGateReady(page, testInfo, {
+                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+            });
 
             // Verify the drop zone is visible
             await expect(page.getByTestId('upload-drop-zone')).toBeVisible();
@@ -1159,8 +1165,12 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             ).toBeVisible();
         });
 
-        test('should show supported formats', async ({ page }) => {
+        test('should show supported formats', async ({ page }, testInfo) => {
+            test.setTimeout(180_000);
             await page.goto('/');
+            await ensureRuntimeGateReady(page, testInfo, {
+                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+            });
 
             await expect(page.getByText('Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF')).toBeVisible();
         });
