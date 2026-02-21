@@ -389,6 +389,12 @@ function createCapabilityProbeError(message, diagnostics = {}, cause = null) {
     return error;
 }
 
+function yieldToEventLoop() {
+    return new Promise((resolve) => {
+        setTimeout(resolve, 0);
+    });
+}
+
 function runWithTimeout(promise, timeoutMs, timeoutMessage = 'Operation timed out') {
     const normalizedTimeoutMs = Number(timeoutMs);
     if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
@@ -465,30 +471,31 @@ export class GMNetInferenceSession {
         this.activeExecutionProvider = null;
         this.activeOrtModule = ortWebGpu;
         this.downloadProgress = 0;
-        this.eventListeners = {
-            'progress': [],
-            'complete': [],
-            'error': [],
-            'runtime': [],
-        };
+        this.eventListeners = Object.create(null);
+        this.eventListeners.progress = [];
+        this.eventListeners.complete = [];
+        this.eventListeners.error = [];
+        this.eventListeners.runtime = [];
+        this.eventListeners['capability-probe'] = [];
     }
 
     on(event, callback) {
-        if (this.eventListeners[event]) {
-            this.eventListeners[event].push(callback);
-        }
+        if (typeof event !== 'string' || event.length === 0 || typeof callback !== 'function') return;
+        if (!Array.isArray(this.eventListeners[event])) this.eventListeners[event] = [];
+        this.eventListeners[event].push(callback);
     }
 
     off(event, callback) {
-        if (this.eventListeners[event]) {
-            this.eventListeners[event] = this.eventListeners[event].filter(cb => cb !== callback);
-        }
+        if (typeof event !== 'string' || event.length === 0 || typeof callback !== 'function') return;
+        if (!Array.isArray(this.eventListeners[event])) return;
+        this.eventListeners[event] = this.eventListeners[event].filter(cb => cb !== callback);
     }
 
     emit(event, data) {
-        if (this.eventListeners[event]) {
-            this.eventListeners[event].forEach(cb => cb(data));
-        }
+        if (typeof event !== 'string' || event.length === 0) return;
+        if (!Array.isArray(this.eventListeners[event])) return;
+        const listeners = [...this.eventListeners[event]];
+        listeners.forEach((callback) => callback(data));
     }
 
     async init(modelVariant = DEFAULT_GMNET_MODEL_VARIANT, options = {}) {
@@ -718,6 +725,7 @@ export class GMNetInferenceSession {
             };
             try {
                 this.emit('capability-probe', { candidate: candidateLongEdge, provider, phase: 'testing' });
+                await yieldToEventLoop();
                 console.log(
                     `[GMNet capability probe] Testing ${candidateResolution} (${provider})...`,
                 );
@@ -803,8 +811,10 @@ export class GMNetInferenceSession {
                     candidate: candidateLongEdge,
                     provider,
                     phase: attempt.status,
-                    error: attempt.error
+                    error: attempt.error,
+                    durationMs: attempt.durationMs,
                 });
+                await yieldToEventLoop();
             }
         };
 

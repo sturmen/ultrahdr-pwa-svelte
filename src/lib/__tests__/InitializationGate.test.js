@@ -25,6 +25,19 @@ function createSteps() {
       status: 'pending',
       note: '',
     },
+    {
+      id: 'gmnet-smoke-run',
+      label: 'Run GMNet smoke and capability checks',
+      status: 'running',
+      note: 'Testing 2048x2048 capability (webgpu)...',
+      attempts: [
+        {
+          provider: 'webgpu',
+          candidateLongEdge: 2048,
+          status: 'running',
+        },
+      ],
+    },
   ];
 }
 
@@ -129,5 +142,58 @@ describe('InitializationGate', () => {
 
     await fireEvent.click(screen.getByTestId('runtime-init-retry'));
     expect(screen.getByTestId('runtime-init-retry')).toBeInTheDocument();
+  });
+
+  it('renders gmnet probe attempts as a sublist with per-resolution status rows', async () => {
+    const firstRender = render(InitializationGate, {
+      props: {
+        state: 'running',
+        steps: createSteps(),
+        failure: null,
+      },
+    });
+
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempts')).toBeInTheDocument();
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
+      /2048x2048/i,
+    );
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
+      /running/i,
+    );
+
+    firstRender.unmount();
+
+    render(InitializationGate, {
+      props: {
+        state: 'running',
+        failure: null,
+        steps: createSteps().map((step) => (
+          step.id === 'gmnet-smoke-run'
+            ? {
+                ...step,
+                attempts: [
+                  {
+                    provider: 'webgpu',
+                    candidateLongEdge: 2048,
+                    status: 'passed',
+                  },
+                  {
+                    provider: 'webgpu',
+                    candidateLongEdge: 4096,
+                    status: 'failed',
+                  },
+                ],
+              }
+            : step
+        )),
+      },
+    });
+
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
+      /passed/i,
+    );
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-4096')).toHaveTextContent(
+      /failed/i,
+    );
   });
 });

@@ -6,6 +6,54 @@ let runtimeInitializationPromise = null;
 let runtimeInitializationResult = null;
 let runtimeInitializationError = null;
 
+function normalizeExecutionProvider(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizeCapabilityHint(value, fallbackProvider = null) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const provider = normalizeExecutionProvider(value.provider)
+    || normalizeExecutionProvider(fallbackProvider);
+  const gainMapMaxLongEdge = Math.floor(Number(value.gainMapMaxLongEdge));
+  const outputMaxLongEdge = Math.floor(Number(value.outputMaxLongEdge));
+  if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
+    return null;
+  }
+  return {
+    provider,
+    gainMapMaxLongEdge,
+    outputMaxLongEdge: Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
+      ? outputMaxLongEdge
+      : gainMapMaxLongEdge * 2,
+    source: typeof value.source === 'string' && value.source.length > 0
+      ? value.source
+      : 'cache',
+    attempts: Array.isArray(value.attempts) ? value.attempts : [],
+  };
+}
+
+function normalizeCapabilityHintsByProvider(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const normalized = {};
+  for (const [providerKey, providerCapability] of Object.entries(rawValue)) {
+    const provider = normalizeExecutionProvider(providerKey);
+    const capability = normalizeCapabilityHint(providerCapability, provider);
+    if (!provider || !capability) {
+      continue;
+    }
+    normalized[provider] = capability;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 function normalizeError(error) {
   if (error instanceof Error) {
     const normalized = {
@@ -82,6 +130,13 @@ function normalizeRuntimeInitializationOptions(rawOptions) {
     || (typeof forceSmokeFailure === 'string' && forceSmokeFailure.trim().toLowerCase() === 'true')
   ) {
     normalized.forceSmokeFailure = true;
+  }
+
+  const gmnetCapabilityHintsByProvider = normalizeCapabilityHintsByProvider(
+    rawOptions.gmnetCapabilityHintsByProvider,
+  );
+  if (gmnetCapabilityHintsByProvider) {
+    normalized.gmnetCapabilityHintsByProvider = gmnetCapabilityHintsByProvider;
   }
 
   return normalized;

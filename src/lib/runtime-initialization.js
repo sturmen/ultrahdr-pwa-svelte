@@ -27,7 +27,7 @@ export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
   'webgpu-check': 'Check WebGPU availability',
   'gmnet-session-init': 'Initialize GMNet session',
   'gmnet-provider-verify': 'Verify GMNet execution provider',
-  'gmnet-smoke-run': 'Run GMNet smoke test (128x128)',
+  'gmnet-smoke-run': 'Run GMNet smoke and capability checks',
   'startup-ready': 'Finalize startup readiness',
 });
 
@@ -69,8 +69,67 @@ function normalizeGmnetCapability(value, fallbackProvider = null) {
     source: typeof value.source === 'string' && value.source.length > 0
       ? value.source
       : 'probe',
-    attempts: Array.isArray(value.attempts) ? value.attempts : [],
+    attempts: normalizeProbeAttempts(value.attempts, provider),
   };
+}
+
+function normalizeProbeAttempt(value, fallbackProvider = null) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const provider = normalizeExecutionProvider(value.provider)
+    || normalizeExecutionProvider(fallbackProvider);
+  const candidateLongEdge = Math.floor(Number(value.candidateLongEdge || value.candidate));
+  if (!provider || !Number.isFinite(candidateLongEdge) || candidateLongEdge < 1) {
+    return null;
+  }
+  const rawStatus = String(value.status || value.phase || '').trim().toLowerCase();
+  const status = rawStatus === 'testing'
+    ? 'running'
+    : (rawStatus === 'passed' || rawStatus === 'failed' || rawStatus === 'running'
+      ? rawStatus
+      : 'running');
+  const attempt = {
+    provider,
+    candidateLongEdge,
+    status,
+  };
+  const durationMs = Number(value.durationMs);
+  if (Number.isFinite(durationMs) && durationMs >= 0) {
+    attempt.durationMs = durationMs;
+  }
+  if (value.error && typeof value.error === 'object') {
+    attempt.error = {
+      name: typeof value.error.name === 'string' ? value.error.name : 'Error',
+      message: typeof value.error.message === 'string' ? value.error.message : String(value.error),
+    };
+  }
+  return attempt;
+}
+
+function normalizeProbeAttempts(values, fallbackProvider = null) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values
+    .map((value) => normalizeProbeAttempt(value, fallbackProvider))
+    .filter(Boolean);
+}
+
+function normalizeGmnetCapabilityHintsByProvider(value) {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  const normalized = {};
+  for (const [providerKey, providerCapability] of Object.entries(value)) {
+    const provider = normalizeExecutionProvider(providerKey);
+    const capability = normalizeGmnetCapability(providerCapability, provider);
+    if (!provider || !capability) {
+      continue;
+    }
+    normalized[provider] = capability;
+  }
+  return normalized;
 }
 
 function hasWebGlSupport(runtime = globalThis) {
@@ -372,6 +431,7 @@ export async function initializeRuntime({
   smokeAssetPath = DEFAULT_SMOKE_ASSET_PATH,
   forceSmokeFailure = false,
   modelVariant = DEFAULT_GMNET_MODEL_VARIANT,
+  gmnetCapabilityHintsByProvider = {},
 } = {}) {
   const session = sessionFactory();
   const smokeAssetUrl = resolveSmokeAssetUrl(smokeAssetPath);
@@ -382,6 +442,9 @@ export async function initializeRuntime({
   const attemptFailures = [];
   let resolvedExecutionProvider = null;
   let gmnetCapability = null;
+  const normalizedCapabilityHintsByProvider = normalizeGmnetCapabilityHintsByProvider(
+    gmnetCapabilityHintsByProvider,
+  );
 
   function normalizeAttemptFailure(error, provider) {
     const normalizedProvider = normalizeExecutionProvider(provider);
@@ -586,7 +649,7 @@ export async function initializeRuntime({
 
       await runStep({
         stepId: 'gmnet-smoke-run',
-        runningNote: `Running GMNet smoke test on 128x128 asset (${provider})...`,
+        runningNote: `Running GMNet capability and smoke checks (${provider})...`,
         successNote: 'GMNet smoke test passed.',
         onProgress,
         runtime,
@@ -611,10 +674,39 @@ export async function initializeRuntime({
 
           let resolvedCapability = null;
           let probeFeedbackHandler = null;
-          if (typeof session.resolveGainMapCapability === 'function') {
+          const cachedCapabilityHint = normalizeGmnetCapability(
+            normalizedCapabilityHintsByProvider[provider],
+            provider,
+          );
+          if (cachedCapabilityHint) {
+            resolvedCapability = cachedCapabilityHint;
+            const hintAttempts = normalizeProbeAttempts(cachedCapabilityHint.attempts, provider);
+            emitStepProgress(
+              onProgress,
+              'gmnet-smoke-run',
+              'running',
+              `Using cached GMNet capability ${resolvedCapability.gainMapMaxLongEdge}x${resolvedCapability.gainMapMaxLongEdge} (${provider}).`,
+              {
+                probeAttempts: hintAttempts,
+                gmnetCapability: resolvedCapability,
+                gmnetCapabilitySource: 'cache',
+              },
+            );
+          } else if (typeof session.resolveGainMapCapability === 'function') {
             try {
               probeFeedbackHandler = (event) => {
                 if (!event?.candidate) return;
+                const probeAttempt = normalizeProbeAttempt(
+                  {
+                    provider: event.provider || provider,
+                    candidateLongEdge: event.candidate,
+                    status: event.phase,
+                    durationMs: event.durationMs,
+                    error: event.error,
+                  },
+                  provider,
+                );
+                if (!probeAttempt) return;
                 let verb = 'Testing';
                 if (event.phase === 'passed') verb = 'Passed';
                 if (event.phase === 'failed') verb = 'Failed';
@@ -622,7 +714,8 @@ export async function initializeRuntime({
                   onProgress,
                   'gmnet-smoke-run',
                   'running',
-                  `${verb} ${event.candidate}x${event.candidate} capability (${event.provider || provider})...`
+                  `${verb} ${event.candidate}x${event.candidate} capability (${event.provider || provider})...`,
+                  { probeAttempt },
                 );
               };
               session.on('capability-probe', probeFeedbackHandler);
@@ -676,6 +769,17 @@ export async function initializeRuntime({
             });
           }
           gmnetCapability = resolvedCapability;
+          emitStepProgress(
+            onProgress,
+            'gmnet-smoke-run',
+            'running',
+            `Resolved GMNet capability ${resolvedCapability.gainMapMaxLongEdge}x${resolvedCapability.gainMapMaxLongEdge} (${provider}).`,
+            {
+              probeAttempts: normalizeProbeAttempts(resolvedCapability.attempts, provider),
+              gmnetCapability: resolvedCapability,
+              gmnetCapabilitySource: resolvedCapability.source || 'probe',
+            },
+          );
 
           const smokeImageData = await decodeAndValidateSmokeImageData(provider);
 

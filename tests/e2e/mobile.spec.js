@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { ensureRuntimeGateReady, getRuntimeGateFailure } from './runtime-gate.js';
+import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupProbeBypass } from './runtime-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +58,7 @@ test.describe('Mobile smoke tests', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const failureReason = getRuntimeGateFailure(testInfo.project.name);
     test.skip(Boolean(failureReason), failureReason || '');
+    await installStartupProbeBypass(page, { projectName: testInfo.project.name });
     await page.goto('/');
     try {
       await ensureRuntimeGateReady(page, testInfo);

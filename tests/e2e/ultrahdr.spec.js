@@ -7,7 +7,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createCanvas, loadImage } from 'canvas';
 import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
-import { ensureRuntimeGateReady, getRuntimeGateFailure } from './runtime-gate.js';
+import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupProbeBypass } from './runtime-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -560,6 +560,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         testInfo.setTimeout(Math.max(testInfo.timeout, 300_000));
         const failureReason = getRuntimeGateFailure(testInfo.project.name);
         test.skip(Boolean(failureReason), failureReason || '');
+        await installStartupProbeBypass(page, { projectName: testInfo.project.name });
         await page.goto('/');
         try {
             await ensureRuntimeGateReady(page, testInfo, {
@@ -1174,5 +1175,41 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             await expect(page.getByText('Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF')).toBeVisible();
         });
+    });
+});
+
+test.describe('Runtime Startup Probe Streaming', () => {
+    test('shows at least one GMNet probe attempt before runtime ready', async ({ page, browserName }, testInfo) => {
+        const failureReason = getRuntimeGateFailure(testInfo.project.name);
+        test.skip(Boolean(failureReason), failureReason || '');
+        test.setTimeout(240_000);
+        await installStartupProbeBypass(page, {
+            projectName: testInfo.project.name,
+            skipProbeBypass: true,
+        });
+
+        await page.goto('/');
+
+        const attemptRow = page.locator('[data-testid^="runtime-step-gmnet-smoke-run-attempt-"]').first();
+        await expect(attemptRow).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('runtime-init-ready')).toHaveCount(0);
+        try {
+            await ensureRuntimeGateReady(page, testInfo, {
+                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+            });
+        } catch (error) {
+            const message = String(error?.message || '');
+            if (
+                browserName === 'webkit'
+                && /cannot resolve operator 'GatherND'/i.test(message)
+            ) {
+                test.skip(
+                    true,
+                    'Playwright WebKit cannot initialize GMNet WebGL (GatherND v18 unsupported). Validate Safari via WebGPU-specific runs.',
+                );
+                return;
+            }
+            throw error;
+        }
     });
 });

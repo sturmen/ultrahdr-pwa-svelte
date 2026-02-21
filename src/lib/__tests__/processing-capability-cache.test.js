@@ -280,6 +280,43 @@ describe('processing capability cache', () => {
     );
   });
 
+  it('forwards cached capability hints to worker init payload so startup can skip re-probing', async () => {
+    const {
+      initializeRuntime,
+      __getCapabilityCacheStorageKeyForTests,
+    } = await import('../processing.js');
+    const storageKey = __getCapabilityCacheStorageKeyForTests();
+    localStorage.setItem(storageKey, JSON.stringify({
+      byProvider: {
+        webgpu: {
+          provider: 'webgpu',
+          gainMapMaxLongEdge: 4096,
+          outputMaxLongEdge: 8192,
+          source: 'cache',
+          attempts: [
+            { provider: 'webgpu', candidateLongEdge: 4096, status: 'passed' },
+          ],
+        },
+      },
+    }));
+
+    await initializeRuntime();
+
+    const worker = CapabilityWorker.instances[0];
+    const initMessage = worker.posted.find((message) => message.type === 'init');
+    expect(initMessage?.options).toEqual(
+      expect.objectContaining({
+        gmnetCapabilityHintsByProvider: expect.objectContaining({
+          webgpu: expect.objectContaining({
+            provider: 'webgpu',
+            gainMapMaxLongEdge: 4096,
+            outputMaxLongEdge: 8192,
+          }),
+        }),
+      }),
+    );
+  });
+
   it('forwards test runtime init options to worker initialization payload', async () => {
     globalThis.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS = {
       smokeAssetPath: 'models/does-not-exist.png',
@@ -344,6 +381,7 @@ describe('processing capability cache', () => {
     await initializeRuntime({
       runtimeInitOptions: {
         smokeAssetPath: 'models/gmnet-smoke-explicit.png',
+        forceExecutionProviders: ['webgl'],
       },
     });
 
@@ -352,6 +390,7 @@ describe('processing capability cache', () => {
     expect(initMessage?.options).toEqual(
       expect.objectContaining({
         smokeAssetPath: 'models/gmnet-smoke-explicit.png',
+        forceExecutionProviders: ['webgl'],
       }),
     );
   });

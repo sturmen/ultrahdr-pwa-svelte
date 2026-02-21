@@ -674,6 +674,69 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(capability.attempts.length).toBeGreaterThan(0);
   });
 
+  it('emits capability-probe events per attempt in testing-then-terminal order', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const session = new GMNetInferenceSession();
+    session.activeExecutionProvider = 'webgpu';
+    session.session = {
+      run: vi.fn(async (feeds) => {
+        const size = feeds.local_input.dims[2];
+        if (size > 256) {
+          return {
+            gain_map: {
+              data: new Float32Array(size * size).fill(0),
+              dims: [1, 1, size, size],
+            },
+          };
+        }
+        const data = new Float32Array(size * size);
+        for (let i = 0; i < data.length; i += 1) {
+          data[i] = (i % 256) / 255;
+        }
+        return {
+          gain_map: {
+            data,
+            dims: [1, 1, size, size],
+          },
+        };
+      }),
+    };
+
+    vi.spyOn(session, 'preprocessGlobal').mockResolvedValue({ kind: 'global' });
+    vi.spyOn(session, 'preprocessLocal').mockImplementation((_imageData, width, height) => ({
+      kind: 'local',
+      dims: [1, 3, height, width],
+    }));
+
+    /** @type {Array<{candidate?: number, phase?: string}>} */
+    const probeEvents = [];
+    session.on('capability-probe', (event) => {
+      probeEvents.push(event || {});
+    });
+
+    await session.resolveGainMapCapability({
+      minLongEdge: 128,
+      maxLongEdge: 512,
+      timeoutMs: 250,
+    });
+
+    expect(probeEvents.length).toBeGreaterThan(2);
+    const candidates = Array.from(new Set(
+      probeEvents
+        .map((event) => Number(event.candidate))
+        .filter((candidate) => Number.isFinite(candidate)),
+    ));
+    expect(candidates.length).toBeGreaterThan(1);
+
+    for (const candidate of candidates) {
+      const eventsForCandidate = probeEvents.filter(
+        (event) => Number(event.candidate) === candidate,
+      );
+      expect(eventsForCandidate[0]?.phase).toBe('testing');
+      expect(['passed', 'failed']).toContain(eventsForCandidate[eventsForCandidate.length - 1]?.phase);
+    }
+  });
+
   it('logs per-resolution startup probe attempts and outcomes', async () => {
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();

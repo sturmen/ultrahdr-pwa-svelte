@@ -26,7 +26,7 @@ vi.mock('../processing.js', () => ({
     'webgpu-check': 'Check WebGPU availability',
     'gmnet-session-init': 'Initialize GMNet session',
     'gmnet-provider-verify': 'Verify GMNet execution provider',
-    'gmnet-smoke-run': 'Run GMNet smoke test (128x128)',
+    'gmnet-smoke-run': 'Run GMNet smoke and capability checks',
     'startup-ready': 'Finalize startup readiness',
   },
 }));
@@ -148,6 +148,68 @@ describe('App shell and startup gate', () => {
     await screen.findByTestId('upload-drop-zone');
     await waitFor(() => {
       expect(inputClickSpy).toHaveBeenCalled();
+    });
+  });
+
+  it('renders probe attempts from runtime init progress updates and hydrates snapshots', async () => {
+    const initGate = deferred();
+    vi.mocked(initializeRuntime).mockImplementationOnce(async ({ onProgress } = {}) => {
+      onProgress?.({
+        stepId: 'gmnet-smoke-run',
+        status: 'running',
+        note: 'Testing 2048x2048 capability (webgpu)...',
+        probeAttempt: {
+          provider: 'webgpu',
+          candidateLongEdge: 2048,
+          status: 'running',
+        },
+      });
+      onProgress?.({
+        stepId: 'gmnet-smoke-run',
+        status: 'running',
+        note: 'Passed 2048x2048 capability (webgpu).',
+        probeAttempt: {
+          provider: 'webgpu',
+          candidateLongEdge: 2048,
+          status: 'passed',
+        },
+      });
+      onProgress?.({
+        stepId: 'gmnet-smoke-run',
+        status: 'running',
+        note: 'Testing 4096x4096 capability (webgpu)...',
+        probeAttempts: [
+          {
+            provider: 'webgpu',
+            candidateLongEdge: 2048,
+            status: 'passed',
+          },
+          {
+            provider: 'webgpu',
+            candidateLongEdge: 4096,
+            status: 'failed',
+          },
+        ],
+      });
+
+      return initGate.promise;
+    });
+
+    render(App);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
+      /passed/i,
+    );
+    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-4096')).toHaveTextContent(
+      /failed/i,
+    );
+
+    initGate.resolve({ ready: true, resolvedExecutionProvider: 'webgpu' });
+    await waitFor(() => {
+      expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
     });
   });
 });

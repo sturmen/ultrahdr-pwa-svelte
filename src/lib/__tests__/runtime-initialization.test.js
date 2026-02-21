@@ -65,6 +65,77 @@ function createRuntimeWithGpuAndWebGl() {
 }
 
 describe('runtime initialization', () => {
+  it('emits structured probeAttempt progress updates during live capability probing', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    let probeListener = null;
+    const resolveGainMapCapability = vi.fn(async () => {
+      probeListener?.({
+        provider: 'webgpu',
+        candidate: 2048,
+        phase: 'testing',
+      });
+      probeListener?.({
+        provider: 'webgpu',
+        candidate: 2048,
+        phase: 'passed',
+      });
+      return {
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 2048,
+        outputMaxLongEdge: 4096,
+        source: 'probe',
+        attempts: [
+          { provider: 'webgpu', candidateLongEdge: 2048, status: 'passed' },
+        ],
+      };
+    });
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || 'webgpu';
+      }),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      resolveGainMapCapability,
+      on: vi.fn((event, callback) => {
+        if (event === 'capability-probe') {
+          probeListener = callback;
+        }
+      }),
+      off: vi.fn((event, callback) => {
+        if (event === 'capability-probe' && probeListener === callback) {
+          probeListener = null;
+        }
+      }),
+      activeExecutionProvider: 'webgpu',
+    };
+    const progressEvents = [];
+
+    await initializeRuntime({
+      runtime,
+      sessionFactory: () => session,
+      loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      onProgress: (event) => progressEvents.push(event),
+    });
+
+    const probeEvents = progressEvents.filter(
+      (event) => event.stepId === 'gmnet-smoke-run' && event.probeAttempt,
+    );
+    expect(probeEvents.length).toBeGreaterThanOrEqual(2);
+    expect(probeEvents[0].probeAttempt).toEqual(
+      expect.objectContaining({
+        provider: 'webgpu',
+        candidateLongEdge: 2048,
+        status: 'running',
+      }),
+    );
+    expect(probeEvents[1].probeAttempt).toEqual(
+      expect.objectContaining({
+        provider: 'webgpu',
+        candidateLongEdge: 2048,
+        status: 'passed',
+      }),
+    );
+  });
+
   it('emits progress events in checklist order and succeeds with webgpu on first attempt', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     const resolveGainMapCapability = vi.fn(async () => ({
@@ -121,9 +192,14 @@ describe('runtime initialization', () => {
     const passedOrder = progressEvents
       .filter((event) => event.status === 'passed')
       .map((event) => event.stepId);
+    const runningOrderUnique = Array.from(new Set(runningOrder));
+    const probeRunningNotes = progressEvents
+      .filter((event) => event.stepId === 'gmnet-smoke-run' && event.status === 'running')
+      .map((event) => String(event.note || ''));
 
-    expect(runningOrder).toEqual(RUNTIME_INIT_STEP_ORDER);
+    expect(runningOrderUnique).toEqual(RUNTIME_INIT_STEP_ORDER);
     expect(passedOrder).toEqual(RUNTIME_INIT_STEP_ORDER);
+    expect(probeRunningNotes.some((note) => /128x128/i.test(note))).toBe(false);
     expect(result.resolvedExecutionProvider).toBe('webgpu');
     expect(result.gmnetCapability).toEqual(
       expect.objectContaining({
@@ -340,5 +416,68 @@ describe('runtime initialization', () => {
       code: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
       stepId: 'gmnet-smoke-run',
     });
+  });
+
+  it('reuses cached startup capability hint and emits probeAttempts snapshot without re-probing', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || 'webgpu';
+      }),
+      resolveGainMapCapability: vi.fn(async () => ({
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 4096,
+        outputMaxLongEdge: 8192,
+        source: 'probe',
+        attempts: [],
+      })),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+    const progressEvents = [];
+    const cachedCapability = {
+      provider: 'webgpu',
+      gainMapMaxLongEdge: 3072,
+      outputMaxLongEdge: 6144,
+      source: 'cache',
+      attempts: [
+        { provider: 'webgpu', candidateLongEdge: 3072, status: 'passed' },
+      ],
+    };
+
+    const result = await initializeRuntime({
+      runtime,
+      sessionFactory: () => session,
+      loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      gmnetCapabilityHintsByProvider: {
+        webgpu: cachedCapability,
+      },
+      onProgress: (event) => progressEvents.push(event),
+    });
+
+    expect(session.resolveGainMapCapability).not.toHaveBeenCalled();
+    expect(result.gmnetCapability).toEqual(
+      expect.objectContaining({
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 3072,
+        outputMaxLongEdge: 6144,
+        source: 'cache',
+      }),
+    );
+
+    const snapshotEvent = progressEvents.find(
+      (event) => event.stepId === 'gmnet-smoke-run' && Array.isArray(event.probeAttempts),
+    );
+    expect(snapshotEvent?.probeAttempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          candidateLongEdge: 3072,
+          status: 'passed',
+        }),
+      ]),
+    );
+    expect(snapshotEvent?.gmnetCapabilitySource).toBe('cache');
   });
 });

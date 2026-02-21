@@ -34,7 +34,7 @@ export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
   'webgpu-check': 'Check WebGPU availability',
   'gmnet-session-init': 'Initialize GMNet session',
   'gmnet-provider-verify': 'Verify GMNet execution provider',
-  'gmnet-smoke-run': 'Run GMNet smoke test (128x128)',
+  'gmnet-smoke-run': 'Run GMNet smoke and capability checks',
   'startup-ready': 'Finalize startup readiness',
 });
 
@@ -111,8 +111,49 @@ function cloneRuntimeInitProgressEvent(eventDetail) {
     return eventDetail;
   }
 
+  const probeAttempt = eventDetail.probeAttempt && typeof eventDetail.probeAttempt === 'object'
+    ? {
+      ...eventDetail.probeAttempt,
+      error: eventDetail.probeAttempt.error && typeof eventDetail.probeAttempt.error === 'object'
+        ? { ...eventDetail.probeAttempt.error }
+        : eventDetail.probeAttempt.error,
+    }
+    : eventDetail.probeAttempt;
+  const probeAttempts = Array.isArray(eventDetail.probeAttempts)
+    ? eventDetail.probeAttempts.map((attempt) => (
+      attempt && typeof attempt === 'object'
+        ? {
+          ...attempt,
+          error: attempt.error && typeof attempt.error === 'object'
+            ? { ...attempt.error }
+            : attempt.error,
+        }
+        : attempt
+    ))
+    : eventDetail.probeAttempts;
+  const gmnetCapability = eventDetail.gmnetCapability && typeof eventDetail.gmnetCapability === 'object'
+    ? {
+      ...eventDetail.gmnetCapability,
+      attempts: Array.isArray(eventDetail.gmnetCapability.attempts)
+        ? eventDetail.gmnetCapability.attempts.map((attempt) => (
+          attempt && typeof attempt === 'object'
+            ? {
+              ...attempt,
+              error: attempt.error && typeof attempt.error === 'object'
+                ? { ...attempt.error }
+                : attempt.error,
+            }
+            : attempt
+        ))
+        : eventDetail.gmnetCapability.attempts,
+    }
+    : eventDetail.gmnetCapability;
+
   return {
     ...eventDetail,
+    probeAttempt,
+    probeAttempts,
+    gmnetCapability,
     diagnostics:
       eventDetail.diagnostics && typeof eventDetail.diagnostics === 'object'
         ? { ...eventDetail.diagnostics }
@@ -197,6 +238,22 @@ function normalizeGmnetCapability(value) {
     attempts: Array.isArray(value.attempts) ? value.attempts : [],
     cachedAt: Number.isFinite(Number(value.cachedAt)) ? Number(value.cachedAt) : Date.now(),
   };
+}
+
+function normalizeGmnetCapabilityHintsByProvider(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const normalized = {};
+  for (const [providerKey, providerCapability] of Object.entries(value)) {
+    const provider = normalizeExecutionProvider(providerKey);
+    const capability = normalizeGmnetCapability(providerCapability);
+    if (!provider || !capability) {
+      continue;
+    }
+    normalized[provider] = capability;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 function getCapabilityCacheStorageKey(runtime = globalThis) {
@@ -288,6 +345,14 @@ function getCachedCapabilityHint(runtime = globalThis, options = {}) {
   return null;
 }
 
+function getCachedCapabilityHintsByProvider(runtime = globalThis) {
+  const record = readCapabilityCacheRecord(runtime);
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  return normalizeGmnetCapabilityHintsByProvider(record.byProvider);
+}
+
 function getTestCapabilityOverride(runtime = globalThis) {
   const override = runtime?.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE;
   const normalized = normalizeGmnetCapability(override);
@@ -329,6 +394,13 @@ function sanitizeRuntimeInitOptions(rawOptions) {
     || (typeof forceSmokeFailure === 'string' && forceSmokeFailure.trim().toLowerCase() === 'true')
   ) {
     normalized.forceSmokeFailure = true;
+  }
+
+  const gmnetCapabilityHintsByProvider = normalizeGmnetCapabilityHintsByProvider(
+    rawOptions.gmnetCapabilityHintsByProvider,
+  );
+  if (gmnetCapabilityHintsByProvider) {
+    normalized.gmnetCapabilityHintsByProvider = gmnetCapabilityHintsByProvider;
   }
 
   return normalized;
@@ -808,12 +880,14 @@ function initializeWorkerClient(initOptions = null) {
 
     const explicitRuntimeInitOptions = sanitizeRuntimeInitOptions(initOptions);
     const testRuntimeInitOptions = getTestRuntimeInitOptions(globalThis);
-    const runtimeInitOptions = Object.keys(explicitRuntimeInitOptions).length > 0
-      ? explicitRuntimeInitOptions
-      : testRuntimeInitOptions;
+    const runtimeInitOptions = sanitizeRuntimeInitOptions({
+      ...(testRuntimeInitOptions || {}),
+      ...explicitRuntimeInitOptions,
+    });
+    const hasRuntimeInitOptions = Object.keys(runtimeInitOptions).length > 0;
     worker.postMessage({
       type: 'init',
-      ...(runtimeInitOptions ? { options: runtimeInitOptions } : {}),
+      ...(hasRuntimeInitOptions ? { options: runtimeInitOptions } : {}),
     });
 
     setTimeout(() => {
@@ -855,7 +929,16 @@ function resetRuntimeInitializationState() {
 export async function initializeRuntime(options = {}) {
   const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
   const forceRetry = Boolean(options?.forceRetry);
-  const runtimeInitOptions = sanitizeRuntimeInitOptions(options?.runtimeInitOptions);
+  const explicitRuntimeInitOptions = sanitizeRuntimeInitOptions(options?.runtimeInitOptions);
+  const cachedCapabilityHintsByProvider = getCachedCapabilityHintsByProvider(globalThis);
+  const runtimeInitOptions = sanitizeRuntimeInitOptions({
+    ...(explicitRuntimeInitOptions || {}),
+    ...(
+      explicitRuntimeInitOptions.gmnetCapabilityHintsByProvider || !cachedCapabilityHintsByProvider
+        ? {}
+        : { gmnetCapabilityHintsByProvider: cachedCapabilityHintsByProvider }
+    ),
+  });
 
   if (forceRetry) {
     resetRuntimeInitializationState();

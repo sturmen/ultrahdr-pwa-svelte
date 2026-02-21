@@ -38,6 +38,7 @@
       note: "",
       diagnostics: null,
       errorCode: null,
+      attempts: [],
     }));
   }
 
@@ -75,6 +76,7 @@
           note: "",
           diagnostics: null,
           errorCode: null,
+          attempts: [],
           ...changes,
         },
       ];
@@ -89,6 +91,69 @@
           }
         : step,
     );
+  }
+
+  function normalizeProbeAttempt(rawAttempt) {
+    if (!rawAttempt || typeof rawAttempt !== "object") {
+      return null;
+    }
+    const provider = normalizeExecutionProvider(rawAttempt.provider || "");
+    const candidateLongEdge = Math.floor(Number(rawAttempt.candidateLongEdge));
+    if (!provider || !Number.isFinite(candidateLongEdge) || candidateLongEdge < 1) {
+      return null;
+    }
+    const rawStatus = String(rawAttempt.status || "").trim().toLowerCase();
+    const status = rawStatus === "passed" || rawStatus === "failed" || rawStatus === "running"
+      ? rawStatus
+      : "running";
+    return {
+      provider,
+      candidateLongEdge,
+      status,
+      durationMs: Number.isFinite(Number(rawAttempt.durationMs))
+        ? Number(rawAttempt.durationMs)
+        : undefined,
+      error:
+        rawAttempt.error && typeof rawAttempt.error === "object"
+          ? {
+              name: typeof rawAttempt.error.name === "string" ? rawAttempt.error.name : "Error",
+              message:
+                typeof rawAttempt.error.message === "string"
+                  ? rawAttempt.error.message
+                  : String(rawAttempt.error),
+            }
+          : undefined,
+    };
+  }
+
+  function mergeRuntimeStepAttempts(existingAttempts = [], event = null) {
+    if (!event || typeof event !== "object") {
+      return existingAttempts;
+    }
+    if (Array.isArray(event.probeAttempts)) {
+      return event.probeAttempts
+        .map((attempt) => normalizeProbeAttempt(attempt))
+        .filter(Boolean);
+    }
+
+    const incomingAttempt = normalizeProbeAttempt(event.probeAttempt);
+    if (!incomingAttempt) {
+      return existingAttempts;
+    }
+    const key = `${incomingAttempt.provider}:${incomingAttempt.candidateLongEdge}`;
+    const nextAttempts = Array.isArray(existingAttempts) ? [...existingAttempts] : [];
+    const existingIndex = nextAttempts.findIndex((attempt) => (
+      `${attempt.provider}:${attempt.candidateLongEdge}` === key
+    ));
+    if (existingIndex === -1) {
+      nextAttempts.push(incomingAttempt);
+    } else {
+      nextAttempts[existingIndex] = {
+        ...nextAttempts[existingIndex],
+        ...incomingAttempt,
+      };
+    }
+    return nextAttempts;
   }
 
   function normalizeExecutionProvider(value) {
@@ -116,6 +181,10 @@
           ? { ...event.diagnostics }
           : null,
       errorCode: typeof event.errorCode === "string" ? event.errorCode : null,
+      attempts: mergeRuntimeStepAttempts(
+        runtimeInitSteps.find((step) => step.id === stepId)?.attempts || [],
+        event,
+      ),
     });
   }
 

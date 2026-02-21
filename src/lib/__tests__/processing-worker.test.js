@@ -230,6 +230,114 @@ describe('processing worker wrapper', () => {
     );
   });
 
+  it('initializeRuntime forwards probe payload fields from init-progress unchanged', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+    const onProgress = vi.fn();
+    MockWorker.onInit = (worker) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'init-progress',
+            event: {
+              stepId: 'gmnet-smoke-run',
+              status: 'running',
+              note: 'Testing 2048x2048 capability (webgpu)...',
+              probeAttempt: {
+                provider: 'webgpu',
+                candidateLongEdge: 2048,
+                status: 'running',
+              },
+              probeAttempts: [
+                { provider: 'webgpu', candidateLongEdge: 2048, status: 'passed' },
+              ],
+              gmnetCapabilitySource: 'cache',
+              gmnetCapability: {
+                provider: 'webgpu',
+                gainMapMaxLongEdge: 2048,
+                outputMaxLongEdge: 4096,
+                source: 'cache',
+                attempts: [{ provider: 'webgpu', candidateLongEdge: 2048, status: 'passed' }],
+              },
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'ready',
+            runtime: {
+              resolvedExecutionProvider: 'webgpu',
+            },
+          },
+        });
+      });
+    };
+
+    const { initializeRuntime } = await import('../processing.js');
+    await initializeRuntime({ onProgress });
+
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepId: 'gmnet-smoke-run',
+        probeAttempt: expect.objectContaining({
+          provider: 'webgpu',
+          candidateLongEdge: 2048,
+          status: 'running',
+        }),
+        probeAttempts: expect.arrayContaining([
+          expect.objectContaining({
+            candidateLongEdge: 2048,
+            status: 'passed',
+          }),
+        ]),
+        gmnetCapabilitySource: 'cache',
+        gmnetCapability: expect.objectContaining({
+          provider: 'webgpu',
+          gainMapMaxLongEdge: 2048,
+          outputMaxLongEdge: 4096,
+        }),
+      }),
+    );
+  });
+
+  it('forwards gmnetCapabilityHintsByProvider in initializeRuntime init options', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+
+    const { initializeRuntime } = await import('../processing.js');
+    await initializeRuntime({
+      runtimeInitOptions: {
+        gmnetCapabilityHintsByProvider: {
+          webgpu: {
+            provider: 'webgpu',
+            gainMapMaxLongEdge: 4096,
+            outputMaxLongEdge: 8192,
+            source: 'cache',
+            attempts: [{ provider: 'webgpu', candidateLongEdge: 4096, status: 'passed' }],
+          },
+        },
+      },
+    });
+
+    const worker = MockWorker.instances[0];
+    const initMessage = worker.posted.find((message) => message.type === 'init');
+    expect(initMessage?.options).toEqual(
+      expect.objectContaining({
+        gmnetCapabilityHintsByProvider: expect.objectContaining({
+          webgpu: expect.objectContaining({
+            provider: 'webgpu',
+            gainMapMaxLongEdge: 4096,
+            outputMaxLongEdge: 8192,
+          }),
+        }),
+      }),
+    );
+  });
+
   it('initializeRuntime rejects with structured init-error payload from worker', async () => {
     globalThis.Worker = MockWorker;
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
