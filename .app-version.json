@@ -1,0 +1,11 @@
+{
+  "appAssetVersion": "5eaeea7c4eef0cb7",
+  "generatedAt": "2026-02-21T01:02:46.928Z",
+  "inputs": [
+    "src/**",
+    "public/**",
+    "index.html",
+    "vite.config.js",
+    ".wasm-version.json"
+  ]
+}
