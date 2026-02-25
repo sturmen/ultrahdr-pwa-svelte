@@ -592,6 +592,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
     throwIfAborted(mergedOptions.abortSignal);
     const sourceInputFile = file;
     let sourceInputBytes = null;
+    let originalSdrJpegBytes = null;
     let processingPath = 'unknown';
 
     const setProcessingPath = (nextPath) => {
@@ -636,9 +637,8 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             return preprocessFile(file, mergedOptions);
         });
 
-        // Check if JPEG already has a gain map (UltraHDR)
-        // When discardGainMap is false, preserve the original gain map.
-        if (!mergedOptions.discardGainMap && file instanceof File) {
+        // Check if JPEG already has a gain map (UltraHDR) or is a standard JPEG suitable for lossless SDR preservation
+        if (file instanceof File) {
             let preserveDecisionMade = false;
             try {
                 const fileBuffer = await telemetry.runStage('read-source-buffer', async () =>
@@ -653,28 +653,49 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     async () => isUhdrImageWithDecoderFallback(fileBuffer)
                 );
                 if (isUhdr) {
-                    setProcessingPath('preserved');
-                    preserveDecisionMade = true;
-                    console.log('[Process] Gain map decision: preserving existing gain map from source input');
-                    if (mergedOptions.rotation === 0) {
-                        console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
+                    if (!mergedOptions.discardGainMap) {
+                        setProcessingPath('preserved');
+                        preserveDecisionMade = true;
+                        console.log('[Process] Gain map decision: preserving existing gain map from source input');
+                        if (mergedOptions.rotation === 0) {
+                            console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
+                            const blob = await telemetry.runStage(
+                                'finalize-preserved',
+                                async () => finalizeUltraHDR(fileBuffer, mergedOptions.stripExif),
+                                withProcessingPath(),
+                            );
+                            telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve' }));
+                            return blob;
+                        }
+
+                        console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
                         const blob = await telemetry.runStage(
-                            'finalize-preserved',
-                            async () => finalizeUltraHDR(fileBuffer, mergedOptions.stripExif),
+                            'rotate-preserved-ultrahdr',
+                            async () => processUhdrWithRotation(fileBuffer, mergedOptions, telemetry, sourceExifBytes),
                             withProcessingPath(),
                         );
-                        telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve' }));
+                        telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve-with-rotation' }));
                         return blob;
+                    } else {
+                        console.log('[Process] Discarding existing gain map. Extracting base image for lossless preservation.');
+                        const decoder = new UHDRDecoder();
+                        try {
+                            await decoder.init();
+                            decoder.setImage(fileBuffer);
+                            decoder.probe();
+                            originalSdrJpegBytes = decoder.getBaseImage();
+                        } catch (e) {
+                            console.warn('[Process] Failed to extract base image for lossless preservation', e);
+                        } finally {
+                            decoder.destroy();
+                        }
                     }
-
-                    console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
-                    const blob = await telemetry.runStage(
-                        'rotate-preserved-ultrahdr',
-                        async () => processUhdrWithRotation(fileBuffer, mergedOptions, telemetry, sourceExifBytes),
-                        withProcessingPath(),
-                    );
-                    telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve-with-rotation' }));
-                    return blob;
+                } else {
+                    const isJpeg = file.type === 'image/jpeg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+                    if (isJpeg) {
+                        console.log('[Process] Standard JPEG input. Retaining original bytes for lossless SDR preservation.');
+                        originalSdrJpegBytes = fileBuffer;
+                    }
                 }
             } catch (e) {
                 if (preserveDecisionMade) {
@@ -708,7 +729,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
             const { sdr } = await telemetry.runStage(
                 'compress-components',
-                async () => compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes),
+                async () => compressImages(imageData, gainMapImageData, { ...mergedOptions, originalSdrJpegBytes: null }, metadata, telemetry, sourceExifBytes),
                 withProcessingPath(),
             );
             const blob = await telemetry.runStage(
@@ -792,6 +813,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     originalHeight: workingImageData.height,
                 }
                 : {};
+            originalSdrJpegBytes = null; // Cannot use lossless original bytes if resized
             workingImageData = await telemetry.runStage('constrain-sdr-image', async () =>
                 resizeImageData(
                     workingImageData,
@@ -804,6 +826,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         const normalizedRotation = ((mergedOptions.rotation || 0) % 360 + 360) % 360;
         if (normalizedRotation !== 0) {
+            originalSdrJpegBytes = null; // Cannot use lossless original bytes if rotated
             workingImageData = await telemetry.runStage(
                 'apply-rotation',
                 async () => rotateImageData(workingImageData, normalizedRotation),
@@ -852,7 +875,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             compressImages(
                 workingImageData,
                 gainMapImageData,
-                { ...mergedOptions, rotation: 0 },
+                { ...mergedOptions, rotation: 0, originalSdrJpegBytes },
                 generatedGainMapMetadata,
                 telemetry,
                 sourceExifBytes
@@ -1151,6 +1174,7 @@ export async function generateGainMapData(imageData, options = {}) {
  */
 async function compressImages(sdrImageData, gainMapImageData, options, metadata = null, telemetry = null, exifPayload = null) {
     // Convert quality 0-1 to 0-100
+    const originalSdrJpegBytes = options.originalSdrJpegBytes || null;
     const quality = options.quality !== undefined ? options.quality : 0.95;
     const wasmQuality = Math.round(quality * 100);
     const rotation = ((options.rotation || 0) % 360 + 360) % 360;
@@ -1207,9 +1231,19 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
             : async (data, q) => await blobToUint8Array(await imageDataToJpegBlob(data, q));
 
         console.log("[start] encode-sdr-to-jpeg")
-        const sdrJpegBytes = telemetry
-            ? await telemetry.runStage('encode-sdr-to-jpeg', async () => encoderFn(rotatedSdrImageData, quality))
-            : await encoderFn(rotatedSdrImageData, quality);
+        let sdrJpegBytes;
+        if (originalSdrJpegBytes instanceof Uint8Array && rotation === 0) {
+            console.log("[Process] Bypassing SDR encoding: Utilizing lossless original SDR JPEG bytes");
+            if (telemetry) {
+                sdrJpegBytes = await telemetry.runStage('encode-sdr-to-jpeg', async () => stripExifSegments(originalSdrJpegBytes));
+            } else {
+                sdrJpegBytes = stripExifSegments(originalSdrJpegBytes);
+            }
+        } else {
+            sdrJpegBytes = telemetry
+                ? await telemetry.runStage('encode-sdr-to-jpeg', async () => encoderFn(rotatedSdrImageData, quality))
+                : await encoderFn(rotatedSdrImageData, quality);
+        }
         console.log("[end] encode-sdr-to-jpeg success")
         console.log("[start] encode-gain-map-to-jpeg")
         const gainMapJpegBytes = telemetry
