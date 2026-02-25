@@ -1,6 +1,7 @@
 import {
   GMNET_FALLBACK_EXECUTION_PROVIDER,
   GMNetInferenceSession,
+  GMNET_WASM_EXECUTION_PROVIDER,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.js';
 
@@ -8,6 +9,8 @@ const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const WEBGL_FALLBACK_RETRY_NOTE = 'WebGPU produced an invalid gain map; retrying with WebGL.';
 const WEBGL_FALLBACK_ERROR_RETRY_NOTE = 'WebGPU inference failed; retrying with WebGL.';
+const WASM_FALLBACK_RETRY_NOTE = 'GPU fallback produced an invalid gain map; retrying with WASM.';
+const WASM_FALLBACK_ERROR_RETRY_NOTE = 'GPU fallback failed; retrying with WASM.';
 const MIN_GAIN_MAP_DYNAMIC_RANGE = 2;
 const MIN_GAIN_MAP_STD_DEV = 0.25;
 
@@ -17,11 +20,6 @@ function normalizeExecutionProviderName(value) {
   }
   const trimmed = value.trim().toLowerCase();
   return trimmed || null;
-}
-
-function isChromiumRuntime(runtime = globalThis) {
-  const userAgent = String(runtime?.navigator?.userAgent || '');
-  return /chrom(e|ium)|edg\//i.test(userAgent);
 }
 
 function formatExecutionProviderNote(provider) {
@@ -172,12 +170,6 @@ export class GmnetGainMapGenerator {
 
   async resolveCapability(options = {}) {
     const session = this.getSession();
-    const hintCapability = normalizeCapabilityRecord(options?.capabilityHint);
-    if (hintCapability) {
-      this.capabilityByProvider.set(hintCapability.provider, hintCapability);
-      return hintCapability;
-    }
-
     const normalizedForcedProviders = Array.isArray(options?.forceExecutionProviders)
       ? options.forceExecutionProviders
         .map((provider) => normalizeExecutionProviderName(provider))
@@ -186,6 +178,11 @@ export class GmnetGainMapGenerator {
     const requestedProvider = normalizedForcedProviders.length === 1
       ? normalizedForcedProviders[0]
       : null;
+    const hintCapability = normalizeCapabilityRecord(options?.capabilityHint);
+    if (hintCapability && (!requestedProvider || hintCapability.provider === requestedProvider)) {
+      this.capabilityByProvider.set(hintCapability.provider, hintCapability);
+      return hintCapability;
+    }
     if (requestedProvider && this.capabilityByProvider.has(requestedProvider)) {
       return this.capabilityByProvider.get(requestedProvider);
     }
@@ -231,11 +228,20 @@ export class GmnetGainMapGenerator {
     }
 
     const session = this.getSession();
+    const normalizedForcedProviders = Array.isArray(options?.forceExecutionProviders)
+      ? options.forceExecutionProviders
+        .map((provider) => normalizeExecutionProviderName(provider))
+        .filter(Boolean)
+      : [];
+    const requestedProvider = normalizedForcedProviders.length === 1
+      ? normalizedForcedProviders[0]
+      : null;
+    const hasExplicitBackendSelection = Boolean(requestedProvider);
     const onStageProgress =
       typeof options.onStageProgress === 'function' ? options.onStageProgress : null;
     const capability = await this.resolveCapability({
       gmnetModelVariant: options.gmnetModelVariant,
-      forceExecutionProviders: options.forceExecutionProviders,
+      forceExecutionProviders: hasExplicitBackendSelection ? [requestedProvider] : options.forceExecutionProviders,
       capabilityHint: options.gmnetCapabilityHint,
     });
     onStageProgress?.(
@@ -276,10 +282,23 @@ export class GmnetGainMapGenerator {
 
     try {
       const runInference = async (runOptions = {}) => {
-        const gainMapRgba = await session.run(imageData, {
+        const forceExecutionProviders = Array.isArray(runOptions.forceExecutionProviders)
+          ? runOptions.forceExecutionProviders
+          : [];
+        const forcedProvider = forceExecutionProviders.length === 1
+          ? normalizeExecutionProviderName(forceExecutionProviders[0])
+          : null;
+        const sessionRunOptions = {
           gmnetModelVariant: options.gmnetModelVariant,
-          localInputMaxLongEdge: capability?.gainMapMaxLongEdge,
           ...runOptions,
+        };
+        if (capability?.gainMapMaxLongEdge) {
+          sessionRunOptions.localInputMaxLongEdge = forcedProvider === GMNET_WASM_EXECUTION_PROVIDER
+            ? Math.min(capability.gainMapMaxLongEdge, 8192)
+            : capability.gainMapMaxLongEdge;
+        }
+        const gainMapRgba = await session.run(imageData, {
+          ...sessionRunOptions,
         });
         const expectedLength = imageData.width * imageData.height * 4;
         if (!(gainMapRgba instanceof Uint8ClampedArray)) {
@@ -320,24 +339,91 @@ export class GmnetGainMapGenerator {
         });
       };
 
-      const canRetryWithWebgl = () =>
-        isChromiumRuntime(this.runtime)
-        && resolveCurrentExecutionProvider(runtimeExecutionProvider, session)
-          === REQUIRED_GMNET_EXECUTION_PROVIDER;
+      const runWasmFallback = async (note) => {
+        onStageProgress?.(
+          2,
+          note,
+          {
+            gmnetExecutionProvider: GMNET_WASM_EXECUTION_PROVIDER,
+            gmnetCapability: capability,
+            gmnetCapabilitySource: capability?.source || null,
+          },
+        );
+        return runInference({
+          forceExecutionProviders: [GMNET_WASM_EXECUTION_PROVIDER],
+        });
+      };
+
+      const resolveAutoFallbackProviders = () => {
+        if (hasExplicitBackendSelection) {
+          return [];
+        }
+        const currentProvider = resolveCurrentExecutionProvider(runtimeExecutionProvider, session);
+        if (currentProvider === REQUIRED_GMNET_EXECUTION_PROVIDER) {
+          return [GMNET_FALLBACK_EXECUTION_PROVIDER, GMNET_WASM_EXECUTION_PROVIDER];
+        }
+        if (currentProvider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+          return [GMNET_WASM_EXECUTION_PROVIDER];
+        }
+        if (currentProvider === GMNET_WASM_EXECUTION_PROVIDER) {
+          return [];
+        }
+        return [GMNET_FALLBACK_EXECUTION_PROVIDER, GMNET_WASM_EXECUTION_PROVIDER];
+      };
+
+      const attemptedFallbackProviders = new Set();
+      const runNextFallback = async (reason = 'error') => {
+        const fallbackProviders = resolveAutoFallbackProviders().filter(
+          (provider) => !attemptedFallbackProviders.has(provider),
+        );
+        if (fallbackProviders.length === 0) {
+          return null;
+        }
+        for (const provider of fallbackProviders) {
+          attemptedFallbackProviders.add(provider);
+          const isNearFlatReason = reason === 'near-flat';
+          try {
+            if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+              return await runWebglFallback(
+                isNearFlatReason ? WEBGL_FALLBACK_RETRY_NOTE : WEBGL_FALLBACK_ERROR_RETRY_NOTE,
+              );
+            }
+            if (provider === GMNET_WASM_EXECUTION_PROVIDER) {
+              return await runWasmFallback(
+                isNearFlatReason ? WASM_FALLBACK_RETRY_NOTE : WASM_FALLBACK_ERROR_RETRY_NOTE,
+              );
+            }
+          } catch (fallbackError) {
+            if (provider === fallbackProviders[fallbackProviders.length - 1]) {
+              throw fallbackError;
+            }
+            reason = 'error';
+          }
+        }
+        return null;
+      };
 
       let inferenceResult;
       try {
-        inferenceResult = await runInference();
+        inferenceResult = await runInference(
+          hasExplicitBackendSelection
+            ? { forceExecutionProviders: [requestedProvider] }
+            : {},
+        );
       } catch (error) {
-        if (!canRetryWithWebgl()) {
+        const fallbackResult = await runNextFallback('error');
+        if (!fallbackResult) {
           throw error;
         }
-        inferenceResult = await runWebglFallback(WEBGL_FALLBACK_ERROR_RETRY_NOTE);
+        inferenceResult = fallbackResult;
       }
 
       let { gainMapRgba, gainMapStats } = inferenceResult;
-      if (isNearFlatGainMap(gainMapStats) && canRetryWithWebgl()) {
-        const fallbackResult = await runWebglFallback(WEBGL_FALLBACK_RETRY_NOTE);
+      while (isNearFlatGainMap(gainMapStats)) {
+        const fallbackResult = await runNextFallback('near-flat');
+        if (!fallbackResult) {
+          break;
+        }
         gainMapRgba = fallbackResult.gainMapRgba;
         gainMapStats = fallbackResult.gainMapStats;
       }

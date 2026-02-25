@@ -52,6 +52,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.matchMedia = createMatchMedia(false);
+    window.localStorage?.clear?.();
     Object.defineProperty(window.navigator, 'setAppBadge', {
       configurable: true,
       value: vi.fn(async () => {}),
@@ -455,6 +456,149 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await waitFor(() => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
+    expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
+  });
+
+  it('renders backend preference dropdown with all backend options in mobile settings', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    const backendSelect = screen.getByTestId('backend-preference-select-mobile');
+    expect(backendSelect).toHaveValue('auto');
+
+    const optionLabels = within(backendSelect)
+      .getAllByRole('option')
+      .map((option) => option.textContent?.trim());
+    expect(optionLabels).toEqual(
+      expect.arrayContaining([
+        'Auto (Recommended)',
+        'WebGPU',
+        'WebGL',
+        'WASM',
+      ]),
+    );
+  });
+
+  it('persists backend preference and applies forced provider to subsequent processing runs', async () => {
+    const { unmount } = render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    const backendSelect = screen.getByTestId('backend-preference-select-mobile');
+    await fireEvent.change(backendSelect, { target: { value: 'webgl' } });
+    unmount();
+
+    vi.mocked(processImage).mockClear();
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        forceExecutionProviders: ['webgl'],
+      }),
+    );
+  });
+
+  it('shows WASM recommendation modal for generated path when capability downscale is applied', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const now = Date.now();
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'probe-gmnet-capability',
+        stageProgress: 100,
+        note: 'GMNet capability resolved',
+        timestamp: now,
+        processingPath: 'generated',
+        gmnetExecutionProvider: 'webgl',
+        gmnetCapability: {
+          provider: 'webgl',
+          gainMapMaxLongEdge: 128,
+          outputMaxLongEdge: 256,
+          source: 'fixed-model',
+          attempts: [],
+        },
+      });
+      options.onProgress?.({
+        phase: 'stage-complete',
+        stage: 'constrain-sdr-image',
+        timestamp: now + 1,
+        processingPath: 'generated',
+        constrainedByCapability: true,
+      });
+      options.onProgress?.({
+        phase: 'pipeline-complete',
+        stage: 'pipeline',
+        elapsedMs: 5,
+        stageDurationsMs: { pipeline: 5 },
+        fileIndex: 0,
+        totalFiles: 1,
+        timestamp: now + 2,
+        processingPath: 'generated',
+      });
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('wasm-recommendation-modal')).toBeInTheDocument();
+    });
+  });
+
+  it('suppresses WASM recommendation and capability warning UI for preserved path files', async () => {
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      const now = Date.now();
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'probe-gmnet-capability',
+        stageProgress: 100,
+        note: 'GMNet capability resolved',
+        timestamp: now,
+        processingPath: 'preserved',
+        gmnetExecutionProvider: 'webgl',
+        gmnetCapability: {
+          provider: 'webgl',
+          gainMapMaxLongEdge: 128,
+          outputMaxLongEdge: 256,
+          source: 'fixed-model',
+          attempts: [],
+        },
+      });
+      options.onProgress?.({
+        phase: 'stage-complete',
+        stage: 'constrain-sdr-image',
+        timestamp: now + 1,
+        processingPath: 'preserved',
+        constrainedByCapability: true,
+      });
+      options.onProgress?.({
+        phase: 'pipeline-complete',
+        stage: 'pipeline',
+        elapsedMs: 5,
+        stageDurationsMs: { pipeline: 5 },
+        fileIndex: 0,
+        totalFiles: 1,
+        timestamp: now + 2,
+        processingPath: 'preserved',
+      });
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId('wasm-recommendation-modal')).not.toBeInTheDocument();
     expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
   });
 

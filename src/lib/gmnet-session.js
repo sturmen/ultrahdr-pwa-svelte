@@ -3,9 +3,11 @@ import { createCanvasWithContext as createRuntimeCanvasWithContext } from './can
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
 export const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
+export const GMNET_WASM_EXECUTION_PROVIDER = 'wasm';
 export const SUPPORTED_GMNET_EXECUTION_PROVIDERS = Object.freeze([
     REQUIRED_GMNET_EXECUTION_PROVIDER,
     GMNET_FALLBACK_EXECUTION_PROVIDER,
+    GMNET_WASM_EXECUTION_PROVIDER,
 ]);
 
 function resolveOrtAssetBasePath() {
@@ -35,16 +37,164 @@ function isWebKitRuntime(runtime = globalThis) {
         && !userAgent.includes('edg/');
 }
 
+function isFirefoxRuntime(runtime = globalThis) {
+    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+    return userAgent.includes('firefox/');
+}
+
 const DEFAULT_WASM_THREAD_COUNT = 1;
 const MAX_WASM_THREAD_COUNT = 4;
-const WEBGL_LOCAL_INPUT_SIZE = 128;
 const DEFAULT_PROBE_MIN_LONG_EDGE = 128;
 const DEFAULT_PROBE_MAX_LONG_EDGE = 4096;
 const DEFAULT_PROBE_TIMEOUT_MS = 12_000;
 const PROBE_MIN_DYNAMIC_RANGE = 2;
 const PROBE_MIN_STD_DEV = 0.25;
+const PROBE_STATE_STORAGE_KEY = 'ultrahdr:probe-state:v1';
 let ortAllModulePromise = null;
 const configuredOrtModules = new WeakSet();
+
+export class ProbeStateManager {
+    constructor({ storage = null } = {}) {
+        this.storage = storage;
+    }
+
+    writeBeforeProbe(candidateLongEdge, provider) {
+        const state = {
+            candidate: candidateLongEdge,
+            provider,
+            phase: 'running',
+            timestamp: Date.now(),
+        };
+        console.log(`[GMNet probe state] before probe: candidate=${candidateLongEdge}, provider=${provider}`);
+        this._write(state);
+    }
+
+    writeAfterProbe(candidateLongEdge, provider, status) {
+        const state = {
+            candidate: candidateLongEdge,
+            provider,
+            phase: status,
+            timestamp: Date.now(),
+        };
+        console.log(`[GMNet probe state] after probe: candidate=${candidateLongEdge}, provider=${provider}, status=${status}`);
+        this._write(state);
+    }
+
+    detectCrash() {
+        const state = this._read();
+        if (!state || typeof state !== 'object') {
+            return null;
+        }
+        if (state.phase === 'running') {
+            return state;
+        }
+        return null;
+    }
+
+    clearState() {
+        try {
+            if (this.storage && typeof this.storage.removeItem === 'function') {
+                this.storage.removeItem(PROBE_STATE_STORAGE_KEY);
+            }
+        } catch (_error) {
+            // Best-effort removal.
+        }
+    }
+
+    _write(state) {
+        try {
+            if (this.storage && typeof this.storage.setItem === 'function') {
+                this.storage.setItem(PROBE_STATE_STORAGE_KEY, JSON.stringify(state));
+            }
+        } catch (_error) {
+            // Best-effort write.
+        }
+    }
+
+    _read() {
+        try {
+            if (!this.storage || typeof this.storage.getItem !== 'function') {
+                return null;
+            }
+            const raw = this.storage.getItem(PROBE_STATE_STORAGE_KEY);
+            if (!raw) {
+                return null;
+            }
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object') {
+                return null;
+            }
+            return parsed;
+        } catch (_error) {
+            return null;
+        }
+    }
+}
+
+export function isMobileDevice(runtime = globalThis) {
+    const navigatorRef = runtime?.navigator;
+    const userAgent = String(navigatorRef?.userAgent || '').toLowerCase();
+    const maxTouchPoints = Number(navigatorRef?.maxTouchPoints || 0) || 0;
+
+    if (/android|iphone|ipod|mobile/.test(userAgent)) {
+        return true;
+    }
+    // iPad reports as macOS but has touch
+    if (/(macintosh|mac os x)/.test(userAgent) && maxTouchPoints > 1) {
+        return true;
+    }
+    return false;
+}
+
+export async function gallopingSearchUpperBound(min, max, evaluate) {
+    let candidate = min;
+    let lastPass = null;
+    let firstFail = null;
+
+    while (candidate <= max) {
+        const passed = await evaluate(candidate);
+        if (passed) {
+            lastPass = candidate;
+            candidate = candidate * 2;
+        } else {
+            firstFail = candidate;
+            break;
+        }
+    }
+
+    // If we galloped past max without failure, test max explicitly
+    if (firstFail === null && lastPass !== null && lastPass < max) {
+        const passed = await evaluate(max);
+        if (passed) {
+            lastPass = max;
+        } else {
+            firstFail = max;
+        }
+    } else if (firstFail === null && lastPass !== null && lastPass >= max) {
+        // lastPass already equals or exceeds max; clamp it
+        lastPass = max;
+    }
+
+    return { lastPass, firstFail };
+}
+
+export async function binarySearchMaxCapability(low, high, evaluate) {
+    let best = null;
+
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const passed = await evaluate(mid);
+        if (passed) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    return best;
+}
+
 
 function supportsWasmThreading(runtime = globalThis) {
     const hasIsolatedContext = runtime?.crossOriginIsolated === true;
@@ -126,7 +276,7 @@ async function loadOrtAllModule(runtime = globalThis) {
 }
 
 async function resolveOrtModuleForProvider(provider, runtime = globalThis) {
-    if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+    if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER || provider === GMNET_WASM_EXECUTION_PROVIDER) {
         return loadOrtAllModule(runtime);
     }
     configureOrtRuntime(ortWebGpu, runtime);
@@ -240,19 +390,29 @@ async function loadBinaryAsset(runtime, assetUrl, assetLabel) {
 }
 
 async function resolveModelAndExternalDataPayloads(runtime, provider, modelUrl, externalDataUrl) {
-    if (provider !== GMNET_FALLBACK_EXECUTION_PROVIDER) {
+    if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+        const modelPayload = await loadBinaryAsset(runtime, modelUrl, 'GMNet ONNX model');
         return {
-            modelPayload: modelUrl,
-            externalDataPayload: externalDataUrl,
+            modelPayload,
+            externalDataPayload: null,
+            includeExternalData: false,
+        };
+    }
+
+    if (provider === GMNET_WASM_EXECUTION_PROVIDER) {
+        const modelPayload = await loadBinaryAsset(runtime, modelUrl, 'GMNet ONNX model');
+        const externalDataPayload = await loadBinaryAsset(runtime, externalDataUrl, 'GMNet ONNX model external data');
+        return {
+            modelPayload,
+            externalDataPayload,
             includeExternalData: true,
         };
     }
 
-    const modelPayload = await loadBinaryAsset(runtime, modelUrl, 'GMNet ONNX model');
     return {
-        modelPayload,
-        externalDataPayload: null,
-        includeExternalData: false,
+        modelPayload: modelUrl,
+        externalDataPayload: externalDataUrl,
+        includeExternalData: true,
     };
 }
 
@@ -529,6 +689,8 @@ export class GMNetInferenceSession {
             throw unavailableError;
         }
 
+        // WASM is universally available — no runtime check needed.
+
         const ortModule = await resolveOrtModuleForProvider(requestedProvider, this.runtime);
         const sessionCacheKey = createSessionCacheKey(normalizedVariant, requestedProvider);
         const forceReload = Boolean(options.forceReload);
@@ -592,8 +754,14 @@ export class GMNetInferenceSession {
             // We append version query param from env.
             const version = import.meta.env.VITE_APP_ASSET_VERSION || 'dev';
             const variantConfig = MODEL_VARIANT_CONFIG[normalizedVariant];
-            const modelFilename = requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER
-                ? (variantConfig.webglModelFilename || variantConfig.inlineModelFilename)
+            const useInlineModel = requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER;
+            const useCompatibilityWebGlModel = requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER
+                && typeof variantConfig.webglModelFilename === 'string'
+                && variantConfig.webglModelFilename.length > 0;
+            const modelFilename = useInlineModel
+                ? (useCompatibilityWebGlModel
+                    ? variantConfig.webglModelFilename
+                    : variantConfig.inlineModelFilename)
                 : variantConfig.modelFilename;
             const modelUrl = `${MODEL_BASE_PATH}${modelFilename}?v=${version}`;
             const externalDataUrl = `${MODEL_BASE_PATH}${variantConfig.modelDataFilename}?v=${version}`;
@@ -711,11 +879,65 @@ export class GMNetInferenceSession {
             );
         }
 
+        // WASM runs on CPU — no GPU texture limits. Skip probing entirely.
+        if (provider === GMNET_WASM_EXECUTION_PROVIDER) {
+            return {
+                provider,
+                gainMapMaxLongEdge: 16384,
+                outputMaxLongEdge: 32768,
+                source: 'wasm-unlimited',
+                attempts: [],
+            };
+        }
+
         const timeoutMs = normalizeLongEdgeLimit(options.timeoutMs, DEFAULT_PROBE_TIMEOUT_MS);
         const attempts = [];
         const attemptedCandidates = new Set();
 
+        // --- Crash detection via persistent state ---
+        const storageRef = this.runtime?.localStorage ?? null;
+        const probeState = new ProbeStateManager({ storage: storageRef });
+        const crashedCandidates = new Set();
+        const crashInfo = probeState.detectCrash();
+        if (crashInfo && crashInfo.provider === provider) {
+            console.warn(
+                `[GMNet capability probe] Detected previous crash at candidate=${crashInfo.candidate}, provider=${crashInfo.provider}. Marking as failed.`,
+            );
+            crashedCandidates.add(crashInfo.candidate);
+            attempts.push({
+                candidateLongEdge: crashInfo.candidate,
+                status: 'failed',
+                durationMs: 0,
+                error: {
+                    name: 'CrashDetected',
+                    message: `Previous probe at ${crashInfo.candidate}px crashed (detected on recovery).`,
+                },
+            });
+        }
+
         const evaluateCandidate = async (candidateLongEdge) => {
+            if (crashedCandidates.has(candidateLongEdge)) {
+                const crashAttempt = {
+                    candidateLongEdge,
+                    status: 'failed',
+                    durationMs: 0,
+                    error: {
+                        name: 'CrashSkipped',
+                        message: `Skipped ${candidateLongEdge}px: previously crashed.`,
+                    },
+                };
+                attempts.push(crashAttempt);
+                attemptedCandidates.add(candidateLongEdge);
+                this.emit('capability-probe', {
+                    candidate: candidateLongEdge,
+                    provider,
+                    phase: 'failed',
+                    error: crashAttempt.error,
+                    durationMs: 0,
+                });
+                return crashAttempt;
+            }
+
             const startedAtMs = Date.now();
             const candidateResolution = `${candidateLongEdge}x${candidateLongEdge}`;
             const attempt = {
@@ -729,6 +951,7 @@ export class GMNetInferenceSession {
                 console.log(
                     `[GMNet capability probe] Testing ${candidateResolution} (${provider})...`,
                 );
+                probeState.writeBeforeProbe(candidateLongEdge, provider);
                 const probeImage = this.createProbeImageData(candidateLongEdge);
                 const output = await runWithTimeout(
                     this.run(probeImage, {
@@ -746,6 +969,7 @@ export class GMNetInferenceSession {
                         message: `Capability probe expected Uint8ClampedArray output, received "${output?.constructor?.name || typeof output}".`,
                     };
                     console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
+                    probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
                     return attempt;
                 }
                 const expectedLength = candidateLongEdge * candidateLongEdge * 4;
@@ -756,6 +980,7 @@ export class GMNetInferenceSession {
                         message: `Capability probe output length mismatch for ${candidateLongEdge}px: expected ${expectedLength}, got ${output.length}.`,
                     };
                     console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
+                    probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
                     return attempt;
                 }
                 const stats = analyzeRgbaOutputStats(output);
@@ -766,6 +991,7 @@ export class GMNetInferenceSession {
                         message: `Capability probe output near-flat at ${candidateLongEdge}px (range=${stats.dynamicRange}, std=${stats.stdDev.toFixed(3)}).`,
                     };
                     console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
+                    probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
                     return attempt;
                 }
                 attempt.status = 'passed';
@@ -773,6 +999,7 @@ export class GMNetInferenceSession {
                 console.log(
                     `[GMNet capability probe] Passed ${candidateResolution} (${provider}).`,
                 );
+                probeState.writeAfterProbe(candidateLongEdge, provider, 'passed');
                 return attempt;
             } catch (error) {
                 attempt.status = 'failed';
@@ -783,6 +1010,7 @@ export class GMNetInferenceSession {
                 console.warn(
                     `[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`,
                 );
+                probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
 
                 try {
                     console.warn(`[GMNet capability probe] Re-initializing session to recover from candidate crash...`);
@@ -818,6 +1046,31 @@ export class GMNetInferenceSession {
             }
         };
 
+        if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+            const fixedCandidateLongEdge = DEFAULT_PROBE_MIN_LONG_EDGE;
+            const fixedAttempt = await evaluateCandidate(fixedCandidateLongEdge);
+            probeState.clearState();
+            if (fixedAttempt.status !== 'passed') {
+                throw createCapabilityProbeError(
+                    `Failed to verify fixed ${provider} GMNet capability at ${fixedCandidateLongEdge}px.`,
+                    {
+                        provider,
+                        source: 'fixed-model',
+                        minLongEdge: fixedCandidateLongEdge,
+                        maxLongEdge: fixedCandidateLongEdge,
+                        attempts,
+                    },
+                );
+            }
+            return {
+                provider,
+                gainMapMaxLongEdge: fixedCandidateLongEdge,
+                outputMaxLongEdge: fixedCandidateLongEdge * 2,
+                source: 'fixed-model',
+                attempts,
+            };
+        }
+
         let probeMinLongEdge = normalizeLongEdgeLimit(options.minLongEdge, DEFAULT_PROBE_MIN_LONG_EDGE);
         let probeMaxLongEdge = normalizeLongEdgeLimit(options.maxLongEdge, DEFAULT_PROBE_MAX_LONG_EDGE);
         if (probeMinLongEdge > probeMaxLongEdge) {
@@ -826,52 +1079,128 @@ export class GMNetInferenceSession {
             probeMaxLongEdge = temp;
         }
 
-        let low = probeMinLongEdge;
-        let high = probeMaxLongEdge;
-        let best = 0;
-        const binarySearchRangeSize = Math.max(1, probeMaxLongEdge - probeMinLongEdge + 1);
         const requestedMaxAttempts = Number(options.maxAttempts);
-        const maxBinarySearchAttempts = Number.isFinite(requestedMaxAttempts) && requestedMaxAttempts > 0
+        const binarySearchRangeSize = Math.max(1, probeMaxLongEdge - probeMinLongEdge + 1);
+        const maxTotalAttempts = Number.isFinite(requestedMaxAttempts) && requestedMaxAttempts > 0
             ? Math.max(1, Math.floor(requestedMaxAttempts))
-            : Math.ceil(Math.log2(binarySearchRangeSize)) + 2;
-        let binarySearchAttemptCount = 0;
-        let lastCandidate = null;
+            : Math.ceil(Math.log2(binarySearchRangeSize)) + 6;
 
-        // Optimistically test the maximum possible capability first.
-        const maxAttempt = await evaluateCandidate(probeMaxLongEdge);
-        binarySearchAttemptCount += 1;
-        if (maxAttempt.status === 'passed') {
-            return {
-                provider,
-                gainMapMaxLongEdge: probeMaxLongEdge,
-                outputMaxLongEdge: probeMaxLongEdge * 2,
-                source: 'probe-optimistic',
-                attempts,
-            };
+        // --- Evaluate helper: returns boolean for search algorithms ---
+        // Must be defined after maxTotalAttempts so the budget check works.
+        const evaluateBool = async (candidateLongEdge) => {
+            if (attemptedCandidates.has(candidateLongEdge)) {
+                // Already tested this candidate — look up result
+                const existing = attempts.find(
+                    (a) => a.candidateLongEdge === candidateLongEdge,
+                );
+                return existing?.status === 'passed';
+            }
+            // Enforce the attempt budget so search algorithms stop gracefully
+            if (attempts.length >= maxTotalAttempts) {
+                return false;
+            }
+            const attempt = await evaluateCandidate(candidateLongEdge);
+            return attempt.status === 'passed';
+        };
+
+        // --- Hot-spot candidates ---
+        const hotSpots = [4094, 2048].filter(
+            (hs) => hs >= probeMinLongEdge && hs <= probeMaxLongEdge,
+        );
+
+        const mobile = isMobileDevice(this.runtime);
+        let best = 0;
+
+        if (mobile) {
+            // Mobile strategy: test hot-spots ascending, then gallop up, then binary refine
+            const mobileHotSpots = [...hotSpots].sort((a, b) => a - b);
+            for (const hs of mobileHotSpots) {
+                if (attempts.length >= maxTotalAttempts) break;
+                const attempt = await evaluateCandidate(hs);
+                if (attempt.status === 'passed') {
+                    best = Math.max(best, hs);
+                }
+            }
+
+            // Galloping search from min upward (skipping already-tested)
+            if (attempts.length < maxTotalAttempts) {
+                const gallopResult = await gallopingSearchUpperBound(
+                    probeMinLongEdge,
+                    probeMaxLongEdge,
+                    evaluateBool,
+                );
+                if (gallopResult.lastPass !== null) {
+                    best = Math.max(best, gallopResult.lastPass);
+                }
+                // Binary search to refine between lastPass and firstFail
+                if (
+                    gallopResult.lastPass !== null
+                    && gallopResult.firstFail !== null
+                    && gallopResult.firstFail - gallopResult.lastPass > 1
+                    && attempts.length < maxTotalAttempts
+                ) {
+                    const refined = await binarySearchMaxCapability(
+                        gallopResult.lastPass + 1,
+                        gallopResult.firstFail - 1,
+                        evaluateBool,
+                    );
+                    if (refined !== null) {
+                        best = Math.max(best, refined);
+                    }
+                }
+            }
         } else {
-            // It failed at the max, so the high end of our binary search must be lower.
-            high = probeMaxLongEdge - 1;
+            // Desktop strategy: test hot-spots descending, then binary refine
+            const desktopHotSpots = [...hotSpots].sort((a, b) => b - a);
+            let hotSpotPassedMax = 0;
+            let hotSpotFailedMin = probeMaxLongEdge + 1;
+
+            for (const hs of desktopHotSpots) {
+                if (attempts.length >= maxTotalAttempts) break;
+                const attempt = await evaluateCandidate(hs);
+                if (attempt.status === 'passed') {
+                    hotSpotPassedMax = Math.max(hotSpotPassedMax, hs);
+                    best = Math.max(best, hs);
+                } else {
+                    hotSpotFailedMin = Math.min(hotSpotFailedMin, hs);
+                }
+            }
+
+            // If the largest hot-spot passed, try to push higher with binary search
+            if (
+                hotSpotPassedMax > 0
+                && hotSpotPassedMax < probeMaxLongEdge
+                && attempts.length < maxTotalAttempts
+            ) {
+                const refined = await binarySearchMaxCapability(
+                    hotSpotPassedMax + 1,
+                    probeMaxLongEdge,
+                    evaluateBool,
+                );
+                if (refined !== null) {
+                    best = Math.max(best, refined);
+                }
+            }
+
+            // If no hot-spot passed, binary search the whole range
+            if (hotSpotPassedMax === 0 && attempts.length < maxTotalAttempts) {
+                const refined = await binarySearchMaxCapability(
+                    probeMinLongEdge,
+                    Math.min(hotSpotFailedMin - 1, probeMaxLongEdge),
+                    evaluateBool,
+                );
+                if (refined !== null) {
+                    best = refined;
+                }
+            }
         }
 
-        while (low <= high && binarySearchAttemptCount < maxBinarySearchAttempts) {
-            const candidate = Math.floor((low + high) / 2);
-            if (candidate === lastCandidate) {
-                break;
-            }
-            lastCandidate = candidate;
-            binarySearchAttemptCount += 1;
-            const attempt = await evaluateCandidate(candidate);
-            if (attempt.status === 'passed') {
-                best = candidate;
-                low = candidate + 1;
-            } else {
-                high = candidate - 1;
-            }
-        }
+        // --- Clean up probe state ---
+        probeState.clearState();
 
-        if (low <= high && binarySearchAttemptCount >= maxBinarySearchAttempts) {
+        if (attempts.length >= maxTotalAttempts && best < probeMinLongEdge) {
             throw createCapabilityProbeError(
-                `GMNet capability probe exceeded ${maxBinarySearchAttempts} binary-search attempts.`,
+                `GMNet capability probe exceeded ${maxTotalAttempts} attempts.`,
                 {
                     provider,
                     source: 'probe',
@@ -895,14 +1224,18 @@ export class GMNetInferenceSession {
             );
         }
 
+        // Determine source tag
+        const source = best === probeMaxLongEdge ? 'probe-optimistic' : 'probe';
+
         return {
             provider,
             gainMapMaxLongEdge: best,
             outputMaxLongEdge: best * 2,
-            source: 'probe',
+            source,
             attempts,
         };
     }
+
 
     async run(imageData, options = {}) {
         console.log('[GMNet session] run called');
@@ -930,24 +1263,25 @@ export class GMNetInferenceSession {
         // imageData is RGBA Uint8ClampedArray
         const sourceWidth = imageData.width;
         const sourceHeight = imageData.height;
-        const activeProvider = normalizeExecutionProvider(this.activeExecutionProvider);
-        const useFixedLocalInputSize = activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER;
         const probeMode = options?.probeMode === true;
         const localInputMaxLongEdge = normalizeLongEdgeLimit(options?.localInputMaxLongEdge, 0);
+        const activeProvider = normalizeExecutionProvider(
+            this.activeExecutionProvider || resolveActiveExecutionProvider(this.session)
+        );
         let inferenceImageData = imageData;
         let inferenceWidth = sourceWidth;
         let inferenceHeight = sourceHeight;
-        if (
-            useFixedLocalInputSize &&
-            (sourceWidth !== WEBGL_LOCAL_INPUT_SIZE || sourceHeight !== WEBGL_LOCAL_INPUT_SIZE)
-        ) {
-            inferenceWidth = WEBGL_LOCAL_INPUT_SIZE;
-            inferenceHeight = WEBGL_LOCAL_INPUT_SIZE;
-            inferenceImageData = resizeImageData(
-                imageData,
-                inferenceWidth,
-                inferenceHeight
-            );
+        if (!probeMode && activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+            const fixedLongEdge = DEFAULT_PROBE_MIN_LONG_EDGE;
+            inferenceWidth = fixedLongEdge;
+            inferenceHeight = fixedLongEdge;
+            if (sourceWidth !== fixedLongEdge || sourceHeight !== fixedLongEdge) {
+                inferenceImageData = resizeImageData(
+                    imageData,
+                    inferenceWidth,
+                    inferenceHeight,
+                );
+            }
         } else if (!probeMode && localInputMaxLongEdge > 0) {
             const constrainedDims = resolveScaledDimensionsForLongEdge(
                 sourceWidth,

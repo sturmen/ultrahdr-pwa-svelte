@@ -323,7 +323,10 @@ function getCachedCapabilityHint(runtime = globalThis, options = {}) {
     ? record.byProvider
     : {};
   const requestedProvider = resolveRequestedProviderFromOptions(options);
-  if (requestedProvider && byProvider[requestedProvider]) {
+  if (requestedProvider) {
+    if (!byProvider[requestedProvider]) {
+      return null;
+    }
     return normalizeGmnetCapability(byProvider[requestedProvider]);
   }
 
@@ -401,6 +404,12 @@ function sanitizeRuntimeInitOptions(rawOptions) {
   );
   if (gmnetCapabilityHintsByProvider) {
     normalized.gmnetCapabilityHintsByProvider = gmnetCapabilityHintsByProvider;
+  }
+
+  if (Array.isArray(rawOptions.forceExecutionProviders) && rawOptions.forceExecutionProviders.length > 0) {
+    normalized.forceExecutionProviders = rawOptions.forceExecutionProviders.filter(
+      (provider) => typeof provider === 'string' && provider.trim().length > 0,
+    );
   }
 
   return normalized;

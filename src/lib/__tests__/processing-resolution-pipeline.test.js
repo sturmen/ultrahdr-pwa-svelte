@@ -26,6 +26,19 @@ const {
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
     async resolveCapability(options = {}) {
+      const forcedProvider = Array.isArray(options?.forceExecutionProviders)
+        && options.forceExecutionProviders.length === 1
+        ? String(options.forceExecutionProviders[0]).trim().toLowerCase()
+        : null;
+      if (forcedProvider === 'wasm') {
+        return {
+          provider: 'wasm',
+          gainMapMaxLongEdge: 16384,
+          outputMaxLongEdge: 32768,
+          source: 'wasm-unlimited',
+          attempts: [],
+        };
+      }
       if (options?.capabilityHint) {
         return options.capabilityHint;
       }
@@ -254,5 +267,59 @@ describe('processing fixed-resolution generated pipeline', () => {
     expect(probeIndex).toBeGreaterThanOrEqual(0);
     expect(constrainIndex).toBeGreaterThanOrEqual(0);
     expect(probeIndex).toBeLessThan(constrainIndex);
+  });
+
+  it('does not apply GPU capability clamp when wasm backend is explicitly forced', async () => {
+    decodeDimensions.width = 6000;
+    decodeDimensions.height = 4000;
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      forceExecutionProviders: ['wasm'],
+      gmnetCapabilityHint: {
+        provider: 'webgpu',
+        gainMapMaxLongEdge: 1000,
+        outputMaxLongEdge: 2000,
+        source: 'cache',
+        attempts: [],
+      },
+    });
+
+    expect(gmnetCalls).toHaveLength(1);
+    expect(gmnetCalls[0]).toEqual({ width: 3000, height: 2000 });
+    expect(jpegEncodeCanvasSizes).toEqual(
+      expect.arrayContaining([
+        { width: 6000, height: 4000 },
+        { width: 3000, height: 2000 },
+      ]),
+    );
+  });
+
+  it('emits processingPath=generated for GMNet-generated pipeline events', async () => {
+    decodeDimensions.width = 4000;
+    decodeDimensions.height = 3000;
+    const onProgress = vi.fn();
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      onProgress,
+    });
+
+    const generatedEvents = onProgress.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event?.processingPath === 'generated');
+    expect(generatedEvents.length).toBeGreaterThan(0);
+    expect(
+      onProgress.mock.calls.some(([event]) => event?.processingPath === 'preserved'),
+    ).toBe(false);
   });
 });

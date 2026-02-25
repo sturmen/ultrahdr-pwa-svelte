@@ -136,6 +136,35 @@ describe('processing capability cache', () => {
     );
   });
 
+  it('does not fall back to another provider cache when explicit backend has no cached capability', async () => {
+    const {
+      processImage,
+      __getCapabilityCacheStorageKeyForTests,
+    } = await import('../processing.js');
+
+    const storageKey = __getCapabilityCacheStorageKeyForTests();
+    localStorage.setItem(storageKey, JSON.stringify({
+      byProvider: {
+        webgpu: {
+          provider: 'webgpu',
+          gainMapMaxLongEdge: 720,
+          outputMaxLongEdge: 1440,
+          source: 'cache',
+          attempts: [],
+        },
+      },
+    }));
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+    await processImage(file, {
+      forceExecutionProviders: ['wasm'],
+    });
+
+    const worker = CapabilityWorker.instances[0];
+    const processMessage = worker.posted.find((message) => message.type === 'process');
+    expect(processMessage?.options?.gmnetCapabilityHint).toBeUndefined();
+  });
+
   it('persists capability payloads emitted from worker progress events', async () => {
     const {
       processImage,

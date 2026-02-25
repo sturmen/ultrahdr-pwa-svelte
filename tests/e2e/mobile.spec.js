@@ -43,6 +43,7 @@ async function waitForProcessing(page, expectedResults = 1) {
     }
 
     if (snapshot.results >= expectedResults && !snapshot.loading) {
+      await dismissWasmRecommendationIfVisible(page);
       return;
     }
 
@@ -50,6 +51,16 @@ async function waitForProcessing(page, expectedResults = 1) {
   }
 
   throw new Error(`Processing timed out after ${PROCESSING_TIMEOUT}ms`);
+}
+
+async function dismissWasmRecommendationIfVisible(page) {
+  const modal = page.getByTestId('wasm-recommendation-modal');
+  if (await modal.count()) {
+    if (await modal.first().isVisible().catch(() => false)) {
+      await page.getByTestId('wasm-recommendation-dismiss').click();
+      await expect(page.getByTestId('wasm-recommendation-modal')).toHaveCount(0);
+    }
+  }
 }
 
 test.describe('Mobile smoke tests', () => {
@@ -130,6 +141,7 @@ test.describe('Mobile smoke tests', () => {
     await page.goto('/');
     await uploadSingleFile(page, SDR_IMAGE);
     await waitForProcessing(page, 1);
+    await dismissWasmRecommendationIfVisible(page);
 
     await page.getByTestId('mobile-action-bar').getByRole('button', { name: /export/i }).click();
     await expect(page.getByTestId('export-sheet')).toBeVisible();
@@ -150,6 +162,7 @@ test.describe('Mobile smoke tests', () => {
 
     await uploadSingleFile(page, SDR_IMAGE);
     await waitForProcessing(page, 1);
+    await dismissWasmRecommendationIfVisible(page);
 
     await page.getByTestId('tab-convert').click();
     await expect(page.getByTestId('capability-restriction-banner')).toBeVisible();

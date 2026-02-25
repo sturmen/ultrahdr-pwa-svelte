@@ -592,6 +592,18 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
     throwIfAborted(mergedOptions.abortSignal);
     const sourceInputFile = file;
     let sourceInputBytes = null;
+    let processingPath = 'unknown';
+
+    const setProcessingPath = (nextPath) => {
+        if (nextPath === 'generated' || nextPath === 'preserved') {
+            processingPath = nextPath;
+        }
+    };
+    const withProcessingPath = (payload = {}) => (
+        processingPath === 'generated' || processingPath === 'preserved'
+            ? { ...payload, processingPath }
+            : payload
+    );
 
     const telemetry = createPipelineTelemetry({
         fileName: file.name,
@@ -641,22 +653,27 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     async () => isUhdrImageWithDecoderFallback(fileBuffer)
                 );
                 if (isUhdr) {
+                    setProcessingPath('preserved');
                     preserveDecisionMade = true;
                     console.log('[Process] Gain map decision: preserving existing gain map from source input');
                     if (mergedOptions.rotation === 0) {
                         console.log('[Process] Input is already UltraHDR JPEG — preserving existing gain map');
-                        const blob = await telemetry.runStage('finalize-preserved', async () =>
-                            finalizeUltraHDR(fileBuffer, mergedOptions.stripExif)
+                        const blob = await telemetry.runStage(
+                            'finalize-preserved',
+                            async () => finalizeUltraHDR(fileBuffer, mergedOptions.stripExif),
+                            withProcessingPath(),
                         );
-                        telemetry.complete({ outputBytes: blob.size, mode: 'preserve' });
+                        telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve' }));
                         return blob;
                     }
 
                     console.log('[Process] UltraHDR JPEG with rotation — extracting and rotating gain map');
-                    const blob = await telemetry.runStage('rotate-preserved-ultrahdr', async () =>
-                        processUhdrWithRotation(fileBuffer, mergedOptions, telemetry, sourceExifBytes)
+                    const blob = await telemetry.runStage(
+                        'rotate-preserved-ultrahdr',
+                        async () => processUhdrWithRotation(fileBuffer, mergedOptions, telemetry, sourceExifBytes),
+                        withProcessingPath(),
                     );
-                    telemetry.complete({ outputBytes: blob.size, mode: 'preserve-with-rotation' });
+                    telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve-with-rotation' }));
                     return blob;
                 }
             } catch (e) {
@@ -677,6 +694,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         // If file is an object with raw data from HEIC preservation, handle it.
         if (!(file instanceof File) && !(file instanceof Blob) && file.sdr) {
+            setProcessingPath('preserved');
             console.log('[Process] Gain map decision: preserving existing gain map from source input');
             console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
             let imageData = file.sdr;
@@ -688,16 +706,22 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     ? buildGainMapMetadata(file.gainMapHeadroom)
                     : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST));
 
-            const { sdr } = await telemetry.runStage('compress-components', async () =>
-                compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes)
+            const { sdr } = await telemetry.runStage(
+                'compress-components',
+                async () => compressImages(imageData, gainMapImageData, mergedOptions, metadata, telemetry, sourceExifBytes),
+                withProcessingPath(),
             );
-            const blob = await telemetry.runStage('finalize-output', async () =>
-                finalizeUltraHDR(sdr, mergedOptions.stripExif)
+            const blob = await telemetry.runStage(
+                'finalize-output',
+                async () => finalizeUltraHDR(sdr, mergedOptions.stripExif),
+                withProcessingPath(),
             );
 
-            telemetry.complete({ outputBytes: blob.size, mode: 'pre-decoded-components' });
+            telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'pre-decoded-components' }));
             return blob;
         }
+
+        setProcessingPath('generated');
 
         // Load Data
         // Prefer Blob/File decode sources to avoid main-thread-only FileReader reliance in workers.
@@ -715,12 +739,12 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         const gmnetCapability = await telemetry.runStage('probe-gmnet-capability', async () => {
             const overrideCapability = resolveTestCapabilityOverride(globalThis);
             if (overrideCapability) {
-                telemetry.emitStageProgress('probe-gmnet-capability', 100, {
+                telemetry.emitStageProgress('probe-gmnet-capability', 100, withProcessingPath({
                     note: `Using GMNet capability override (${overrideCapability.provider}, gain-map max ${overrideCapability.gainMapMaxLongEdge}px).`,
                     gmnetCapability: overrideCapability,
                     gmnetCapabilitySource: overrideCapability.source,
                     gmnetExecutionProvider: overrideCapability.provider,
-                });
+                }));
                 return overrideCapability;
             }
 
@@ -730,18 +754,19 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             }
             const resolvedCapability = normalizeGmnetCapability(await generator.resolveCapability({
                 gmnetModelVariant: mergedOptions.gmnetModelVariant,
+                forceExecutionProviders: mergedOptions.forceExecutionProviders,
                 capabilityHint: mergedOptions.gmnetCapabilityHint,
             }));
             if (resolvedCapability) {
-                telemetry.emitStageProgress('probe-gmnet-capability', 100, {
+                telemetry.emitStageProgress('probe-gmnet-capability', 100, withProcessingPath({
                     note: `GMNet capability resolved (${resolvedCapability.provider}, gain-map max ${resolvedCapability.gainMapMaxLongEdge}px).`,
                     gmnetCapability: resolvedCapability,
                     gmnetCapabilitySource: resolvedCapability.source,
                     gmnetExecutionProvider: resolvedCapability.provider,
-                });
+                }));
             }
             return resolvedCapability;
-        });
+        }, withProcessingPath());
 
         const {
             capability: normalizedGmnetCapability,
@@ -773,14 +798,16 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     constrainedDimensions.width,
                     constrainedDimensions.height
                 ),
-                constrainPayload,
+                withProcessingPath(constrainPayload),
             );
         }
 
         const normalizedRotation = ((mergedOptions.rotation || 0) % 360 + 360) % 360;
         if (normalizedRotation !== 0) {
-            workingImageData = await telemetry.runStage('apply-rotation', async () =>
-                rotateImageData(workingImageData, normalizedRotation)
+            workingImageData = await telemetry.runStage(
+                'apply-rotation',
+                async () => rotateImageData(workingImageData, normalizedRotation),
+                withProcessingPath(),
             );
         }
 
@@ -788,12 +815,14 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         const gmnetHeight = Math.max(1, Math.floor(workingImageData.height / 2));
         let gainMapSourceImageData = workingImageData;
         if (gmnetWidth !== workingImageData.width || gmnetHeight !== workingImageData.height) {
-            gainMapSourceImageData = await telemetry.runStage('prepare-gmnet-input', async () =>
-                resizeImageData(
+            gainMapSourceImageData = await telemetry.runStage(
+                'prepare-gmnet-input',
+                async () => resizeImageData(
                     workingImageData,
                     gmnetWidth,
                     gmnetHeight
-                )
+                ),
+                withProcessingPath(),
             );
         }
 
@@ -801,17 +830,19 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
 
         // Generate gain map data
         console.log('[Process] Gain map decision: generating new gain map with GMNet');
-        const { gainMapImageData, metadata: generatedGainMapMetadata } = await telemetry.runStage('generate-gain-map', async () =>
-            generateGainMapData(gainMapSourceImageData, {
+        const { gainMapImageData, metadata: generatedGainMapMetadata } = await telemetry.runStage(
+            'generate-gain-map',
+            async () => generateGainMapData(gainMapSourceImageData, {
                 ...mergedOptions,
                 gmnetCapabilityHint: normalizedGmnetCapability || mergedOptions.gmnetCapabilityHint,
                 onStageProgress: (stageProgress, note, metadata = null) => {
-                    telemetry.emitStageProgress('generate-gain-map', stageProgress, {
+                    telemetry.emitStageProgress('generate-gain-map', stageProgress, withProcessingPath({
                         note,
                         ...(metadata && typeof metadata === 'object' ? metadata : {}),
-                    });
+                    }));
                 }
-            })
+            }),
+            withProcessingPath(),
         );
         console.log('[Process] GainMap generated by GMNet');
         throwIfAborted(mergedOptions.abortSignal);
@@ -825,17 +856,20 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                 generatedGainMapMetadata,
                 telemetry,
                 sourceExifBytes
-            )
+            ),
+            withProcessingPath(),
         );
         console.log('[Process] Compression complete');
 
         // Finalize UltraHDR
-        const blob = await telemetry.runStage('finalize-output', async () =>
-            finalizeUltraHDR(sdr, mergedOptions.stripExif)
+        const blob = await telemetry.runStage(
+            'finalize-output',
+            async () => finalizeUltraHDR(sdr, mergedOptions.stripExif),
+            withProcessingPath(),
         );
         console.log('[Process] Processing complete, returning Blob');
 
-        telemetry.complete({ outputBytes: blob.size, mode: 'generated' });
+        telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'generated' }));
         return blob;
     } catch (error) {
         telemetry.fail(error);

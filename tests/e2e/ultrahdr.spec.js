@@ -88,6 +88,7 @@ async function waitForProcessing(page, expectedResults = 1) {
         }
 
         if (snapshot.resultCount >= expectedResults && !snapshot.loading) {
+            await dismissWasmRecommendationIfVisible(page);
             return;
         }
 
@@ -106,18 +107,31 @@ async function waitForProcessing(page, expectedResults = 1) {
  * processAll() clears results first, so we wait for results to disappear then reappear.
  */
 async function waitForReprocessing(page) {
+    await dismissWasmRecommendationIfVisible(page);
     const prompt = page.getByTestId('stale-reprocess-prompt');
     if (await prompt.count()) {
         await prompt.getByRole('button', { name: /^Reprocess$/i }).click();
+        await dismissWasmRecommendationIfVisible(page);
         await page.getByTestId('reprocess-sheet').getByRole('button', { name: /Reprocess All Stale/i }).click();
     } else {
         const fallback = page.getByRole('button', { name: /^Reprocess$/i });
         if (await fallback.count()) {
             await fallback.first().click();
+            await dismissWasmRecommendationIfVisible(page);
             await page.getByTestId('reprocess-sheet').getByRole('button', { name: /Reprocess All Stale/i }).click();
         }
     }
     await waitForProcessing(page, 1);
+}
+
+async function dismissWasmRecommendationIfVisible(page) {
+    const modal = page.getByTestId('wasm-recommendation-modal');
+    if (await modal.count()) {
+        if (await modal.first().isVisible().catch(() => false)) {
+            await page.getByTestId('wasm-recommendation-dismiss').click();
+            await expect(page.getByTestId('wasm-recommendation-modal')).toHaveCount(0);
+        }
+    }
 }
 
 async function setStripExifToggle(page, enabled) {
@@ -136,6 +150,7 @@ async function setStripExifToggle(page, enabled) {
  * Helper: download the first result and return its data as a Buffer.
  */
 async function downloadFirstResult(page) {
+    await dismissWasmRecommendationIfVisible(page);
     // Ensure at least one result is selected before export.
     const selectAll = page.getByRole('button', { name: /Select All/i });
     if (await selectAll.count()) {
@@ -560,6 +575,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         testInfo.setTimeout(Math.max(testInfo.timeout, 300_000));
         const failureReason = getRuntimeGateFailure(testInfo.project.name);
         test.skip(Boolean(failureReason), failureReason || '');
+        await page.addInitScript(() => {
+            try {
+                window.localStorage.removeItem('ultrahdr:backend-preference:v1');
+            } catch {
+                // Ignore storage availability issues in automation.
+            }
+            window.__ULTRAHDR_BACKEND_PREFERENCE = 'auto';
+        });
         await installStartupProbeBypass(page, { projectName: testInfo.project.name });
         await page.goto('/');
         try {
@@ -608,6 +631,28 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(jpegData[1]).toBe(0xD8);
 
             // Should contain gain map XMP metadata (UltraHDR marker)
+            expect(hasGainMapXMP(jpegData)).toBe(true);
+        });
+
+        test('should enforce explicit WebGL backend behavior across browsers', async ({ page }) => {
+            test.setTimeout(180_000);
+            await page.addInitScript(() => {
+                try {
+                    window.localStorage.setItem('ultrahdr:backend-preference:v1', 'webgl');
+                } catch {
+                    window.__ULTRAHDR_BACKEND_PREFERENCE = 'webgl';
+                }
+            });
+            await page.goto('/');
+
+            await uploadFiles(page, [SDR_IMAGE]);
+            await expect(page.getByTestId('backend-preference-select')).toHaveValue('webgl');
+
+            await waitForProcessing(page);
+            await expect(page.locator('.result-card')).toHaveCount(1);
+            const jpegData = await downloadFirstResult(page);
+            expect(jpegData[0]).toBe(0xFF);
+            expect(jpegData[1]).toBe(0xD8);
             expect(hasGainMapXMP(jpegData)).toBe(true);
         });
 

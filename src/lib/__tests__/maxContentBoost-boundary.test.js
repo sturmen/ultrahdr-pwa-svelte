@@ -10,6 +10,7 @@ const { runMock } = vi.hoisted(() => ({
 vi.mock('../gmnet-session.js', () => {
   const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
   const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
+  const GMNET_WASM_EXECUTION_PROVIDER = 'wasm';
 
   class GMNetInferenceSession {
     constructor() {
@@ -37,6 +38,7 @@ vi.mock('../gmnet-session.js', () => {
   return {
     GMNetInferenceSession,
     GMNET_FALLBACK_EXECUTION_PROVIDER,
+    GMNET_WASM_EXECUTION_PROVIDER,
     REQUIRED_GMNET_EXECUTION_PROVIDER,
   };
 });

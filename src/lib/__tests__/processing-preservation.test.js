@@ -521,4 +521,27 @@ describe('processImage UltraHDR preservation path', () => {
         );
     });
 
+    it('emits processingPath=preserved for preservation pipeline events', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+        const onProgress = vi.fn();
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true,
+            onProgress,
+        });
+
+        const preservedEvents = onProgress.mock.calls
+            .map(([event]) => event)
+            .filter((event) => event?.processingPath === 'preserved');
+        expect(preservedEvents.length).toBeGreaterThan(0);
+        expect(
+            onProgress.mock.calls.some(([event]) => event?.processingPath === 'generated')
+        ).toBe(false);
+    });
+
 });

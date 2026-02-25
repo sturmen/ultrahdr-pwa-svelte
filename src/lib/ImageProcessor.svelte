@@ -24,6 +24,8 @@
   export let files = [];
   export let launchSource = "regular";
   export let launchIntent = { action: null, tab: null };
+  export let runtimeExecutionProvider = null;
+  export let runtimeGmnetCapability = null;
 
   let maxContentBoostStops = 2.3;
   let rotation = 0;
@@ -31,6 +33,7 @@
   let discardGainMap = false;
   let stripExif = false;
   let keepScreenAwake = true;
+  let backendPreference = "auto";
 
   let processing = false;
   let results = [];
@@ -84,10 +87,18 @@
   let aiModelStatusProgress = 0;
   let pipelineGmnetCapability = null;
   let capabilityRestrictionAppliedToCurrentFile = false;
+  let currentProcessingPath = "unknown";
+  let lastCompletedProcessingPath = "unknown";
+  let showWasmRecommendationModal = false;
+  let wasmRecommendationShownThisSession = false;
+  let backendRestartPending = false;
+  let backendRestartAwaitingPathDecision = false;
+  let processingPathByQueueId = new Map();
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
   const DEFAULT_MAX_OUTPUT_LONG_EDGE = 8192;
+  const BACKEND_PREFERENCE_STORAGE_KEY = "ultrahdr:backend-preference:v1";
 
   const PROGRESS_STAGE_ORDER = [
     "wasm-load",
@@ -196,9 +207,35 @@
   )
     ? Math.floor(Number(pipelineGmnetCapability.outputMaxLongEdge))
     : null;
-  $: capabilityIsRestrictive = Number.isFinite(capabilityOutputMaxLongEdge)
-    && capabilityOutputMaxLongEdge > 0
-    && capabilityOutputMaxLongEdge < DEFAULT_MAX_OUTPUT_LONG_EDGE;
+  $: capabilityUiPath =
+    processing && currentProcessingPath !== "unknown"
+      ? currentProcessingPath
+      : !processing
+        ? lastCompletedProcessingPath
+        : "unknown";
+  $: capabilityIsRestrictive =
+    backendPreference !== "wasm" &&
+    Number.isFinite(capabilityOutputMaxLongEdge) &&
+    capabilityOutputMaxLongEdge > 0 &&
+    capabilityOutputMaxLongEdge < DEFAULT_MAX_OUTPUT_LONG_EDGE;
+  $: showCapabilityRestrictionUi =
+    capabilityIsRestrictive && capabilityUiPath === "generated";
+  $: {
+    const normalizedRuntimeProvider = normalizeExecutionProvider(
+      runtimeExecutionProvider,
+    );
+    if (!pipelineExecutionProvider && normalizedRuntimeProvider) {
+      pipelineExecutionProvider = normalizedRuntimeProvider;
+    }
+  }
+  $: {
+    const normalizedRuntimeCapability = normalizeGmnetCapability(
+      runtimeGmnetCapability,
+    );
+    if (!pipelineGmnetCapability && normalizedRuntimeCapability) {
+      pipelineGmnetCapability = normalizedRuntimeCapability;
+    }
+  }
   $: if (showStalePrompt && staleCount === 0) {
     showStalePrompt = false;
   }
@@ -269,26 +306,114 @@
     return normalized || null;
   }
 
+  function normalizeProcessingPath(value) {
+    if (typeof value !== "string") {
+      return "unknown";
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "generated" || normalized === "preserved") {
+      return normalized;
+    }
+    return "unknown";
+  }
+
+  function normalizeBackendPreference(value) {
+    if (typeof value !== "string") {
+      return "auto";
+    }
+    const normalized = value.trim().toLowerCase();
+    if (
+      normalized === "auto" ||
+      normalized === "webgpu" ||
+      normalized === "webgl" ||
+      normalized === "wasm"
+    ) {
+      return normalized;
+    }
+    return "auto";
+  }
+
+  function resolveForcedProviderFromPreference(preference = backendPreference) {
+    const normalized = normalizeBackendPreference(preference);
+    if (normalized === "auto") {
+      return null;
+    }
+    return normalized;
+  }
+
+  function loadBackendPreference() {
+    const memoryPreference = normalizeBackendPreference(
+      globalThis?.__ULTRAHDR_BACKEND_PREFERENCE || "auto",
+    );
+    let storageValue = null;
+    if (
+      typeof window === "undefined" ||
+      !window.localStorage ||
+      typeof window.localStorage.getItem !== "function"
+    ) {
+      return memoryPreference;
+    }
+    try {
+      storageValue = window.localStorage.getItem(BACKEND_PREFERENCE_STORAGE_KEY);
+    } catch (_error) {
+      storageValue = null;
+    }
+    if (storageValue === null || storageValue === undefined) {
+      return memoryPreference;
+    }
+    return normalizeBackendPreference(storageValue);
+  }
+
+  function persistBackendPreference(value) {
+    const normalizedPreference = normalizeBackendPreference(value);
+    globalThis.__ULTRAHDR_BACKEND_PREFERENCE = normalizedPreference;
+    if (
+      typeof window === "undefined" ||
+      !window.localStorage ||
+      typeof window.localStorage.setItem !== "function"
+    ) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        BACKEND_PREFERENCE_STORAGE_KEY,
+        normalizedPreference,
+      );
+    } catch (_error) {
+      // Best-effort persistence only.
+    }
+  }
+
   function normalizeGmnetCapability(value) {
     if (!value || typeof value !== "object") {
       return null;
     }
-    const provider = normalizeExecutionProvider(value.provider || value.gmnetExecutionProvider);
+    const provider = normalizeExecutionProvider(
+      value.provider || value.gmnetExecutionProvider,
+    );
     const gainMapMaxLongEdge = Number(value.gainMapMaxLongEdge);
     const outputMaxLongEdge = Number(value.outputMaxLongEdge);
-    if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
+    if (
+      !provider ||
+      !Number.isFinite(gainMapMaxLongEdge) ||
+      gainMapMaxLongEdge < 1
+    ) {
       return null;
     }
-    const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
-      ? Math.floor(outputMaxLongEdge)
-      : Math.floor(gainMapMaxLongEdge * 2);
+    const normalizedOutputMaxLongEdge =
+      Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
+        ? Math.floor(outputMaxLongEdge)
+        : Math.floor(gainMapMaxLongEdge * 2);
     return {
       provider,
       gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
       outputMaxLongEdge: normalizedOutputMaxLongEdge,
-      source: typeof value.source === "string" && value.source.length > 0
-        ? value.source
-        : (typeof value.gmnetCapabilitySource === "string" ? value.gmnetCapabilitySource : "probe"),
+      source:
+        typeof value.source === "string" && value.source.length > 0
+          ? value.source
+          : typeof value.gmnetCapabilitySource === "string"
+            ? value.gmnetCapabilitySource
+            : "probe",
     };
   }
 
@@ -398,6 +523,8 @@
     pipelineFileName = "";
     activeProgressFileIndex = null;
     capabilityRestrictionAppliedToCurrentFile = false;
+    currentProcessingPath = "unknown";
+    lastCompletedProcessingPath = "unknown";
     resetAiModelStatus();
   }
 
@@ -411,12 +538,18 @@
     return /downloading ai/i.test(String(note || ""));
   }
 
-  function updateProgressUi(event) {
+  function updateProgressUi(event, queueId = null) {
     latestPipelineEvent = event;
     const phase = event?.phase;
     const note = String(event?.note || "");
     const fileIndex = Number(event?.fileIndex);
     const totalFiles = Number(event?.totalFiles);
+    const stageImpliesGenerated =
+      event?.stage === "probe-gmnet-capability" ||
+      event?.stage === "constrain-sdr-image" ||
+      event?.stage === "prepare-gmnet-input" ||
+      event?.stage === "generate-gain-map";
+    const processingPath = normalizeProcessingPath(event?.processingPath);
     const executionProvider = resolveExecutionProviderFromEvent(event);
     if (executionProvider) {
       pipelineExecutionProvider = executionProvider;
@@ -428,12 +561,60 @@
 
     if (phase === "pipeline-start") {
       capabilityRestrictionAppliedToCurrentFile = false;
+      currentProcessingPath = "unknown";
+    }
+    if (processingPath !== "unknown") {
+      currentProcessingPath = processingPath;
+      if (queueId !== null && queueId !== undefined) {
+        processingPathByQueueId = new Map(processingPathByQueueId).set(
+          queueId,
+          processingPath,
+        );
+      }
+      if (backendRestartAwaitingPathDecision) {
+        backendRestartAwaitingPathDecision = false;
+        if (processingPath === "generated") {
+          backendRestartPending = true;
+          abortActiveProcessing();
+        }
+      }
+    } else if (stageImpliesGenerated && currentProcessingPath === "unknown") {
+      currentProcessingPath = "generated";
+      if (queueId !== null && queueId !== undefined) {
+        processingPathByQueueId = new Map(processingPathByQueueId).set(
+          queueId,
+          "generated",
+        );
+      }
+      if (backendRestartAwaitingPathDecision) {
+        backendRestartAwaitingPathDecision = false;
+        backendRestartPending = true;
+        abortActiveProcessing();
+      }
     }
     if (
-      event?.stage === "constrain-sdr-image"
-      && event?.constrainedByCapability === true
+      event?.stage === "constrain-sdr-image" &&
+      currentProcessingPath === "generated" &&
+      event?.constrainedByCapability === true
     ) {
       capabilityRestrictionAppliedToCurrentFile = true;
+      if (
+        backendPreference !== "wasm" &&
+        !wasmRecommendationShownThisSession
+      ) {
+        showWasmRecommendationModal = true;
+        wasmRecommendationShownThisSession = true;
+      }
+    }
+    if (currentProcessingPath === "preserved") {
+      capabilityRestrictionAppliedToCurrentFile = false;
+    }
+
+    if (phase === "pipeline-complete" || phase === "pipeline-error") {
+      if (currentProcessingPath !== "unknown") {
+        lastCompletedProcessingPath = currentProcessingPath;
+      }
+      backendRestartAwaitingPathDecision = false;
     }
 
     if (Number.isFinite(fileIndex) && fileIndex !== activeProgressFileIndex) {
@@ -471,10 +652,7 @@
 
     if (phase === "stage-progress") {
       pipelineStageProgress = clampPercent(event.stageProgress);
-    } else if (
-      phase === "stage-complete" ||
-      phase === "pipeline-complete"
-    ) {
+    } else if (phase === "stage-complete" || phase === "pipeline-complete") {
       pipelineStageProgress = 100;
     } else if (phase === "stage-start") {
       pipelineStageProgress = 0;
@@ -598,8 +776,8 @@
     return 2 ** clampedStops;
   }
 
-  function buildProcessingOptions(abortSignal, fileIndex, totalFiles) {
-    return {
+  function buildProcessingOptions(abortSignal, fileIndex, totalFiles, queueId) {
+    const options = {
       maxContentBoost: convertStopsToMaxContentBoost(maxContentBoostStops),
       rotation,
       quality,
@@ -609,8 +787,13 @@
       abortSignal,
       fileIndex,
       totalFiles,
-      onProgress: (event) => updateProgressUi(event),
+      onProgress: (event) => updateProgressUi(event, queueId),
     };
+    const forcedProvider = resolveForcedProviderFromPreference();
+    if (forcedProvider) {
+      options.forceExecutionProviders = [forcedProvider];
+    }
+    return options;
   }
 
   function createQueueItems(fileList) {
@@ -621,6 +804,7 @@
       status: QUEUE_ITEM_STATES.QUEUED,
       settingsVersion: settingsVersion,
       error: null,
+      processingPath: "unknown",
     }));
   }
 
@@ -650,6 +834,7 @@
           status: item.status,
           settingsVersion: item.settingsVersion,
           error: item.error || null,
+          processingPath: normalizeProcessingPath(item.processingPath),
         })),
         updatedAt: Date.now(),
       });
@@ -691,6 +876,7 @@
     blob,
     appliedSettingsVersion,
     appliedRotation,
+    processingPath = "unknown",
   ) {
     const resultRecord = {
       originalName: queueItem.name,
@@ -701,6 +887,7 @@
       queueId: queueItem.id,
       settingsVersion: appliedSettingsVersion,
       rotation: appliedRotation,
+      processingPath,
     };
 
     const existingIndex = results.findIndex(
@@ -830,6 +1017,10 @@
         resetProgressUi();
         error = null;
         processing = true;
+        processingPathByQueueId = new Map(processingPathByQueueId).set(
+          nextItem.id,
+          "unknown",
+        );
 
         const controller = new AbortController();
         activeAbortController = controller;
@@ -845,18 +1036,33 @@
         try {
           const blob = await processImage(
             nextItem.file,
-            buildProcessingOptions(controller.signal, queueIndex, queue.length),
+            buildProcessingOptions(
+              controller.signal,
+              queueIndex,
+              queue.length,
+              nextItem.id,
+            ),
           );
 
           if (controller.signal.aborted) {
             return;
           }
 
-          upsertResult(nextItem, blob, activeSettingsVersion, activeRotation);
+          const itemProcessingPath = normalizeProcessingPath(
+            processingPathByQueueId.get(nextItem.id) || currentProcessingPath,
+          );
+          upsertResult(
+            nextItem,
+            blob,
+            activeSettingsVersion,
+            activeRotation,
+            itemProcessingPath,
+          );
           updateQueueItem(nextItem.id, {
             status: QUEUE_ITEM_STATES.COMPLETED,
             settingsVersion: activeSettingsVersion,
             error: null,
+            processingPath: itemProcessingPath,
           });
         } catch (e) {
           if (e?.name === "AbortError") {
@@ -870,6 +1076,14 @@
               setWorkflow(WORKFLOW_EVENTS.CANCEL_CURRENT);
               await releaseWakeLock();
               break;
+            }
+            if (backendRestartPending) {
+              backendRestartPending = false;
+              updateQueueItem(nextItem.id, {
+                status: QUEUE_ITEM_STATES.QUEUED,
+                error: null,
+              });
+              continue;
             }
             return;
           }
@@ -930,9 +1144,84 @@
     }
   }
 
+  function markGeneratedOutputsStale() {
+    let changed = false;
+    queue = queue.map((item) => {
+      if (
+        item.status === QUEUE_ITEM_STATES.COMPLETED &&
+        normalizeProcessingPath(item.processingPath) === "generated"
+      ) {
+        changed = true;
+        return { ...item, status: QUEUE_ITEM_STATES.STALE };
+      }
+      return item;
+    });
+    if (changed) {
+      showStalePrompt = true;
+      schedulePersistQueueState();
+    }
+    return changed;
+  }
+
   function handleSettingChange() {
     settingsVersion += 1;
     markCompletedOutputsStale();
+  }
+
+  function applyBackendPreferenceChange(nextPreference) {
+    const normalizedPreference = normalizeBackendPreference(nextPreference);
+    if (normalizedPreference === backendPreference) {
+      return;
+    }
+    backendPreference = normalizedPreference;
+    persistBackendPreference(normalizedPreference);
+    settingsVersion += 1;
+    markGeneratedOutputsStale();
+
+    if (!processing || currentQueueId === null) {
+      backendRestartPending = false;
+      backendRestartAwaitingPathDecision = false;
+      return;
+    }
+
+    if (currentProcessingPath === "generated") {
+      backendRestartPending = true;
+      backendRestartAwaitingPathDecision = false;
+      abortActiveProcessing();
+      return;
+    }
+    if (currentProcessingPath === "unknown") {
+      backendRestartAwaitingPathDecision = true;
+      return;
+    }
+    backendRestartPending = false;
+    backendRestartAwaitingPathDecision = false;
+  }
+
+  function handleBackendPreferenceChange(event) {
+    applyBackendPreferenceChange(event?.target?.value);
+  }
+
+  function acceptWasmRecommendation() {
+    showWasmRecommendationModal = false;
+    applyBackendPreferenceChange("wasm");
+    const generatedStaleIds = new Set(
+      queue
+        .filter(
+          (item) =>
+            item.status === QUEUE_ITEM_STATES.STALE &&
+            normalizeProcessingPath(item.processingPath) === "generated",
+        )
+        .map((item) => item.id),
+    );
+    if (generatedStaleIds.size > 0 && requeueByIds(generatedStaleIds)) {
+      showStalePrompt = false;
+      startQueue();
+    }
+  }
+
+  function dismissWasmRecommendation() {
+    showWasmRecommendationModal = false;
   }
 
   function rotate(degrees) {
@@ -988,6 +1277,7 @@
           ...item,
           status: QUEUE_ITEM_STATES.QUEUED,
           error: null,
+          processingPath: "unknown",
         };
       }
       return item;
@@ -1178,6 +1468,7 @@
     results = [];
     selectedIndices = new Set();
     latestPipelineEvent = null;
+    processingPathByQueueId = new Map();
     resetProgressUi();
   }
 
@@ -1256,6 +1547,7 @@
   onMount(() => {
     let mediaQuery = null;
     let handleMediaChange = null;
+    backendPreference = loadBackendPreference();
 
     if (
       typeof window !== "undefined" &&
@@ -1411,17 +1703,17 @@
             </div>
           </div>
 
-          {#if capabilityIsRestrictive}
+          {#if showCapabilityRestrictionUi}
             <section
               class="capability-restriction card"
               data-testid="capability-restriction-banner"
               role="status"
             >
-              <p>
-                Browser capability limits output quality in this session.
-              </p>
+              <p>Browser capability limits output quality in this session.</p>
               <p class="help-text">
-                Runtime: {formatExecutionProviderLabel(pipelineGmnetCapability?.provider)}
+                Runtime: {formatExecutionProviderLabel(
+                  pipelineGmnetCapability?.provider,
+                )}
                 • Gain map max: {formatLongEdge(
                   pipelineGmnetCapability?.gainMapMaxLongEdge,
                 )}
@@ -1540,7 +1832,10 @@
                 </div>
 
                 {#if aiModelStatusVisible}
-                  <div class="pipeline-ai-status" data-testid="pipeline-ai-status">
+                  <div
+                    class="pipeline-ai-status"
+                    data-testid="pipeline-ai-status"
+                  >
                     <div class="pipeline-ai-header-row">
                       <p class="help-text pipeline-ai-message">
                         {aiModelStatusMessage}
@@ -1579,7 +1874,10 @@
                 {/if}
 
                 {#if pipelineExecutionProvider}
-                  <p class="help-text" data-testid="pipeline-execution-provider">
+                  <p
+                    class="help-text"
+                    data-testid="pipeline-execution-provider"
+                  >
                     GMNet runtime: {formatExecutionProviderLabel(
                       pipelineExecutionProvider,
                     )}
@@ -1714,6 +2012,32 @@
                 >
               </div>
             {/if}
+
+            <div class="control-group horizontal">
+              <label for="backend-preference-select">Backend</label>
+              <div class="select-wrapper">
+                <select
+                  id="backend-preference-select"
+                  value={backendPreference}
+                  on:change={handleBackendPreferenceChange}
+                  data-testid="backend-preference-select"
+                >
+                  <option value="auto">Auto (Recommended)</option>
+                  <option value="webgpu">WebGPU</option>
+                  <option value="webgl">WebGL</option>
+                  <option value="wasm">WASM</option>
+                </select>
+              </div>
+              {#if backendPreference === "wasm"}
+                <p class="help-text">
+                  Maximum resolution, slower processing speed.
+                </p>
+              {:else if backendPreference !== "auto"}
+                <p class="help-text">
+                  Manual backend mode is strict and fails loudly if unsupported.
+                </p>
+              {/if}
+            </div>
           </div>
         </div>
       {/if}
@@ -1989,6 +2313,30 @@
             <span class="switch-label">Keep screen awake while processing</span>
           </div>
         {/if}
+
+        <div class="control-group horizontal">
+          <label for="backend-preference-select-mobile">Backend</label>
+          <div class="select-wrapper">
+            <select
+              id="backend-preference-select-mobile"
+              value={backendPreference}
+              on:change={handleBackendPreferenceChange}
+              data-testid="backend-preference-select-mobile"
+            >
+              <option value="auto">Auto (Recommended)</option>
+              <option value="webgpu">WebGPU</option>
+              <option value="webgl">WebGL</option>
+              <option value="wasm">WASM</option>
+            </select>
+          </div>
+          {#if backendPreference === "wasm"}
+            <p class="help-text">Maximum resolution, slower processing speed.</p>
+          {:else if backendPreference !== "auto"}
+            <p class="help-text">
+              Manual backend mode is strict and fails loudly if unsupported.
+            </p>
+          {/if}
+        </div>
       </div>
     </div>
   {/if}
@@ -2008,17 +2356,17 @@
         {/if}
       </p>
 
-      {#if capabilityIsRestrictive}
+      {#if showCapabilityRestrictionUi}
         <section
           class="capability-restriction card"
           data-testid="export-capability-restriction"
           role="status"
         >
-          <p>
-            Export quality is limited by browser runtime capability.
-          </p>
+          <p>Export quality is limited by browser runtime capability.</p>
           <p class="help-text">
-            Runtime: {formatExecutionProviderLabel(pipelineGmnetCapability?.provider)}
+            Runtime: {formatExecutionProviderLabel(
+              pipelineGmnetCapability?.provider,
+            )}
             • Gain map max: {formatLongEdge(
               pipelineGmnetCapability?.gainMapMaxLongEdge,
             )}
@@ -2096,6 +2444,46 @@
         <button class="text-btn" on:click={keepCurrentResults}
           >Keep Current Results</button
         >
+      </div>
+    </div>
+  {/if}
+
+  {#if showWasmRecommendationModal}
+    <div
+      class="sheet-backdrop"
+      role="presentation"
+      data-testid="wasm-recommendation-backdrop"
+    ></div>
+    <div class="sheet-card wasm-recommendation" data-testid="wasm-recommendation-modal">
+      <div class="sheet-header">
+        <h3>High Resolution Recommendation</h3>
+      </div>
+      <p class="help-text">
+        This image path is constrained by {formatExecutionProviderLabel(
+          pipelineGmnetCapability?.provider,
+        ) || "GPU"} capability.
+      </p>
+      <p class="help-text">
+        Switch to WASM for higher resolution output. WASM is slower than GPU
+        runtimes.
+      </p>
+      <div class="sheet-actions">
+        <button
+          class="primary"
+          type="button"
+          on:click={acceptWasmRecommendation}
+          data-testid="wasm-recommendation-accept"
+        >
+          Switch to WASM
+        </button>
+        <button
+          class="secondary"
+          type="button"
+          on:click={dismissWasmRecommendation}
+          data-testid="wasm-recommendation-dismiss"
+        >
+          Keep current backend
+        </button>
       </div>
     </div>
   {/if}

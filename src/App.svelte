@@ -28,6 +28,7 @@
   let runtimeInitFailure = null;
   let runtimeInitRunId = 0;
   let runtimeInitExecutionProvider = null;
+  let runtimeInitGmnetCapability = null;
   let appDisposed = false;
 
   function createRuntimeInitSteps() {
@@ -226,6 +227,7 @@
     runtimeInitState = "running";
     runtimeInitFailure = null;
     runtimeInitExecutionProvider = null;
+    runtimeInitGmnetCapability = null;
     runtimeInitSteps = createRuntimeInitSteps();
 
     try {
@@ -248,6 +250,11 @@
       runtimeInitExecutionProvider = normalizeExecutionProvider(
         runtimeResult?.resolvedExecutionProvider,
       );
+      runtimeInitGmnetCapability =
+        runtimeResult?.gmnetCapability &&
+        typeof runtimeResult.gmnetCapability === "object"
+          ? { ...runtimeResult.gmnetCapability }
+          : null;
       runtimeInitState = "ready";
       return true;
     } catch (error) {
@@ -462,6 +469,8 @@
           {files}
           {launchSource}
           {launchIntent}
+          runtimeExecutionProvider={runtimeInitExecutionProvider}
+          runtimeGmnetCapability={runtimeInitGmnetCapability}
           on:reset={handleReset}
           on:processingbusychange={handleProcessingBusyChange}
         />
