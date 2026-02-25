@@ -354,7 +354,9 @@
       return memoryPreference;
     }
     try {
-      storageValue = window.localStorage.getItem(BACKEND_PREFERENCE_STORAGE_KEY);
+      storageValue = window.localStorage.getItem(
+        BACKEND_PREFERENCE_STORAGE_KEY,
+      );
     } catch (_error) {
       storageValue = null;
     }
@@ -598,10 +600,7 @@
       event?.constrainedByCapability === true
     ) {
       capabilityRestrictionAppliedToCurrentFile = true;
-      if (
-        backendPreference !== "wasm" &&
-        !wasmRecommendationShownThisSession
-      ) {
+      if (backendPreference !== "wasm" && !wasmRecommendationShownThisSession) {
         showWasmRecommendationModal = true;
         wasmRecommendationShownThisSession = true;
       }
@@ -1696,6 +1695,7 @@
                 bind:value={quality}
                 on:change={handleSettingChange}
               >
+                <option value={1.0}>Lossless</option>
                 <option value={0.95}>High</option>
                 <option value={0.75}>Medium</option>
                 <option value={0.5}>Low</option>
@@ -2330,7 +2330,9 @@
             </select>
           </div>
           {#if backendPreference === "wasm"}
-            <p class="help-text">Maximum resolution, slower processing speed.</p>
+            <p class="help-text">
+              Maximum resolution, slower processing speed.
+            </p>
           {:else if backendPreference !== "auto"}
             <p class="help-text">
               Manual backend mode is strict and fails loudly if unsupported.
@@ -2454,7 +2456,10 @@
       role="presentation"
       data-testid="wasm-recommendation-backdrop"
     ></div>
-    <div class="sheet-card wasm-recommendation" data-testid="wasm-recommendation-modal">
+    <div
+      class="sheet-card wasm-recommendation"
+      data-testid="wasm-recommendation-modal"
+    >
       <div class="sheet-header">
         <h3>High Resolution Recommendation</h3>
       </div>

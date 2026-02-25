@@ -37,11 +37,12 @@ describe('ImageProcessor - Settings ranges', () => {
     expect(min).toBeLessThan(max);
   });
 
-  it('should have quality options of 0.95, 0.75, 0.5', () => {
-    const options = [0.95, 0.75, 0.5];
-    expect(options).toHaveLength(3);
+  it('should have quality options of 1.0, 0.95, 0.75, 0.5', () => {
+    const options = [1.0, 0.95, 0.75, 0.5];
+    expect(options).toHaveLength(4);
     expect(options[0]).toBeGreaterThan(options[1]);
     expect(options[1]).toBeGreaterThan(options[2]);
+    expect(options[2]).toBeGreaterThan(options[3]);
   });
 });
 
