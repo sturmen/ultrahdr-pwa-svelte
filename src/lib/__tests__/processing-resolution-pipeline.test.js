@@ -13,7 +13,7 @@ const {
   jpegEncodeCanvasSizes: [],
   decodeDimensions: { width: 12000, height: 9000 },
   encoderSpies: {
-    init: vi.fn(async () => {}),
+    init: vi.fn(async () => { }),
     setCompressedBaseImage: vi.fn(),
     setCompressedGainMapImage: vi.fn(),
     setExifData: vi.fn(),
@@ -100,6 +100,13 @@ vi.mock('../ultrahdr-wasm.js', () => ({
   }),
 }));
 
+vi.mock('../jpegli-decoder.js', () => ({
+  encodeJpegli: vi.fn(async (imageData, quality) => {
+    jpegEncodeCanvasSizes.push({ width: imageData.width, height: imageData.height });
+    return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]); // Fake JPEG bytes
+  })
+}));
+
 class MockOffscreenCanvas {
   constructor(width, height) {
     this.width = width;
@@ -160,7 +167,7 @@ describe('processing fixed-resolution generated pipeline', () => {
 
   it('clamps, rotates up front, and feeds half-resolution image to GMNet', async () => {
     const { processImage } = await import('../processing-core.js');
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
     const stages = [];
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
 

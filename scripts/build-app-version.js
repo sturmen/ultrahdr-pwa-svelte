@@ -67,8 +67,18 @@ function appendMissingInput(hash, spec) {
 }
 
 function appendFileToHash(hash, absolutePath, relativePath) {
-  hash.update(`FILE:${relativePath}\n`);
-  hash.update(fs.readFileSync(absolutePath));
+  try {
+    const content = fs.readFileSync(absolutePath);
+    hash.update(`FILE:${relativePath}\n`);
+    hash.update(content);
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      console.warn(`Warning: Cannot read ${relativePath} due to permissions (${err.code}). Skipping contents in hash.`);
+      hash.update(`ERROR_FILE:${relativePath}\n`);
+    } else {
+      throw err;
+    }
+  }
 }
 
 export function computeAppAssetVersion({
@@ -117,7 +127,15 @@ export function writeAppVersionMetadata({
     inputs: [...APP_VERSION_INPUTS],
   };
 
-  fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+  try {
+    fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      console.warn(`Warning: Could not write app metadata to ${metadataPath} (${err.code})`);
+    } else {
+      throw err;
+    }
+  }
   return metadata;
 }
 

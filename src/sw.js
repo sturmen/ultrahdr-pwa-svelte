@@ -30,7 +30,7 @@ const LIBHEIF_ASSET_CACHE = `${LIBHEIF_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_
 const AI_MODEL_CACHE = `${AI_MODEL_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 
 function isUltraHdrWasmAssetUrl(url) {
-    return /\/assets\/ultrahdr_wasm\.(js|wasm)$/.test(url.pathname);
+    return /\/assets\/(ultrahdr_wasm|jpegli_wasm)\.(js|wasm)$/.test(url.pathname);
 }
 
 function isLibheifWasmAssetUrl(url) {

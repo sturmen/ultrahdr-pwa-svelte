@@ -291,6 +291,7 @@ describe('GmnetGainMapGenerator', () => {
     expect(run).toHaveBeenCalledTimes(3);
     expect(run.mock.calls[2][1]).toEqual({
       gmnetModelVariant: undefined,
+      localInputMaxLongEdge: expect.any(Number),
       forceExecutionProviders: ['wasm'],
     });
   });
@@ -332,6 +333,7 @@ describe('GmnetGainMapGenerator', () => {
     });
     expect(run.mock.calls[2][1]).toEqual({
       gmnetModelVariant: undefined,
+      localInputMaxLongEdge: expect.any(Number),
       forceExecutionProviders: ['wasm'],
     });
   });
@@ -430,6 +432,7 @@ describe('GmnetGainMapGenerator', () => {
     });
     expect(run.mock.calls[2][1]).toEqual({
       gmnetModelVariant: undefined,
+      localInputMaxLongEdge: expect.any(Number),
       forceExecutionProviders: ['wasm'],
     });
   });
@@ -644,6 +647,7 @@ describe('GmnetGainMapGenerator', () => {
     expect(run.mock.calls[0][1]).toEqual({
       gmnetModelVariant: undefined,
       forceExecutionProviders: ['wasm'],
+      localInputMaxLongEdge: 4096,
     });
   });
 

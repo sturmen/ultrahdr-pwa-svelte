@@ -7,3 +7,6 @@
 [submodule "GMNet"]
 	path = GMNet
 	url = https://github.com/qtlark/GMNet
+[submodule "jpegli"]
+	path = jpegli
+	url = https://github.com/google/jpegli

@@ -3,11 +3,14 @@ node_modules/
 .vscode/
 build/
 playwright-report/
+.cache/
+.emscripten-cache/
 
 # Build artifacts
 dist/
 libultrahdr/build/
 ultrahdr-wasm/build/
+jpegli-wasm/build/
 *.o
 *.a
 *.so

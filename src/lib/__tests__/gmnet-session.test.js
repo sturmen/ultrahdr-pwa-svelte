@@ -1238,10 +1238,10 @@ describe('GMNetInferenceSession runtime config', () => {
     const [modelPayload, options] = ort.InferenceSession.create.mock.calls[0];
     expect(modelPayload).toBeInstanceOf(Uint8Array);
     const fetchedUrls = runtime.fetch.mock.calls.map(([url]) => String(url));
-    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline.onnx'))).toBe(true);
-    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline-webgl.onnx'))).toBe(false);
+    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld.onnx'))).toBe(true);
+    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld.onnx.data'))).toBe(true);
     expect(options.executionProviders).toEqual(['wasm']);
-    expect(options.externalData).toBeUndefined();
+    expect(options.externalData).toBeDefined();
     expect(session.activeExecutionProvider).toBe('wasm');
   });
 
@@ -1284,7 +1284,7 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(result.length).toBe(inputWidth * inputHeight * 4);
   });
 
-  it('does not apply local input max long-edge scaling when using wasm provider', async () => {
+  it('applies local input max long-edge scaling when using wasm provider', async () => {
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
 
@@ -1326,7 +1326,7 @@ describe('GMNetInferenceSession runtime config', () => {
 
     expect(result.constructor?.name).toBe('Uint8ClampedArray');
     expect(result.length).toBe(inputWidth * inputHeight * 4);
-    expect(localDimsUsed).toEqual([{ width: inputWidth, height: inputHeight }]);
+    expect(localDimsUsed).toEqual([{ width: 128, height: 96 }]);
   });
 
   it('returns wasm-unlimited capability without running probes for wasm provider', async () => {

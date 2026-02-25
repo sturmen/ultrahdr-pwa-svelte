@@ -34,6 +34,7 @@
   let stripExif = false;
   let keepScreenAwake = true;
   let backendPreference = "auto";
+  let useJpegli = false;
 
   let processing = false;
   let results = [];
@@ -780,6 +781,7 @@
       maxContentBoost: convertStopsToMaxContentBoost(maxContentBoostStops),
       rotation,
       quality,
+      useJpegli,
       discardGainMap,
       stripExif,
       gmnetModelVariant: "realworld",
@@ -1981,6 +1983,24 @@
               <label class="switch">
                 <input
                   type="checkbox"
+                  bind:checked={useJpegli}
+                  on:change={handleSettingChange}
+                />
+                <span class="slider"></span>
+              </label>
+              <div class="switch-text">
+                <span class="switch-label">High-Quality JPEG Encoding</span>
+                <p class="help-text">
+                  Use Jpegli WASM encoder for smaller files and better quality.
+                  Significantly slower on large images.
+                </p>
+              </div>
+            </div>
+
+            <div class="control-group switch-group">
+              <label class="switch">
+                <input
+                  type="checkbox"
                   bind:checked={discardGainMap}
                   on:change={handleSettingChange}
                 />
@@ -2280,6 +2300,24 @@
       </div>
 
       <div data-testid="advanced-settings">
+        <div class="control-group switch-group">
+          <label class="switch">
+            <input
+              type="checkbox"
+              bind:checked={useJpegli}
+              on:change={handleSettingChange}
+            />
+            <span class="slider"></span>
+          </label>
+          <div class="switch-text">
+            <span class="switch-label">High-Quality JPEG Encoding</span>
+            <p class="help-text">
+              Use Jpegli WASM encoder for smaller files and better quality.
+              Significantly slower on large images.
+            </p>
+          </div>
+        </div>
+
         <div class="control-group switch-group">
           <label class="switch">
             <input
@@ -2584,6 +2622,17 @@
     text-align: left;
     display: grid;
     gap: 0.5rem;
+  }
+
+  .control-group.switch-group .switch-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .control-group.switch-group .switch-text .help-text {
+    margin: 0;
   }
 
   .control-group.horizontal {

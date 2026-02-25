@@ -1202,15 +1202,20 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
             );
         }
 
-        // The current WASM wrapper expects compressed base and gain map inputs
-        // when bypassing gain-map computation.
-        const sdrJpegBytes = telemetry
-            ? await telemetry.runStage('encode-sdr-to-jpeg', async () => imageDataToJpegBytes(rotatedSdrImageData, quality))
-            : await imageDataToJpegBytes(rotatedSdrImageData, quality);
-        const gainMapJpegBytes = telemetry
-            ? await telemetry.runStage('encode-gain-map-to-jpeg', async () => imageDataToJpegBytes(encoderGainMapImageData, quality))
-            : await imageDataToJpegBytes(encoderGainMapImageData, quality);
+        const encoderFn = options.useJpegli
+            ? async (data, q) => await imageDataToJpegBytes(data, q)
+            : async (data, q) => await blobToUint8Array(await imageDataToJpegBlob(data, q));
 
+        console.log("[start] encode-sdr-to-jpeg")
+        const sdrJpegBytes = telemetry
+            ? await telemetry.runStage('encode-sdr-to-jpeg', async () => encoderFn(rotatedSdrImageData, quality))
+            : await encoderFn(rotatedSdrImageData, quality);
+        console.log("[end] encode-sdr-to-jpeg success")
+        console.log("[start] encode-gain-map-to-jpeg")
+        const gainMapJpegBytes = telemetry
+            ? await telemetry.runStage('encode-gain-map-to-jpeg', async () => encoderFn(encoderGainMapImageData, quality))
+            : await encoderFn(encoderGainMapImageData, quality);
+        console.log("[end] encode-gain-map-to-jpeg success")
         let finalExifPayload = exifPayload;
         if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
             finalExifPayload = normalizeExifOrientationTo1(finalExifPayload);
@@ -1224,6 +1229,7 @@ async function compressImages(sdrImageData, gainMapImageData, options, metadata 
             !options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0
                 ? insertExifSegment(sdrJpegBytes, finalExifPayload)
                 : sdrJpegBytes;
+        console.log("exif processing of JPEG done (or skipped)")
 
         if (telemetry) {
             await telemetry.runStage('encode-set-base-image', async () => {
@@ -1326,16 +1332,19 @@ function toSingleChannelGainMapMetadata(metadata) {
     return normalized;
 }
 
-async function imageDataToJpegBytes(imageData, quality = 0.95) {
-    const { canvas, ctx } = createCanvasWithContext(
-        imageData.width,
-        imageData.height,
-        'Canvas not available for JPEG encoding'
-    );
-    ctx.putImageData(imageData, 0, 0);
-    const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+import { encodeJpegli } from './jpegli-decoder.js';
 
-    return await blobToUint8Array(blob);
+async function imageDataToJpegBytes(imageData, quality = 0.95) {
+    // Quality for jpegli is 0-100, normalize from 0-1
+    const wasmQuality = Math.max(1, Math.min(100, Math.round(quality * 100)));
+    return await encodeJpegli(imageData, wasmQuality);
+}
+
+async function imageDataToJpegBlob(imageData, quality = 0.95) {
+    const { canvas, ctx } = createCanvasWithContext(imageData.width, imageData.height, 'Canvas not available for JPEG encoding');
+    ctx.putImageData(imageData, 0, 0);
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    return blob;
 }
 
 async function jpegBytesToImageData(jpegBytes) {

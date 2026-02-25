@@ -15,6 +15,7 @@ import path from 'path';
 import { createHash } from 'crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execSync } from 'child_process';
+import { buildJpegliWasm } from './build-jpegli-wasm.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -111,10 +112,13 @@ function buildWasm() {
 
     // Build
     runCommand(`emmake make -j4`, { cwd: buildDir });
+
+    console.log('\n=== Building Jpegli WASM module ===');
+    buildJpegliWasm();
 }
 
 function hasExistingAssets() {
-    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm'];
+    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm'];
     return requiredFiles.every((file) => fs.existsSync(path.join(outputDir, file)));
 }
 
@@ -136,7 +140,7 @@ export function computeWasmAssetVersionFromFiles(files) {
 }
 
 export function computeWasmAssetVersion(outputDirectory = outputDir) {
-    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm'];
+    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm'];
     const filePaths = requiredFiles.map((file) => path.join(outputDirectory, file));
 
     for (const filePath of filePaths) {
@@ -156,10 +160,18 @@ export function writeWasmVersionMetadata(
     const metadata = {
         wasmAssetVersion,
         generatedAt: new Date().toISOString(),
-        files: ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm']
+        files: ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm']
     };
-    fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
-    console.log(`WASM asset version metadata written: ${metadataPath}`);
+    try {
+        fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+        console.log(`WASM asset version metadata written: ${metadataPath}`);
+    } catch (e) {
+        if (e.code === 'EPERM' || e.code === 'EACCES') {
+            console.warn(`Warning: Could not write WASM metadata to ${metadataPath} (${e.code})`);
+        } else {
+            throw e;
+        }
+    }
     console.log(`WASM asset version: ${wasmAssetVersion}`);
     return metadata;
 }
@@ -239,7 +251,7 @@ function copyAssets() {
 function verifyOutput() {
     console.log('\n=== Verifying output ===');
 
-    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm'];
+    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm'];
 
     for (const file of requiredFiles) {
         const filePath = path.join(outputDir, file);

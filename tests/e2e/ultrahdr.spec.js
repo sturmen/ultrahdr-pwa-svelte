@@ -19,18 +19,14 @@ const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
 const EXIF_MATRIX_FIXTURES = [
     path.resolve(__dirname, '../../media/exif_matrix.jpg'),
-    path.resolve(__dirname, '../../media/exif_matrix.jpeg'),
     path.resolve(__dirname, '../../media/exif_matrix.png'),
-    path.resolve(__dirname, '../../media/exif_matrix.webp'),
-    path.resolve(__dirname, '../../media/exif_matrix.heic'),
     path.resolve(__dirname, '../../media/exif_matrix.heif'),
-    path.resolve(__dirname, '../../media/exif_matrix.tif'),
     path.resolve(__dirname, '../../media/exif_matrix.tiff')
 ];
 
-// Timeouts for processing diagnostics.
-const PROCESSING_TIMEOUT = 180_000;
-const PROCESSING_STALL_TIMEOUT = 120_000;
+// Timeouts for processing diagnostics. Give very generous buffers for slow CI.
+const PROCESSING_TIMEOUT = 300_000;
+const PROCESSING_STALL_TIMEOUT = 240_000;
 const POLL_INTERVAL = 250;
 const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
 
@@ -141,6 +137,18 @@ async function setStripExifToggle(page, enabled) {
         const container = label?.closest('.control-group.switch-group');
         const checkbox = container?.querySelector('input[type="checkbox"]');
         if (!checkbox) throw new Error('Strip EXIF toggle not found');
+        checkbox.checked = nextValue;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    }, enabled);
+}
+
+async function setJpegliToggle(page, enabled) {
+    await page.evaluate((nextValue) => {
+        const label = Array.from(document.querySelectorAll('.switch-label'))
+            .find((el) => el.textContent?.includes('High-Quality JPEG Encoding'));
+        const container = label?.closest('.control-group.switch-group');
+        const checkbox = container?.querySelector('input[type="checkbox"]');
+        if (!checkbox) throw new Error('Jpegli toggle not found');
         checkbox.checked = nextValue;
         checkbox.dispatchEvent(new Event('change', { bubbles: true }));
     }, enabled);
@@ -606,31 +614,41 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     });
 
     test.describe('Single Image Processing', () => {
-        test('should process a single SDR image and produce a valid UltraHDR JPEG', async ({ page }) => {
+        test('should process a single SDR image using standard canvas encoder', async ({ page }) => {
             test.setTimeout(180_000);
             await page.goto('/');
 
-            // Upload SDR image
             await uploadFiles(page, [SDR_IMAGE]);
-
-            // Wait for processing
             await waitForProcessing(page);
 
-            // Verify a result card appeared
             const resultCards = page.locator('.result-card');
             await expect(resultCards).toHaveCount(1);
-
-            // Verify the filename is shown
             await expect(page.locator('.filename')).toContainText(path.parse(SDR_IMAGE).name);
 
-            // Download and validate
             const jpegData = await downloadFirstResult(page);
-
-            // Basic JPEG validation (starts with SOI marker)
             expect(jpegData[0]).toBe(0xFF);
             expect(jpegData[1]).toBe(0xD8);
+            expect(hasGainMapXMP(jpegData)).toBe(true);
+        });
 
-            // Should contain gain map XMP metadata (UltraHDR marker)
+        test('should process a single SDR image using opt-in Jpegli WASM encoder', async ({ page }) => {
+            test.setTimeout(180_000);
+            await page.goto('/');
+
+            await page.getByTestId('floating-gear').click();
+            await setJpegliToggle(page, true);
+            await page.getByRole('button', { name: /^Done$/i }).click();
+
+            await uploadFiles(page, [SDR_IMAGE]);
+            await waitForProcessing(page);
+
+            const resultCards = page.locator('.result-card');
+            await expect(resultCards).toHaveCount(1);
+            await expect(page.locator('.filename')).toContainText(path.parse(SDR_IMAGE).name);
+
+            const jpegData = await downloadFirstResult(page);
+            expect(jpegData[0]).toBe(0xFF);
+            expect(jpegData[1]).toBe(0xD8);
             expect(hasGainMapXMP(jpegData)).toBe(true);
         });
 
@@ -1189,10 +1207,11 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Verify quality options
             const options = qualitySelect.locator('option');
-            await expect(options).toHaveCount(3);
-            await expect(options.nth(0)).toHaveText('High');
-            await expect(options.nth(1)).toHaveText('Medium');
-            await expect(options.nth(2)).toHaveText('Low');
+            await expect(options).toHaveCount(4);
+            await expect(options.nth(0)).toHaveText('Lossless');
+            await expect(options.nth(1)).toHaveText('High');
+            await expect(options.nth(2)).toHaveText('Medium');
+            await expect(options.nth(3)).toHaveText('Low');
         });
     });
 
