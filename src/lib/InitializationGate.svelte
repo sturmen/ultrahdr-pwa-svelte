@@ -1,42 +1,47 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher } from "svelte";
 
-  export let state = 'running';
+  export let state = "running";
   export let steps = [];
   export let failure = null;
 
   const dispatch = createEventDispatcher();
-  let copyStatus = '';
+  let copyStatus = "";
 
   function formatStatus(status) {
-    if (status === 'passed') return 'Passed';
-    if (status === 'running') return 'Running';
-    if (status === 'failed') return 'Failed';
-    return 'Pending';
+    if (status === "passed") return "Passed";
+    if (status === "running") return "Running";
+    if (status === "failed") return "Failed";
+    return "Pending";
   }
 
   function statusSymbol(status) {
-    if (status === 'passed') return '✓';
-    if (status === 'failed') return '!';
-    if (status === 'running') return '…';
-    return '○';
+    if (status === "passed") return "✓";
+    if (status === "failed") return "!";
+    if (status === "running") return "…";
+    return "○";
   }
 
   function attemptStatusSymbol(status) {
-    if (status === 'passed') return '✅';
-    if (status === 'failed') return '❎';
-    return '…';
+    if (status === "passed") return "✅";
+    if (status === "failed") return "❎";
+    return "…";
   }
 
   function attemptStatusLabel(status) {
-    if (status === 'passed') return 'Passed';
-    if (status === 'failed') return 'Failed';
-    return 'Running';
+    if (status === "passed") return "Passed";
+    if (status === "failed") return "Failed";
+    return "Running";
   }
 
   function attemptTestId(stepId, attempt) {
-    const provider = String(attempt?.provider || 'unknown').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    const candidateLongEdge = Math.max(1, Math.floor(Number(attempt?.candidateLongEdge) || 0));
+    const provider = String(attempt?.provider || "unknown")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "-");
+    const candidateLongEdge = Math.max(
+      1,
+      Math.floor(Number(attempt?.candidateLongEdge) || 0),
+    );
     return `runtime-step-${stepId}-attempt-${provider}-${candidateLongEdge}`;
   }
 
@@ -66,47 +71,58 @@
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        const textArea = document.createElement('textarea');
+        const textArea = document.createElement("textarea");
         textArea.value = text;
-        textArea.setAttribute('readonly', 'readonly');
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
+        textArea.setAttribute("readonly", "readonly");
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
         document.body.appendChild(textArea);
         textArea.select();
-        document.execCommand('copy');
+        document.execCommand("copy");
         document.body.removeChild(textArea);
       }
-      copyStatus = 'Diagnostics copied.';
+      copyStatus = "Diagnostics copied.";
     } catch {
-      copyStatus = 'Could not copy diagnostics. Select text below manually.';
+      copyStatus = "Could not copy diagnostics. Select text below manually.";
     }
   }
 
   function retry() {
-    copyStatus = '';
-    dispatch('retry');
+    copyStatus = "";
+    dispatch("retry");
   }
 
   $: diagnosticsJson = failure
     ? JSON.stringify(buildDiagnosticsPayload(), null, 2)
-    : '';
+    : "";
 </script>
 
-<section class="runtime-init-gate card" data-testid="runtime-init-gate" aria-live="polite">
+<section
+  class="runtime-init-gate card"
+  data-testid="runtime-init-gate"
+  aria-live="polite"
+>
   <h2>Initializing Runtime</h2>
   <p class="description">
     Startup checks must pass before UltraHDR conversion can begin.
   </p>
 
-  {#if state !== 'failed'}
-    <p class="status-running" data-testid="runtime-init-loading">Running startup checks...</p>
+  {#if state !== "failed"}
+    <p class="status-running" data-testid="runtime-init-loading">
+      Running startup checks...
+    </p>
   {/if}
 
   <ol class="checklist">
     {#each steps as step (step.id)}
-      <li class={`step ${step.status || 'pending'}`} data-testid={`runtime-step-${step.id}`}>
+      <li
+        class={`step ${step.status || "pending"}`}
+        data-testid={`runtime-step-${step.id}`}
+      >
         <div class="step-row">
-          <span class="symbol" aria-hidden="true">{statusSymbol(step.status)}</span>
+          <span class="symbol" aria-hidden="true"
+            >{statusSymbol(step.status)}</span
+          >
           <span class="label">{step.label || step.id}</span>
           <span class="status">{formatStatus(step.status)}</span>
         </div>
@@ -114,12 +130,25 @@
           <p class="note">{step.note}</p>
         {/if}
         {#if Array.isArray(step.attempts) && step.attempts.length > 0}
-          <ul class="probe-attempts" data-testid={`runtime-step-${step.id}-attempts`}>
-            {#each step.attempts as attempt (`${attempt?.provider || 'unknown'}:${attempt?.candidateLongEdge || 0}`)}
-              <li class={`probe-attempt ${attempt?.status || 'running'}`} data-testid={attemptTestId(step.id, attempt)}>
-                <span class="probe-attempt-label">{attempt?.candidateLongEdge}x{attempt?.candidateLongEdge}</span>
-                <span class="probe-attempt-symbol" aria-hidden="true">{attemptStatusSymbol(attempt?.status)}</span>
-                <span class="probe-attempt-status">{attemptStatusLabel(attempt?.status)}</span>
+          <ul
+            class="probe-attempts"
+            data-testid={`runtime-step-${step.id}-attempts`}
+          >
+            {#each step.attempts as attempt (`${attempt?.provider || "unknown"}:${attempt?.candidateLongEdge || 0}`)}
+              <li
+                class={`probe-attempt ${attempt?.status || "running"}`}
+                data-testid={attemptTestId(step.id, attempt)}
+              >
+                <span class="probe-attempt-label"
+                  >{attempt?.candidateLongEdge}x{attempt?.probeHeight ||
+                    attempt?.candidateLongEdge}</span
+                >
+                <span class="probe-attempt-symbol" aria-hidden="true"
+                  >{attemptStatusSymbol(attempt?.status)}</span
+                >
+                <span class="probe-attempt-status"
+                  >{attemptStatusLabel(attempt?.status)}</span
+                >
               </li>
             {/each}
           </ul>
@@ -128,22 +157,37 @@
     {/each}
   </ol>
 
-  {#if state === 'failed' && failure}
-    <section class="failure card" data-testid="runtime-init-failure" role="alert">
+  {#if state === "failed" && failure}
+    <section
+      class="failure card"
+      data-testid="runtime-init-failure"
+      role="alert"
+    >
       <h3>Initialization Failed</h3>
       <p>
-        <b>Step:</b> {failure.stepLabel || failure.stepId || 'Unknown step'}
+        <b>Step:</b>
+        {failure.stepLabel || failure.stepId || "Unknown step"}
       </p>
       {#if failure.errorCode}
         <p><b>Error code:</b> {failure.errorCode}</p>
       {/if}
-      <p>{failure.userMessage || failure.message || 'Runtime initialization failed.'}</p>
+      <p>
+        {failure.userMessage ||
+          failure.message ||
+          "Runtime initialization failed."}
+      </p>
       <p class="hint">
-        Retry initialization. If the issue persists, copy diagnostics and include them in a bug report.
+        Retry initialization. If the issue persists, copy diagnostics and
+        include them in a bug report.
       </p>
 
       <div class="actions">
-        <button type="button" class="primary" data-testid="runtime-init-retry" on:click={retry}>
+        <button
+          type="button"
+          class="primary"
+          data-testid="runtime-init-retry"
+          on:click={retry}
+        >
           Retry Initialization
         </button>
         <button
@@ -160,7 +204,9 @@
       {/if}
 
       <details class="diagnostics">
-        <summary data-testid="runtime-init-diagnostics-summary">Technical diagnostics</summary>
+        <summary data-testid="runtime-init-diagnostics-summary"
+          >Technical diagnostics</summary
+        >
         <pre data-testid="runtime-init-diagnostics-json">{diagnosticsJson}</pre>
       </details>
     </section>
@@ -251,7 +297,8 @@
     list-style: none;
     display: grid;
     gap: 0.25rem;
-    border-top: 1px dashed color-mix(in srgb, var(--border-subtle) 80%, transparent);
+    border-top: 1px dashed
+      color-mix(in srgb, var(--border-subtle) 80%, transparent);
   }
 
   .probe-attempt {
@@ -279,7 +326,11 @@
   .failure {
     display: grid;
     gap: 0.55rem;
-    border-color: color-mix(in srgb, var(--queue-failed) 62%, var(--border-subtle));
+    border-color: color-mix(
+      in srgb,
+      var(--queue-failed) 62%,
+      var(--border-subtle)
+    );
   }
 
   .actions {

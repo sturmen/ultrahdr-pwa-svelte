@@ -45,7 +45,7 @@ function isFirefoxRuntime(runtime = globalThis) {
 const DEFAULT_WASM_THREAD_COUNT = 1;
 const MAX_WASM_THREAD_COUNT = 4;
 const DEFAULT_PROBE_MIN_LONG_EDGE = 128;
-const DEFAULT_PROBE_MAX_LONG_EDGE = 4096;
+const DEFAULT_PROBE_MAX_LONG_EDGE = 4752;
 const DEFAULT_PROBE_TIMEOUT_MS = 12_000;
 const PROBE_MIN_DYNAMIC_RANGE = 2;
 const PROBE_MIN_STD_DEV = 0.25;
@@ -144,38 +144,6 @@ export function isMobileDevice(runtime = globalThis) {
         return true;
     }
     return false;
-}
-
-export async function gallopingSearchUpperBound(min, max, evaluate) {
-    let candidate = min;
-    let lastPass = null;
-    let firstFail = null;
-
-    while (candidate <= max) {
-        const passed = await evaluate(candidate);
-        if (passed) {
-            lastPass = candidate;
-            candidate = candidate * 2;
-        } else {
-            firstFail = candidate;
-            break;
-        }
-    }
-
-    // If we galloped past max without failure, test max explicitly
-    if (firstFail === null && lastPass !== null && lastPass < max) {
-        const passed = await evaluate(max);
-        if (passed) {
-            lastPass = max;
-        } else {
-            firstFail = max;
-        }
-    } else if (firstFail === null && lastPass !== null && lastPass >= max) {
-        // lastPass already equals or exceeds max; clamp it
-        lastPass = max;
-    }
-
-    return { lastPass, firstFail };
 }
 
 export async function binarySearchMaxCapability(low, high, evaluate) {
@@ -829,13 +797,14 @@ export class GMNetInferenceSession {
     }
 
     createProbeImageData(size) {
-        const normalizedSize = Math.max(1, Math.floor(Number(size) || 1));
-        const data = new Uint8ClampedArray(normalizedSize * normalizedSize * 4);
-        for (let y = 0; y < normalizedSize; y += 1) {
-            for (let x = 0; x < normalizedSize; x += 1) {
-                const index = (y * normalizedSize + x) * 4;
-                const horizontal = normalizedSize > 1 ? Math.floor((x / (normalizedSize - 1)) * 255) : 127;
-                const vertical = normalizedSize > 1 ? Math.floor((y / (normalizedSize - 1)) * 255) : 127;
+        const width = Math.max(1, Math.floor(Number(size) || 1));
+        const height = Math.max(1, Math.floor(width * 2 / 3));
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let y = 0; y < height; y += 1) {
+            for (let x = 0; x < width; x += 1) {
+                const index = (y * width + x) * 4;
+                const horizontal = width > 1 ? Math.floor((x / (width - 1)) * 255) : 127;
+                const vertical = height > 1 ? Math.floor((y / (height - 1)) * 255) : 127;
                 const checker = ((x >> 4) + (y >> 4)) % 2 === 0 ? 32 : -32;
                 const value = Math.max(0, Math.min(255, Math.floor((horizontal + vertical) / 2 + checker)));
                 data[index] = value;
@@ -844,7 +813,7 @@ export class GMNetInferenceSession {
                 data[index + 3] = 255;
             }
         }
-        return new ImageData(data, normalizedSize, normalizedSize);
+        return new ImageData(data, width, height);
     }
 
     async resolveGainMapCapability(options = {}) {
@@ -939,7 +908,8 @@ export class GMNetInferenceSession {
             }
 
             const startedAtMs = Date.now();
-            const candidateResolution = `${candidateLongEdge}x${candidateLongEdge}`;
+            const probeHeight = Math.max(1, Math.floor(candidateLongEdge * 2 / 3));
+            const candidateResolution = `${candidateLongEdge}x${probeHeight}`;
             const attempt = {
                 candidateLongEdge,
                 status: 'running',
@@ -972,7 +942,7 @@ export class GMNetInferenceSession {
                     probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
                     return attempt;
                 }
-                const expectedLength = candidateLongEdge * candidateLongEdge * 4;
+                const expectedLength = candidateLongEdge * probeHeight * 4;
                 if (output.length !== expectedLength) {
                     attempt.status = 'failed';
                     attempt.error = {
@@ -1103,94 +1073,44 @@ export class GMNetInferenceSession {
             return attempt.status === 'passed';
         };
 
-        // --- Hot-spot candidates ---
-        const hotSpots = [4094, 2048].filter(
-            (hs) => hs >= probeMinLongEdge && hs <= probeMaxLongEdge,
-        );
-
         const mobile = isMobileDevice(this.runtime);
         let best = 0;
 
         if (mobile) {
-            // Mobile strategy: test hot-spots ascending, then gallop up, then binary refine
-            const mobileHotSpots = [...hotSpots].sort((a, b) => a - b);
-            for (const hs of mobileHotSpots) {
-                if (attempts.length >= maxTotalAttempts) break;
-                const attempt = await evaluateCandidate(hs);
-                if (attempt.status === 'passed') {
-                    best = Math.max(best, hs);
-                }
-            }
-
-            // Galloping search from min upward (skipping already-tested)
+            // Mobile strategy: optimistically test the minimum. If it fails, bail out immediately.
+            // If it passes, binary search upwards.
             if (attempts.length < maxTotalAttempts) {
-                const gallopResult = await gallopingSearchUpperBound(
-                    probeMinLongEdge,
-                    probeMaxLongEdge,
-                    evaluateBool,
-                );
-                if (gallopResult.lastPass !== null) {
-                    best = Math.max(best, gallopResult.lastPass);
-                }
-                // Binary search to refine between lastPass and firstFail
-                if (
-                    gallopResult.lastPass !== null
-                    && gallopResult.firstFail !== null
-                    && gallopResult.firstFail - gallopResult.lastPass > 1
-                    && attempts.length < maxTotalAttempts
-                ) {
-                    const refined = await binarySearchMaxCapability(
-                        gallopResult.lastPass + 1,
-                        gallopResult.firstFail - 1,
-                        evaluateBool,
-                    );
-                    if (refined !== null) {
-                        best = Math.max(best, refined);
+                const attempt = await evaluateCandidate(probeMinLongEdge);
+                if (attempt.status === 'passed') {
+                    best = probeMinLongEdge;
+                    if (probeMinLongEdge < probeMaxLongEdge && attempts.length < maxTotalAttempts) {
+                        const refined = await binarySearchMaxCapability(
+                            probeMinLongEdge + 1,
+                            probeMaxLongEdge,
+                            evaluateBool,
+                        );
+                        if (refined !== null) {
+                            best = Math.max(best, refined);
+                        }
                     }
                 }
             }
         } else {
-            // Desktop strategy: test hot-spots descending, then binary refine
-            const desktopHotSpots = [...hotSpots].sort((a, b) => b - a);
-            let hotSpotPassedMax = 0;
-            let hotSpotFailedMin = probeMaxLongEdge + 1;
-
-            for (const hs of desktopHotSpots) {
-                if (attempts.length >= maxTotalAttempts) break;
-                const attempt = await evaluateCandidate(hs);
+            // Desktop strategy: optimistically test the maximum. If it passes, we are fully capable.
+            // If it fails, binary search downwards.
+            if (attempts.length < maxTotalAttempts) {
+                const attempt = await evaluateCandidate(probeMaxLongEdge);
                 if (attempt.status === 'passed') {
-                    hotSpotPassedMax = Math.max(hotSpotPassedMax, hs);
-                    best = Math.max(best, hs);
-                } else {
-                    hotSpotFailedMin = Math.min(hotSpotFailedMin, hs);
-                }
-            }
-
-            // If the largest hot-spot passed, try to push higher with binary search
-            if (
-                hotSpotPassedMax > 0
-                && hotSpotPassedMax < probeMaxLongEdge
-                && attempts.length < maxTotalAttempts
-            ) {
-                const refined = await binarySearchMaxCapability(
-                    hotSpotPassedMax + 1,
-                    probeMaxLongEdge,
-                    evaluateBool,
-                );
-                if (refined !== null) {
-                    best = Math.max(best, refined);
-                }
-            }
-
-            // If no hot-spot passed, binary search the whole range
-            if (hotSpotPassedMax === 0 && attempts.length < maxTotalAttempts) {
-                const refined = await binarySearchMaxCapability(
-                    probeMinLongEdge,
-                    Math.min(hotSpotFailedMin - 1, probeMaxLongEdge),
-                    evaluateBool,
-                );
-                if (refined !== null) {
-                    best = refined;
+                    best = probeMaxLongEdge;
+                } else if (attempts.length < maxTotalAttempts) {
+                    const refined = await binarySearchMaxCapability(
+                        probeMinLongEdge,
+                        probeMaxLongEdge - 1,
+                        evaluateBool,
+                    );
+                    if (refined !== null) {
+                        best = refined;
+                    }
                 }
             }
         }

@@ -915,11 +915,7 @@ describe('GMNetInferenceSession runtime config', () => {
         attempts: expect.any(Array),
       }),
     });
-    // With maxAttempts=2, total probe attempts should be limited
-    const actualAttempts = thrownError.diagnostics.attempts.filter(
-      (a) => a.candidateLongEdge && a.status,
-    );
-    expect(actualAttempts.length).toBeLessThanOrEqual(3); // at most maxAttempts + 1 for hot-spot filtering overhead
+    expect(actualAttempts.length).toBeLessThanOrEqual(2); // exactly maxAttempts, no hotspot filtering overhead 
   });
 
   it('probes above 2048 by default so 8192 output remains reachable', async () => {
@@ -931,7 +927,7 @@ describe('GMNetInferenceSession runtime config', () => {
 
     vi.spyOn(session, 'createProbeImageData').mockImplementation((candidateLongEdge) => ({
       width: candidateLongEdge,
-      height: candidateLongEdge,
+      height: Math.max(1, Math.floor(candidateLongEdge * 2 / 3)),
       data: new Uint8ClampedArray(4),
     }));
     vi.spyOn(session, 'run').mockResolvedValue(new Uint8ClampedArray(4));
@@ -964,11 +960,12 @@ describe('GMNetInferenceSession runtime config', () => {
     session.activeExecutionProvider = 'webgpu';
     session.session = {
       run: vi.fn(async (feeds) => {
-        const size = feeds.local_input.dims[2];
+        const height = feeds.local_input.dims[2];
+        const width = feeds.local_input.dims[3];
         return {
           gain_map: {
-            data: new Float32Array(size * size),
-            dims: [1, 1, size, size],
+            data: new Float32Array(height * width),
+            dims: [1, 1, height, width],
           },
         };
       }),
@@ -1499,41 +1496,6 @@ describe('isMobileDevice', () => {
       },
     };
     expect(isMobileDevice(runtime)).toBe(false);
-  });
-});
-
-describe('gallopingSearchUpperBound', () => {
-  let gallopingSearchUpperBound;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    const mod = await import('../gmnet-session.js');
-    gallopingSearchUpperBound = mod.gallopingSearchUpperBound;
-  });
-
-  it('finds upper bound by doubling from min', async () => {
-    // Passes at 128, 256, 512. Fails at 1024.
-    const evaluate = vi.fn(async (candidate) => candidate <= 512);
-    const result = await gallopingSearchUpperBound(128, 4096, evaluate);
-
-    expect(result.lastPass).toBe(512);
-    expect(result.firstFail).toBe(1024);
-  });
-
-  it('stops at max if all candidates pass', async () => {
-    const evaluate = vi.fn(async () => true);
-    const result = await gallopingSearchUpperBound(128, 2048, evaluate);
-
-    expect(result.lastPass).toBe(2048);
-    expect(result.firstFail).toBeNull();
-  });
-
-  it('returns no pass if the first candidate fails', async () => {
-    const evaluate = vi.fn(async () => false);
-    const result = await gallopingSearchUpperBound(128, 4096, evaluate);
-
-    expect(result.lastPass).toBeNull();
-    expect(result.firstFail).toBe(128);
   });
 });
 

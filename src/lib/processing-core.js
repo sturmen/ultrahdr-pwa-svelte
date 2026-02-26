@@ -141,7 +141,7 @@ function resolveCapabilityConstrainedMaxDimension(capability) {
     );
     return {
         capability: normalizedCapability,
-        appliedMaxDimension: Math.min(MAX_GENERATED_IMAGE_DIMENSION, capabilityOutputMaxLongEdge),
+        appliedMaxDimension: capabilityOutputMaxLongEdge,
         capabilityOutputMaxLongEdge,
     };
 }
@@ -808,7 +808,7 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     defaultMaxDimension: MAX_GENERATED_IMAGE_DIMENSION,
                     capabilityOutputMaxLongEdge,
                     appliedMaxDimension,
-                    constrainedByCapability: appliedMaxDimension < MAX_GENERATED_IMAGE_DIMENSION,
+                    constrainedByCapability: true,
                     originalWidth: workingImageData.width,
                     originalHeight: workingImageData.height,
                 }

@@ -10,9 +10,12 @@
   } from "./lib/processing.js";
   import { consumeSharedFilesFromLaunch } from "./lib/share-target-launch.js";
   import { loadQueueState } from "./lib/share-store.js";
-  import { createDefaultPwaUpdateState, createPwaUpdateCoordinator } from "./lib/pwa-updater.js";
+  import {
+    createDefaultPwaUpdateState,
+    createPwaUpdateCoordinator,
+  } from "./lib/pwa-updater.js";
 
-  const version = import.meta.env.VITE_APP_VERSION || 'dev';
+  const version = import.meta.env.VITE_APP_VERSION || "dev";
 
   let files = [];
   let shareLaunchChecked = false;
@@ -47,10 +50,7 @@
     if (typeof stack !== "string" || stack.length === 0) {
       return null;
     }
-    return stack
-      .split("\n")
-      .slice(0, 8)
-      .join("\n");
+    return stack.split("\n").slice(0, 8).join("\n");
   }
 
   function findRuntimeStepLabel(stepId) {
@@ -66,7 +66,9 @@
     if (!stepId) {
       return;
     }
-    const existingIndex = runtimeInitSteps.findIndex((step) => step.id === stepId);
+    const existingIndex = runtimeInitSteps.findIndex(
+      (step) => step.id === stepId,
+    );
     if (existingIndex === -1) {
       runtimeInitSteps = [
         ...runtimeInitSteps,
@@ -100,16 +102,27 @@
     }
     const provider = normalizeExecutionProvider(rawAttempt.provider || "");
     const candidateLongEdge = Math.floor(Number(rawAttempt.candidateLongEdge));
-    if (!provider || !Number.isFinite(candidateLongEdge) || candidateLongEdge < 1) {
+    if (
+      !provider ||
+      !Number.isFinite(candidateLongEdge) ||
+      candidateLongEdge < 1
+    ) {
       return null;
     }
-    const rawStatus = String(rawAttempt.status || "").trim().toLowerCase();
-    const status = rawStatus === "passed" || rawStatus === "failed" || rawStatus === "running"
-      ? rawStatus
-      : "running";
+    const rawStatus = String(rawAttempt.status || "")
+      .trim()
+      .toLowerCase();
+    const status =
+      rawStatus === "passed" ||
+      rawStatus === "failed" ||
+      rawStatus === "running"
+        ? rawStatus
+        : "running";
+    const probeHeight = Math.max(1, Math.floor((candidateLongEdge * 2) / 3));
     return {
       provider,
       candidateLongEdge,
+      probeHeight,
       status,
       durationMs: Number.isFinite(Number(rawAttempt.durationMs))
         ? Number(rawAttempt.durationMs)
@@ -117,7 +130,10 @@
       error:
         rawAttempt.error && typeof rawAttempt.error === "object"
           ? {
-              name: typeof rawAttempt.error.name === "string" ? rawAttempt.error.name : "Error",
+              name:
+                typeof rawAttempt.error.name === "string"
+                  ? rawAttempt.error.name
+                  : "Error",
               message:
                 typeof rawAttempt.error.message === "string"
                   ? rawAttempt.error.message
@@ -142,10 +158,12 @@
       return existingAttempts;
     }
     const key = `${incomingAttempt.provider}:${incomingAttempt.candidateLongEdge}`;
-    const nextAttempts = Array.isArray(existingAttempts) ? [...existingAttempts] : [];
-    const existingIndex = nextAttempts.findIndex((attempt) => (
-      `${attempt.provider}:${attempt.candidateLongEdge}` === key
-    ));
+    const nextAttempts = Array.isArray(existingAttempts)
+      ? [...existingAttempts]
+      : [];
+    const existingIndex = nextAttempts.findIndex(
+      (attempt) => `${attempt.provider}:${attempt.candidateLongEdge}` === key,
+    );
     if (existingIndex === -1) {
       nextAttempts.push(incomingAttempt);
     } else {
@@ -286,7 +304,8 @@
       try {
         const persistedQueue = await loadQueueState();
         if (persistedQueue?.hasPending) {
-          restoreNotice = "Previous queue could not be restored. Please re-add files.";
+          restoreNotice =
+            "Previous queue could not be restored. Please re-add files.";
         }
       } catch (e) {
         console.warn("[App] Unable to load persisted queue state:", e);
@@ -343,15 +362,19 @@
     const modelVariant = params.get("__uhdr_test_model_variant");
     const forceSmokeFailure = params.get("__uhdr_test_force_smoke_failure");
     const options = {};
-    if (typeof smokeAssetPath === "string" && smokeAssetPath.trim().length > 0) {
+    if (
+      typeof smokeAssetPath === "string" &&
+      smokeAssetPath.trim().length > 0
+    ) {
       options.smokeAssetPath = smokeAssetPath.trim();
     }
     if (typeof modelVariant === "string" && modelVariant.trim().length > 0) {
       options.modelVariant = modelVariant.trim();
     }
     if (
-      forceSmokeFailure === "1"
-      || (typeof forceSmokeFailure === "string" && forceSmokeFailure.trim().toLowerCase() === "true")
+      forceSmokeFailure === "1" ||
+      (typeof forceSmokeFailure === "string" &&
+        forceSmokeFailure.trim().toLowerCase() === "true")
     ) {
       options.forceSmokeFailure = true;
     }
@@ -399,14 +422,20 @@
   });
 </script>
 
-<main class="app-shell" data-testid="app-shell" data-runtime-init-state={runtimeInitState}>
+<main
+  class="app-shell"
+  data-testid="app-shell"
+  data-runtime-init-state={runtimeInitState}
+>
   <header class="app-header">
     <h1>UltraHDR Converter</h1>
   </header>
 
   <section class="content-area" aria-live="polite">
     {#if runtimeInitState === "ready"}
-      <span class="runtime-ready-marker" data-testid="runtime-init-ready">Runtime ready</span>
+      <span class="runtime-ready-marker" data-testid="runtime-init-ready"
+        >Runtime ready</span
+      >
       <span class="runtime-ready-marker" data-testid="runtime-init-provider">
         Runtime provider: {runtimeInitExecutionProvider || "unknown"}
       </span>
@@ -422,11 +451,16 @@
       <article class="about-page" data-testid="about-page">
         <h2>About UltraHDR Converter</h2>
         <p>
-          UltraHDR Converter turns your existing photos into UltraHDR images directly in your browser.
-          Your files stay on your device, and output images are generated locally.
+          UltraHDR Converter turns your existing photos into UltraHDR images
+          directly in your browser. Your files stay on your device, and output
+          images are generated locally.
         </p>
 
-        <div class="about-taglines" role="list" aria-label="UltraHDR Converter advantages">
+        <div
+          class="about-taglines"
+          role="list"
+          aria-label="UltraHDR Converter advantages"
+        >
           <span role="listitem">No Cloud Upload</span>
           <span role="listitem">Works Offline</span>
           <span role="listitem">Private Processing</span>
@@ -436,19 +470,22 @@
         <div class="about-copy">
           <h3>How This PWA Works</h3>
           <p>
-            The app is a Progressive Web App (PWA), which means it can install like a mobile app while
-            still running web technology under the hood. On supported browsers, its interface and assets
-            are cached so it can launch and run even without a network connection.
+            The app is a Progressive Web App (PWA), which means it can install
+            like a mobile app while still running web technology under the hood.
+            On supported browsers, its interface and assets are cached so it can
+            launch and run even without a network connection.
           </p>
           <p>
-            When you pick or share photos into the app, conversion runs in your browser using a local
-            WebAssembly encoder. The queue processes each file on-device, updates progress in real time,
-            and then lets you export by Share or Download when each result is ready.
+            When you pick or share photos into the app, conversion runs in your
+            browser using a local WebAssembly encoder. The queue processes each
+            file on-device, updates progress in real time, and then lets you
+            export by Share or Download when each result is ready.
           </p>
           <p>
-            Because processing is local, performance depends on your device and browser. Newer phones and
-            desktops complete batches faster, while older devices may pause background tabs more
-            aggressively to save power.
+            Because processing is local, performance depends on your device and
+            browser. Newer phones and desktops complete batches faster, while
+            older devices may pause background tabs more aggressively to save
+            power.
           </p>
         </div>
       </article>
@@ -456,25 +493,23 @@
       <div class="drop-container">
         <p class="share-loading">Loading shared images...</p>
       </div>
+    {:else if files.length === 0}
+      <div class="drop-container">
+        <DropZone on:files={handleFiles} />
+        {#if restoreNotice}
+          <p class="restore-notice">{restoreNotice}</p>
+        {/if}
+      </div>
     {:else}
-      {#if files.length === 0}
-        <div class="drop-container">
-          <DropZone on:files={handleFiles} />
-          {#if restoreNotice}
-            <p class="restore-notice">{restoreNotice}</p>
-          {/if}
-        </div>
-      {:else}
-        <ImageProcessor
-          {files}
-          {launchSource}
-          {launchIntent}
-          runtimeExecutionProvider={runtimeInitExecutionProvider}
-          runtimeGmnetCapability={runtimeInitGmnetCapability}
-          on:reset={handleReset}
-          on:processingbusychange={handleProcessingBusyChange}
-        />
-      {/if}
+      <ImageProcessor
+        {files}
+        {launchSource}
+        {launchIntent}
+        runtimeExecutionProvider={runtimeInitExecutionProvider}
+        runtimeGmnetCapability={runtimeInitGmnetCapability}
+        on:reset={handleReset}
+        on:processingbusychange={handleProcessingBusyChange}
+      />
     {/if}
   </section>
 
@@ -484,9 +519,13 @@
     </p>
     {#if runtimeInitState === "ready"}
       {#if activeView === "about"}
-        <button class="footer-link" type="button" on:click={openConverter}>Back to Converter</button>
+        <button class="footer-link" type="button" on:click={openConverter}
+          >Back to Converter</button
+        >
       {:else}
-        <button class="footer-link" type="button" on:click={openAbout}>About</button>
+        <button class="footer-link" type="button" on:click={openAbout}
+          >About</button
+        >
       {/if}
       {#if pwaUpdateState.updateAvailable}
         {#if pwaUpdateState.pendingUntilIdle}
@@ -507,7 +546,9 @@
           </span>
         {/if}
       {:else if pwaUpdateState.checking}
-        <span class="footer-update" data-testid="pwa-update-checking">Checking for updates...</span>
+        <span class="footer-update" data-testid="pwa-update-checking"
+          >Checking for updates...</span
+        >
       {/if}
     {/if}
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a>
