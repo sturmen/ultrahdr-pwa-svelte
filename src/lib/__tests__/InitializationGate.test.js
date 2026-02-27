@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -65,10 +66,10 @@ describe('InitializationGate', () => {
         steps: createSteps().map((step) =>
           step.id === 'webgpu-check'
             ? {
-                ...step,
-                status: 'failed',
-                note: 'WebGPU is unavailable in this environment.',
-              }
+              ...step,
+              status: 'failed',
+              note: 'WebGPU is unavailable in this environment.',
+            }
             : step,
         ),
         failure: {
@@ -108,7 +109,7 @@ describe('InitializationGate', () => {
   });
 
   it('copies diagnostics and emits retry action on failure', async () => {
-    const clipboardWriteText = vi.fn(async () => {});
+    const clipboardWriteText = vi.fn(async () => { });
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -170,20 +171,20 @@ describe('InitializationGate', () => {
         steps: createSteps().map((step) => (
           step.id === 'gmnet-smoke-run'
             ? {
-                ...step,
-                attempts: [
-                  {
-                    provider: 'webgpu',
-                    candidateLongEdge: 2048,
-                    status: 'passed',
-                  },
-                  {
-                    provider: 'webgpu',
-                    candidateLongEdge: 4096,
-                    status: 'failed',
-                  },
-                ],
-              }
+              ...step,
+              attempts: [
+                {
+                  provider: 'webgpu',
+                  candidateLongEdge: 2048,
+                  status: 'passed',
+                },
+                {
+                  provider: 'webgpu',
+                  candidateLongEdge: GMNET_MAX_LONG_EDGE,
+                  status: 'failed',
+                },
+              ],
+            }
             : step
         )),
       },
@@ -192,7 +193,7 @@ describe('InitializationGate', () => {
     expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
       /passed/i,
     );
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-4096')).toHaveTextContent(
+    expect(screen.getByTestId(`runtime-step-gmnet-smoke-run-attempt-webgpu-${GMNET_MAX_LONG_EDGE}`)).toHaveTextContent(
       /failed/i,
     );
   });

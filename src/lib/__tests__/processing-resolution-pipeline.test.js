@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -44,10 +45,10 @@ vi.mock('../gain-map-generator.js', () => {
       }
       return {
         provider: 'webgpu',
-        gainMapMaxLongEdge: 4096,
-        outputMaxLongEdge: 8192,
+        gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
+        outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
         source: 'probe',
-        attempts: [{ candidateLongEdge: 4096, status: 'passed' }],
+        attempts: [{ candidateLongEdge: GMNET_MAX_LONG_EDGE, status: 'passed' }],
       };
     }
 
@@ -181,12 +182,12 @@ describe('processing fixed-resolution generated pipeline', () => {
     });
 
     expect(gmnetCalls).toHaveLength(1);
-    expect(gmnetCalls[0]).toEqual({ width: 3072, height: 4096 });
+    expect(gmnetCalls[0]).toEqual({ width: 3072, height: GMNET_MAX_LONG_EDGE });
 
     expect(jpegEncodeCanvasSizes).toEqual(
       expect.arrayContaining([
-        { width: 6144, height: 8192 },
-        { width: 3072, height: 4096 },
+        { width: 6144, height: IMAGE_MAX_LONG_EDGE },
+        { width: 3072, height: GMNET_MAX_LONG_EDGE },
       ]),
     );
 
@@ -197,7 +198,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     );
   });
 
-  it('uses exact half-resolution GMNet input when source is below 8192', async () => {
+  it('uses exact half-resolution GMNet input when source is below IMAGE_MAX_LONG_EDGE', async () => {
     decodeDimensions.width = 6000;
     decodeDimensions.height = 4000;
 
@@ -281,7 +282,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     decodeDimensions.height = 4000;
 
     const { processImage } = await import('../processing-core.js');
-    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.png', { type: 'image/png' });
 
     await processImage(file, {
       rotation: 0,

@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -186,7 +187,7 @@ describe('App shell and startup gate', () => {
           },
           {
             provider: 'webgpu',
-            candidateLongEdge: 4096,
+            candidateLongEdge: GMNET_MAX_LONG_EDGE,
             status: 'failed',
           },
         ],
@@ -203,7 +204,7 @@ describe('App shell and startup gate', () => {
     expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
       /passed/i,
     );
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-4096')).toHaveTextContent(
+    expect(screen.getByTestId(`runtime-step-gmnet-smoke-run-attempt-webgpu-${GMNET_MAX_LONG_EDGE}`)).toHaveTextContent(
       /failed/i,
     );
 

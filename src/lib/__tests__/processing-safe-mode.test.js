@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -22,18 +23,18 @@ describe("processing dimension helpers", () => {
     const result = getConstrainedDimensions(12000, 9000);
 
     expect(result).toEqual({
-      width: 8192,
+      width: IMAGE_MAX_LONG_EDGE,
       height: 6144,
       changed: true,
     });
   });
 
-  it("preserves aspect ratio when only one dimension exceeds 8192", () => {
+  it("preserves aspect ratio when only one dimension exceeds IMAGE_MAX_LONG_EDGE", () => {
     const result = getConstrainedDimensions(5000, 9000);
 
     expect(result.changed).toBe(true);
-    expect(result.width).toBeLessThanOrEqual(8192);
-    expect(result.height).toBeLessThanOrEqual(8192);
+    expect(result.width).toBeLessThanOrEqual(IMAGE_MAX_LONG_EDGE);
+    expect(result.height).toBeLessThanOrEqual(IMAGE_MAX_LONG_EDGE);
 
     const originalAspect = 5000 / 9000;
     const constrainedAspect = result.width / result.height;

@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -647,7 +648,7 @@ describe('GmnetGainMapGenerator', () => {
     expect(run.mock.calls[0][1]).toEqual({
       gmnetModelVariant: undefined,
       forceExecutionProviders: ['wasm'],
-      localInputMaxLongEdge: 4096,
+      localInputMaxLongEdge: GMNET_MAX_LONG_EDGE,
     });
   });
 

@@ -3,7 +3,9 @@ import {
   GMNET_FALLBACK_EXECUTION_PROVIDER,
   GMNetInferenceSession,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
+  GMNET_WASM_EXECUTION_PROVIDER,
 } from './gmnet-session.js';
+import { GMNET_MAX_LONG_EDGE } from './constants.js';
 
 const DEFAULT_SMOKE_ASSET_PATH = 'models/gmnet-smoke-128.png';
 const DEFAULT_SMOKE_IMAGE_WIDTH = 128;
@@ -11,7 +13,7 @@ const DEFAULT_SMOKE_IMAGE_HEIGHT = 128;
 const SMOKE_OUTPUT_MIN_DYNAMIC_RANGE = 8;
 const SMOKE_OUTPUT_MIN_STD_DEV = 1.5;
 const STARTUP_CAPABILITY_PROBE_TIMEOUT_MS = 15_000;
-const STARTUP_CAPABILITY_PROBE_MAX_LONG_EDGE = 4_752;
+
 
 export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'onnx-load',
@@ -551,23 +553,31 @@ export async function initializeRuntime({
     fn: async () => {
       const providers = [];
       const webgpuIssues = [];
-      if (runtime?.navigator?.gpu) {
-        if (typeof runtime.navigator.gpu.requestAdapter === 'function') {
-          const adapter = await runtime.navigator.gpu.requestAdapter();
-          if (adapter) {
-            providers.push(REQUIRED_GMNET_EXECUTION_PROVIDER);
+      const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+      const isSafari = /safari/.test(userAgent) && !/(chrome|chromium|crios|edg|opr|firefox|fxios)/.test(userAgent);
+
+      if (isSafari) {
+        webgpuIssues.push('WebGPU and WebGL are explicitly disabled for Safari runtimes.');
+        providers.push(GMNET_WASM_EXECUTION_PROVIDER);
+      } else {
+        if (runtime?.navigator?.gpu) {
+          if (typeof runtime.navigator.gpu.requestAdapter === 'function') {
+            const adapter = await runtime.navigator.gpu.requestAdapter();
+            if (adapter) {
+              providers.push(REQUIRED_GMNET_EXECUTION_PROVIDER);
+            } else {
+              webgpuIssues.push('No WebGPU adapter was returned.');
+            }
           } else {
-            webgpuIssues.push('No WebGPU adapter was returned.');
+            providers.push(REQUIRED_GMNET_EXECUTION_PROVIDER);
           }
         } else {
-          providers.push(REQUIRED_GMNET_EXECUTION_PROVIDER);
+          webgpuIssues.push('navigator.gpu is unavailable.');
         }
-      } else {
-        webgpuIssues.push('navigator.gpu is unavailable.');
-      }
 
-      if (hasWebGlSupport(runtime)) {
-        providers.push(GMNET_FALLBACK_EXECUTION_PROVIDER);
+        if (hasWebGlSupport(runtime)) {
+          providers.push(GMNET_FALLBACK_EXECUTION_PROVIDER);
+        }
       }
 
       if (providers.length === 0) {
@@ -724,7 +734,7 @@ export async function initializeRuntime({
                 await session.resolveGainMapCapability({
                   gmnetModelVariant: modelVariant,
                   forceExecutionProviders: providerRequest,
-                  maxLongEdge: STARTUP_CAPABILITY_PROBE_MAX_LONG_EDGE,
+                  maxLongEdge: GMNET_MAX_LONG_EDGE,
                   timeoutMs: STARTUP_CAPABILITY_PROBE_TIMEOUT_MS,
                   maxAttempts: 15,
                 }),

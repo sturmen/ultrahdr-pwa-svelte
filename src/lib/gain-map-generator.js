@@ -4,6 +4,7 @@ import {
   GMNET_WASM_EXECUTION_PROVIDER,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.js';
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from './constants.js';
 
 const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
@@ -196,8 +197,8 @@ export class GmnetGainMapGenerator {
         || REQUIRED_GMNET_EXECUTION_PROVIDER;
       const fallbackCapability = {
         provider: fallbackProvider,
-        gainMapMaxLongEdge: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 128 : 4096,
-        outputMaxLongEdge: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 256 : 8192,
+        gainMapMaxLongEdge: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 1080 : GMNET_MAX_LONG_EDGE,
+        outputMaxLongEdge: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 2160 : IMAGE_MAX_LONG_EDGE,
         source: fallbackProvider === GMNET_FALLBACK_EXECUTION_PROVIDER ? 'fixed-model' : 'legacy-default',
         attempts: [],
       };
@@ -294,7 +295,7 @@ export class GmnetGainMapGenerator {
         };
         if (capability?.gainMapMaxLongEdge) {
           sessionRunOptions.localInputMaxLongEdge = forcedProvider === GMNET_WASM_EXECUTION_PROVIDER
-            ? Math.min(capability.gainMapMaxLongEdge, 8192)
+            ? Math.min(capability.gainMapMaxLongEdge, IMAGE_MAX_LONG_EDGE)
             : capability.gainMapMaxLongEdge;
         }
         const gainMapRgba = await session.run(imageData, {

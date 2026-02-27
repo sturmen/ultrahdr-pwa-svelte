@@ -1,5 +1,6 @@
 import * as ortWebGpu from 'onnxruntime-web/webgpu';
 import { createCanvasWithContext as createRuntimeCanvasWithContext } from './canvas-runtime.js';
+import { GMNET_MAX_LONG_EDGE } from './constants.js';
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
 export const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
@@ -45,7 +46,7 @@ function isFirefoxRuntime(runtime = globalThis) {
 const DEFAULT_WASM_THREAD_COUNT = 1;
 const MAX_WASM_THREAD_COUNT = 4;
 const DEFAULT_PROBE_MIN_LONG_EDGE = 128;
-const DEFAULT_PROBE_MAX_LONG_EDGE = 4096;
+
 const DEFAULT_PROBE_TIMEOUT_MS = 12_000;
 const PROBE_MIN_DYNAMIC_RANGE = 2;
 const PROBE_MIN_STD_DEV = 0.25;
@@ -280,11 +281,21 @@ function normalizeModelVariant(variant) {
 
 const MODEL_BASE_PATH = `${resolveModelBasePath()}models/`;
 
-function hasWebGpuSupport(runtime = globalThis) {
+export function hasWebGpuSupport(runtime = globalThis) {
+    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+    const isSafari = /safari/.test(userAgent) && !/(chrome|chromium|crios|edg|opr|firefox|fxios)/.test(userAgent);
+    if (isSafari) {
+        return false;
+    }
     return typeof runtime?.navigator?.gpu !== 'undefined';
 }
 
 function hasWebGlSupport(runtime = globalThis) {
+    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+    const isSafari = /safari/.test(userAgent) && !/(chrome|chromium|crios|edg|opr|firefox|fxios)/.test(userAgent);
+    if (isSafari) {
+        return false;
+    }
     try {
         if (typeof runtime?.OffscreenCanvas !== 'undefined') {
             const canvas = new runtime.OffscreenCanvas(1, 1);
@@ -315,6 +326,11 @@ function hasWebGlSupport(runtime = globalThis) {
 }
 
 function resolveExecutionProviders(runtime = globalThis) {
+    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+    const isSafari = /safari/.test(userAgent) && !/(chrome|chromium|crios|edg|opr|firefox|fxios)/.test(userAgent);
+    if (isSafari) {
+        return [GMNET_WASM_EXECUTION_PROVIDER];
+    }
     if (hasWebGpuSupport(runtime)) {
         return [REQUIRED_GMNET_EXECUTION_PROVIDER];
     }
@@ -798,7 +814,7 @@ export class GMNetInferenceSession {
 
     createProbeImageData(size) {
         const width = Math.max(1, Math.floor(Number(size) || 1));
-        const height = Math.max(1, Math.floor(width * 2 / 3));
+        const height = Math.max(1, Math.floor(width * 3 / 4));
         const data = new Uint8ClampedArray(width * height * 4);
         for (let y = 0; y < height; y += 1) {
             for (let x = 0; x < width; x += 1) {
@@ -1042,7 +1058,7 @@ export class GMNetInferenceSession {
         }
 
         let probeMinLongEdge = normalizeLongEdgeLimit(options.minLongEdge, DEFAULT_PROBE_MIN_LONG_EDGE);
-        let probeMaxLongEdge = normalizeLongEdgeLimit(options.maxLongEdge, DEFAULT_PROBE_MAX_LONG_EDGE);
+        let probeMaxLongEdge = normalizeLongEdgeLimit(options.maxLongEdge, GMNET_MAX_LONG_EDGE);
         if (probeMinLongEdge > probeMaxLongEdge) {
             const temp = probeMinLongEdge;
             probeMinLongEdge = probeMaxLongEdge;

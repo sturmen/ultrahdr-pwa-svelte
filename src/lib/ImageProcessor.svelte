@@ -20,6 +20,7 @@
     transitionWorkflow,
   } from "./workflow-state.js";
   import { clearQueueBadge, setQueueBadge } from "./badge.js";
+  import { IMAGE_MAX_LONG_EDGE } from "./constants.js";
 
   export let files = [];
   export let launchSource = "regular";
@@ -98,7 +99,7 @@
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
-  const DEFAULT_MAX_OUTPUT_LONG_EDGE = 8192;
+
   const BACKEND_PREFERENCE_STORAGE_KEY = "ultrahdr:backend-preference:v1";
 
   const PROGRESS_STAGE_ORDER = [
@@ -214,11 +215,10 @@
       : !processing
         ? lastCompletedProcessingPath
         : "unknown";
-  $: capabilityIsRestrictive =
-    backendPreference !== "wasm" &&
-    Number.isFinite(capabilityOutputMaxLongEdge) &&
-    capabilityOutputMaxLongEdge > 0 &&
-    capabilityOutputMaxLongEdge < DEFAULT_MAX_OUTPUT_LONG_EDGE;
+  $: capabilityIsRestrictive = (() => {
+    const maxLongEdge = capabilityOutputMaxLongEdge || IMAGE_MAX_LONG_EDGE;
+    return backendPreference !== "wasm" && maxLongEdge < IMAGE_MAX_LONG_EDGE;
+  })();
   $: showCapabilityRestrictionUi =
     capabilityIsRestrictive && capabilityUiPath === "generated";
   $: {

@@ -6,9 +6,8 @@ import {
     normalizeExifOrientationTo1
 } from './exif-utils.js';
 import { extractExifApp1PayloadFromInput } from './input-exif.js';
-import {
-    GmnetGainMapGenerator
-} from './gain-map-generator.js';
+import { isGmnetRuntimeSupported, GmnetGainMapGenerator } from './gain-map-generator.js';
+import { IMAGE_MAX_LONG_EDGE } from './constants.js';
 import {
     canvasToBlob,
     createCanvasWithContext as createRuntimeCanvasWithContext
@@ -17,7 +16,7 @@ import {
 const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const GAIN_MAP_GAMMA_LINEAR = 1.0;
 const GAIN_MAP_OFFSET_SDR_LINEAR = 0.0;
-const MAX_GENERATED_IMAGE_DIMENSION = 8192;
+
 const GAIN_MAP_TO_OUTPUT_LONG_EDGE_RATIO = 2;
 
 const DEFAULT_PROCESS_OPTIONS = {
@@ -66,7 +65,7 @@ export function throwIfAborted(signal) {
     }
 }
 
-export function getConstrainedDimensions(width, height, maxDimension = MAX_GENERATED_IMAGE_DIMENSION) {
+export function getConstrainedDimensions(width, height, maxDimension = IMAGE_MAX_LONG_EDGE) {
     const w = Math.max(1, Number(width) || 1);
     const h = Math.max(1, Number(height) || 1);
     const maxDim = Math.floor(Number(maxDimension));
@@ -127,7 +126,7 @@ function resolveCapabilityConstrainedMaxDimension(capability) {
     if (!normalizedCapability) {
         return {
             capability: null,
-            appliedMaxDimension: MAX_GENERATED_IMAGE_DIMENSION,
+            appliedMaxDimension: IMAGE_MAX_LONG_EDGE,
             capabilityOutputMaxLongEdge: null,
         };
     }
@@ -141,7 +140,7 @@ function resolveCapabilityConstrainedMaxDimension(capability) {
     );
     return {
         capability: normalizedCapability,
-        appliedMaxDimension: capabilityOutputMaxLongEdge,
+        appliedMaxDimension: Math.min(IMAGE_MAX_LONG_EDGE, capabilityOutputMaxLongEdge),
         capabilityOutputMaxLongEdge,
     };
 }
@@ -805,10 +804,10 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
                     gmnetCapability: normalizedGmnetCapability,
                     gmnetCapabilitySource: normalizedGmnetCapability.source,
                     gmnetExecutionProvider: normalizedGmnetCapability.provider,
-                    defaultMaxDimension: MAX_GENERATED_IMAGE_DIMENSION,
+                    defaultMaxDimension: IMAGE_MAX_LONG_EDGE,
                     capabilityOutputMaxLongEdge,
                     appliedMaxDimension,
-                    constrainedByCapability: true,
+                    constrainedByCapability: appliedMaxDimension < IMAGE_MAX_LONG_EDGE,
                     originalWidth: workingImageData.width,
                     originalHeight: workingImageData.height,
                 }
@@ -1377,7 +1376,7 @@ async function imageDataToJpegBytes(imageData, quality = 0.95) {
 async function imageDataToJpegBlob(imageData, quality = 0.95) {
     const { canvas, ctx } = createCanvasWithContext(imageData.width, imageData.height, 'Canvas not available for JPEG encoding');
     ctx.putImageData(imageData, 0, 0);
-    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
     return blob;
 }
 

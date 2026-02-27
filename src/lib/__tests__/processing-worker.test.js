@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -256,7 +257,7 @@ describe('processing worker wrapper', () => {
               gmnetCapability: {
                 provider: 'webgpu',
                 gainMapMaxLongEdge: 2048,
-                outputMaxLongEdge: 4096,
+                outputMaxLongEdge: GMNET_MAX_LONG_EDGE,
                 source: 'cache',
                 attempts: [{ provider: 'webgpu', candidateLongEdge: 2048, status: 'passed' }],
               },
@@ -297,7 +298,7 @@ describe('processing worker wrapper', () => {
         gmnetCapability: expect.objectContaining({
           provider: 'webgpu',
           gainMapMaxLongEdge: 2048,
-          outputMaxLongEdge: 4096,
+          outputMaxLongEdge: GMNET_MAX_LONG_EDGE,
         }),
       }),
     );
@@ -314,10 +315,10 @@ describe('processing worker wrapper', () => {
         gmnetCapabilityHintsByProvider: {
           webgpu: {
             provider: 'webgpu',
-            gainMapMaxLongEdge: 4096,
-            outputMaxLongEdge: 8192,
+            gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
+            outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
             source: 'cache',
-            attempts: [{ provider: 'webgpu', candidateLongEdge: 4096, status: 'passed' }],
+            attempts: [{ provider: 'webgpu', candidateLongEdge: GMNET_MAX_LONG_EDGE, status: 'passed' }],
           },
         },
       },
@@ -330,8 +331,8 @@ describe('processing worker wrapper', () => {
         gmnetCapabilityHintsByProvider: expect.objectContaining({
           webgpu: expect.objectContaining({
             provider: 'webgpu',
-            gainMapMaxLongEdge: 4096,
-            outputMaxLongEdge: 8192,
+            gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
+            outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
           }),
         }),
       }),

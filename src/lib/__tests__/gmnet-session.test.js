@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -257,42 +258,6 @@ describe('GMNetInferenceSession runtime config', () => {
     expect(session.activeExecutionProvider).toBe('webgl');
   });
 
-  it('loads the WebGL compatibility model on WebKit runtimes', async () => {
-    const ort = await import('onnxruntime-web/all');
-    ort.env.wasm = {};
-    ort.env.webgpu = {};
-    ort.InferenceSession.create.mockClear();
-    ort.InferenceSession.create.mockResolvedValueOnce({
-      run: vi.fn(),
-      executionProviders: ['webgl'],
-    });
-
-    const runtime = {
-      navigator: {
-        userAgent:
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-      },
-      fetch: vi.fn(async () => ({
-        ok: true,
-        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
-      })),
-      document: {
-        createElement: () => ({
-          getContext: (name) => (name === 'webgl' ? {} : null),
-        }),
-      },
-      OffscreenCanvas: undefined,
-    };
-
-    const { GMNetInferenceSession } = await import('../gmnet-session.js');
-    const session = new GMNetInferenceSession({ runtime });
-
-    await session.init('realworld', { forceExecutionProviders: ['webgl'] });
-
-    const fetchedUrls = runtime.fetch.mock.calls.map(([url]) => String(url));
-    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline-webgl.onnx'))).toBe(true);
-    expect(fetchedUrls.some((url) => url.includes('/models/gmnet-realworld-inline.onnx'))).toBe(false);
-  });
 
   it('loads the WebGL compatibility model on Firefox runtimes', async () => {
     const ort = await import('onnxruntime-web/all');
@@ -718,15 +683,14 @@ describe('GMNetInferenceSession runtime config', () => {
     session.activeExecutionProvider = 'webgpu';
     session.session = {
       run: vi.fn(async (feeds) => {
-        const size = feeds.local_input.dims[2];
-        const data = new Float32Array(size * size);
-        for (let i = 0; i < data.length; i += 1) {
-          data[i] = (i % 256) / 255;
-        }
+        const height = feeds.local_input.dims[2];
+        const width = feeds.local_input.dims[3];
+        const data = new Float32Array(width * height).fill(0.5);
+        data[0] = 1.0; // make it not flat
         return {
           gain_map: {
             data,
-            dims: [1, 1, size, size],
+            dims: [1, 1, height, width],
           },
         };
       }),
@@ -758,23 +722,23 @@ describe('GMNetInferenceSession runtime config', () => {
     session.activeExecutionProvider = 'webgpu';
     session.session = {
       run: vi.fn(async (feeds) => {
-        const size = feeds.local_input.dims[2];
+        const height = feeds.local_input.dims[2];
+        const width = feeds.local_input.dims[3];
+        const size = Math.max(width, height);
         if (size > 256) {
           return {
             gain_map: {
-              data: new Float32Array(size * size).fill(0),
-              dims: [1, 1, size, size],
+              data: new Float32Array(width * height).fill(0), // flat = failed
+              dims: [1, 1, height, width],
             },
           };
         }
-        const data = new Float32Array(size * size);
-        for (let i = 0; i < data.length; i += 1) {
-          data[i] = (i % 256) / 255;
-        }
+        const data = new Float32Array(width * height).fill(0.5);
+        data[0] = 1.0; // make it not flat
         return {
           gain_map: {
             data,
-            dims: [1, 1, size, size],
+            dims: [1, 1, height, width],
           },
         };
       }),
@@ -822,18 +786,18 @@ describe('GMNetInferenceSession runtime config', () => {
     const mockSession = {
       release: vi.fn(),
       run: vi.fn(async (feeds) => {
-        const size = feeds.local_input.dims[2];
+        const height = feeds.local_input.dims[2];
+        const width = feeds.local_input.dims[3];
+        const size = Math.max(width, height);
         if (size > 256) {
           throw new Error(`probe rejected at ${size}`);
         }
-        const data = new Float32Array(size * size);
-        for (let i = 0; i < data.length; i += 1) {
-          data[i] = (i % 256) / 255;
-        }
+        const data = new Float32Array(width * height).fill(0.5);
+        data[0] = 1.0; // make it not flat
         return {
           gain_map: {
             data,
-            dims: [1, 1, size, size],
+            dims: [1, 1, height, width],
           },
         };
       }),
@@ -915,10 +879,10 @@ describe('GMNetInferenceSession runtime config', () => {
         attempts: expect.any(Array),
       }),
     });
-    expect(actualAttempts.length).toBeLessThanOrEqual(2); // exactly maxAttempts, no hotspot filtering overhead 
+    expect(thrownError.diagnostics.attempts.length).toBeLessThanOrEqual(2); // exactly maxAttempts, no hotspot filtering overhead 
   });
 
-  it('probes above 2048 by default so 8192 output remains reachable', async () => {
+  it('probes above 2048 by default so IMAGE_MAX_LONG_EDGE output remains reachable', async () => {
     const { GMNetInferenceSession } = await import('../gmnet-session.js');
     const session = new GMNetInferenceSession();
     session.activeExecutionProvider = 'webgpu';

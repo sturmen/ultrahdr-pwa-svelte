@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -433,8 +434,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
         gmnetCapabilitySource: 'probe',
         gmnetCapability: {
           provider: 'webgpu',
-          gainMapMaxLongEdge: 4096,
-          outputMaxLongEdge: 8192,
+          gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
+          outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
           source: 'probe',
           attempts: [],
         },

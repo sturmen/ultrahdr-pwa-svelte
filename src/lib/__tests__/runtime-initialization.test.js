@@ -1,3 +1,4 @@
+import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -82,7 +83,7 @@ describe('runtime initialization', () => {
       return {
         provider: 'webgpu',
         gainMapMaxLongEdge: 2048,
-        outputMaxLongEdge: 4096,
+        outputMaxLongEdge: GMNET_MAX_LONG_EDGE,
         source: 'probe',
         attempts: [
           { provider: 'webgpu', candidateLongEdge: 2048, status: 'passed' },
@@ -222,7 +223,7 @@ describe('runtime initialization', () => {
       resolveGainMapCapability: vi.fn(async () => ({
         provider: session.activeExecutionProvider,
         gainMapMaxLongEdge: session.activeExecutionProvider === 'webgpu' ? 2048 : 128,
-        outputMaxLongEdge: session.activeExecutionProvider === 'webgpu' ? 4096 : 256,
+        outputMaxLongEdge: session.activeExecutionProvider === 'webgpu' ? GMNET_MAX_LONG_EDGE : 256,
         source: session.activeExecutionProvider === 'webgpu' ? 'probe' : 'fixed-model',
         attempts: [{ candidateLongEdge: session.activeExecutionProvider === 'webgpu' ? 2048 : 128, status: 'passed' }],
       })),
@@ -426,8 +427,8 @@ describe('runtime initialization', () => {
       }),
       resolveGainMapCapability: vi.fn(async () => ({
         provider: 'webgpu',
-        gainMapMaxLongEdge: 4096,
-        outputMaxLongEdge: 8192,
+        gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
+        outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
         source: 'probe',
         attempts: [],
       })),
