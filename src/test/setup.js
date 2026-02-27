@@ -5,11 +5,27 @@ import '@testing-library/jest-dom/vitest';
 console.log('=== SETUP FILE LOADED ===');
 
 // Mock browser APIs that may not be available in JSDOM
+import pkg from 'canvas';
+const { createCanvas, ImageData: CanvasImageData } = pkg;
+
 global.URL.createObjectURL = vi.fn((blob) => {
   return 'mock-object-url';
 });
 
 global.URL.revokeObjectURL = vi.fn();
+
+global.createImageBitmap = vi.fn(async (blob) => {
+  const canvas = createCanvas(64, 64);
+  // Add close() for compatibility with ImageBitmap
+  canvas.close = () => { };
+  return canvas;
+});
+
+if (typeof window !== 'undefined') {
+  window.ImageData = CanvasImageData;
+} else {
+  global.ImageData = CanvasImageData;
+}
 
 // Mock navigator
 if (typeof navigator === 'undefined') {
@@ -104,10 +120,5 @@ global.console = {
   error: vi.fn(),
 };
 
-// Import canvas and set up ImageData on global
-import { ImageData as CanvasImageData } from 'canvas';
-if (typeof window !== 'undefined') {
-  window.ImageData = CanvasImageData;
-} else {
-  global.ImageData = CanvasImageData;
-}
+// Console is already mocked above if needed
+

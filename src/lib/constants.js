@@ -1,2 +1,2 @@
-export const IMAGE_MAX_LONG_EDGE = 8192;
-export const GMNET_MAX_LONG_EDGE = 4096;
+export const IMAGE_MAX_LONG_EDGE = 16384;
+export const GMNET_MAX_LONG_EDGE = IMAGE_MAX_LONG_EDGE / 2;

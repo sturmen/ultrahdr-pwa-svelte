@@ -29,26 +29,6 @@ Gain-map generation is handled by [GMNet](https://github.com/qtlark/GMNet).
 - Desktop regression: `npm run test:e2e`
 - Mobile emulation (iOS + Android): `npm run test:e2e:mobile`
 
-## GMNet ONNX Export
-
-- Export both checkpoints (realworld + synthetic), validate parity, and emit manifest:
-  - `python3 scripts/export_gmnet_onnx.py --all-checkpoints`
-- Export one checkpoint only:
-  - `python3 scripts/export_gmnet_onnx.py --checkpoint realworld`
-- Skip parity validation (not recommended outside local debugging):
-  - `python3 scripts/export_gmnet_onnx.py --all-checkpoints --skip-parity`
-- Python requirements for export/parity:
-  - `torch`
-  - `onnxruntime` (required unless `--skip-parity` is used)
-
-Generated artifacts:
-- `public/models/gmnet-realworld.onnx` + `public/models/gmnet-realworld.onnx.data`
-- `public/models/gmnet-synthetic.onnx` + `public/models/gmnet-synthetic.onnx.data`
-- `public/models/gmnet-manifest.json`
-
-Runtime options:
-- `gmnetModelVariant: 'realworld' | 'synthetic'` selects ONNX model variant (default: `'realworld'`).
-
 ## Features
 
 - Free and open source (MIT license)
@@ -60,6 +40,8 @@ Runtime options:
 - EXIF preservation
 - Configurable HDR headroom
 - ISO 21496-1 Metadata Encoding
+- Convert HEIC/HEIF (iPhone, Samsung Galaxy) to UltraHDR JPEG using the original gain map
+- Convert older UltraHDR JPEGs (Hasselblad X2D II 100C, Sigma BF) to ISO 21496-1 using the camera's gain map embedded in the image
 
 ## Special thanks
 

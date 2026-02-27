@@ -812,9 +812,11 @@ export class GMNetInferenceSession {
         }
     }
 
-    createProbeImageData(size) {
+    createProbeImageData(size, forceSquare = false) {
         const width = Math.max(1, Math.floor(Number(size) || 1));
-        const height = Math.max(1, Math.floor(width * 3 / 4));
+        // For WebGL inline models (which require square inputs), use square dimensions
+        // Otherwise use 4:3 aspect ratio for more realistic testing
+        const height = forceSquare ? width : Math.max(1, Math.floor(width * 3 / 4));
         const data = new Uint8ClampedArray(width * height * 4);
         for (let y = 0; y < height; y += 1) {
             for (let x = 0; x < width; x += 1) {
@@ -924,8 +926,12 @@ export class GMNetInferenceSession {
             }
 
             const startedAtMs = Date.now();
-            const probeHeight = Math.max(1, Math.floor(candidateLongEdge * 2 / 3));
-            const candidateResolution = `${candidateLongEdge}x${probeHeight}`;
+            // For WebGL inline models (which require square inputs), use square dimensions
+            // Otherwise use 4:3 aspect ratio for more realistic testing
+            const forceSquareForWebgl = provider === GMNET_FALLBACK_EXECUTION_PROVIDER;
+            const probeWidth = candidateLongEdge;
+            const probeHeight = forceSquareForWebgl ? candidateLongEdge : Math.max(1, Math.floor(candidateLongEdge * 3 / 4));
+            const candidateResolution = `${probeWidth}x${probeHeight}`;
             const attempt = {
                 candidateLongEdge,
                 status: 'running',
@@ -938,7 +944,7 @@ export class GMNetInferenceSession {
                     `[GMNet capability probe] Testing ${candidateResolution} (${provider})...`,
                 );
                 probeState.writeBeforeProbe(candidateLongEdge, provider);
-                const probeImage = this.createProbeImageData(candidateLongEdge);
+                const probeImage = this.createProbeImageData(probeWidth, forceSquareForWebgl);
                 const output = await runWithTimeout(
                     this.run(probeImage, {
                         gmnetModelVariant: requestedVariant,
@@ -958,12 +964,12 @@ export class GMNetInferenceSession {
                     probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
                     return attempt;
                 }
-                const expectedLength = candidateLongEdge * probeHeight * 4;
+                const expectedLength = probeWidth * probeHeight * 4;
                 if (output.length !== expectedLength) {
                     attempt.status = 'failed';
                     attempt.error = {
                         name: 'LengthMismatch',
-                        message: `Capability probe output length mismatch for ${candidateLongEdge}px: expected ${expectedLength}, got ${output.length}.`,
+                        message: `Capability probe output length mismatch for ${probeWidth}x${probeHeight}: expected ${expectedLength}, got ${output.length}.`,
                     };
                     console.warn(`[GMNet capability probe] Failed ${candidateResolution} (${provider}): ${attempt.error.message}`);
                     probeState.writeAfterProbe(candidateLongEdge, provider, 'failed');
@@ -1207,16 +1213,16 @@ export class GMNetInferenceSession {
         let inferenceImageData = imageData;
         let inferenceWidth = sourceWidth;
         let inferenceHeight = sourceHeight;
-        if (!probeMode && activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+        if (activeProvider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
             const fixedLongEdge = DEFAULT_PROBE_MIN_LONG_EDGE;
-            inferenceWidth = fixedLongEdge;
-            inferenceHeight = fixedLongEdge;
-            if (sourceWidth !== fixedLongEdge || sourceHeight !== fixedLongEdge) {
+            if (probeMode || sourceWidth !== fixedLongEdge || sourceHeight !== fixedLongEdge) {
                 inferenceImageData = resizeImageData(
                     imageData,
-                    inferenceWidth,
-                    inferenceHeight,
+                    fixedLongEdge,
+                    fixedLongEdge,
                 );
+                inferenceWidth = fixedLongEdge;
+                inferenceHeight = fixedLongEdge;
             }
         } else if (!probeMode && localInputMaxLongEdge > 0) {
             const constrainedDims = resolveScaledDimensionsForLongEdge(

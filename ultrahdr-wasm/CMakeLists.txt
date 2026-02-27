@@ -20,13 +20,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(LIBULTRAHDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../libultrahdr)
 
 # Add global compiler flags for SIMD and optimizations to ensure they apply to the libultrahdr submodule
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -msimd128 -flto -DNDEBUG -fno-exceptions -fno-rtti")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -msimd128 -flto -DNDEBUG -fno-exceptions -fno-rtti")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -msimd128 -flto -DNDEBUG")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -msimd128 -flto -DNDEBUG -frtti")
 add_link_options(-O3 -msimd128 -flto)
 
 # Add libultrahdr as a subdirectory
 # This will build it with Emscripten toolchain
 set(UHDR_WRITE_XMP TRUE CACHE BOOL "Write gainmap metadata in XMP packet" FORCE)
+set(UHDR_MAX_DIMENSION 16384 CACHE STRING "Maximum image dimension" FORCE)
 add_subdirectory(${LIBULTRAHDR_DIR} ${CMAKE_BINARY_DIR}/libultrahdr_build EXCLUDE_FROM_ALL)
 
 # WASM wrapper sources

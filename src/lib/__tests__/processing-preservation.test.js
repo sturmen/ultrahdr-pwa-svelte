@@ -3,6 +3,15 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+vi.mock('../image-utils.js', async () => {
+    const actual = await vi.importActual('../image-utils.js');
+    return {
+        ...actual,
+        rotateImageData: vi.fn(actual.rotateImageData),
+        jpegBytesToImageData: vi.fn(actual.jpegBytesToImageData),
+    };
+});
+
 const encodedBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xee, 0x00, 0x01, 0xff, 0xd9]);
 
 const sdrImageData = new ImageData(
@@ -27,7 +36,7 @@ const gainMapImageData = new ImageData(
 );
 
 const inputUhdrBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xd9]);
-const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBAVFhUVFRUVFRUVFRUVFRUVFRUWFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGxAQGy0mICYtLS8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAgMBIgACEQEDEQH/xAAXAAEAAwAAAAAAAAAAAAAAAAAAAQID/8QAFhABAQEAAAAAAAAAAAAAAAAAABES/9oADAMBAAIQAxAAAAG0AH//xAAXEAEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEBAAEFAtNv/8QAFhEAAwAAAAAAAAAAAAAAAAAAARAR/9oACAEDAQE/AYf/xAAVEQEBAAAAAAAAAAAAAAAAAAABEP/aAAgBAgEBPwGH/8QAGhABAAMAAwAAAAAAAAAAAAAAAAERITFBUf/aAAgBAQAGPwKjNf/EABsQAQEAAwEBAQAAAAAAAAAAAAERACExQVGh/9oACAEBAAE/IdXQjFzWq9KQ2rgo8sfr/9oADAMBAAIAAwAAABAf/wD/xAAXEQEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEDAQE/EFjP/8QAFxEBAQEBAAAAAAAAAAAAAAAAAREhQf/aAAgBAgEBPxBfM//EAB0QAQACAgIDAAAAAAAAAAAAAAEAESExQVFhcZH/2gAIAQEAAT8QObXbJ0UuE1ULhBrxwC4j5V0F3l0JgS3f/2Q==';
+const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBAVFhUVFRUVFRUVFRUVFRUVFRUWFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGxAQGy0mICYtLS8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAgMBIgACEQEDEQH/xAAXAAEAAwAAAAAAAAAAAAAAAAAAAQID/8QAFhABAQEAAAAAAAAAAAAAAAAAABES/9oACAEBAAEFAtNv/8QAFhEAAwAAAAAAAAAAAAAAAAAAARAR/9oACAEDAQE/AYf/xAAVEQEBAAAAAAAAAAAAAAAAAAABEP/aAAgBAgEBPwGH/8QAGhABAAMAAwAAAAAAAAAAAAAAAAERITFBUf/aAAgBAQAGPwKjNf/EABsQAQEAAwEBAQAAAAAAAAAAAAERACExQVGh/9oACAEBAAE/IdXQjFzWq9KQ2rgo8sfr/9oADAMBAAIAAwAAABAf/wD/xAAXEQEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEDAQE/EFjP/8QAFxEBAQEBAAAAAAAAAAAAAAAAAREhQf/aAAgBAgEBPxBfM//EAB0QAQACAgIDAAAAAAAAAAAAAAEAESExQVFhcZH/2gAIAQEAAT8QObXbJ0UuE1ULhBrxwC4j5V0F3l0JgS3f/2Q==';
 const baseUhdrBytes = new Uint8Array(Buffer.from(tinyJpegBase64, 'base64'));
 const gainMapUhdrBytes = new Uint8Array(Buffer.from(tinyJpegBase64, 'base64'));
 const defaultMaxContentBoost = 2.3;
@@ -476,7 +485,7 @@ describe('processImage UltraHDR preservation path', () => {
         const { processHeic } = await import('../heic-processing.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
-        const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
         const onProgress = vi.fn();
 
         const preservedSdr = new ImageData(
@@ -542,6 +551,152 @@ describe('processImage UltraHDR preservation path', () => {
         expect(
             onProgress.mock.calls.some(([event]) => event?.processingPath === 'generated')
         ).toBe(false);
+    });
+
+    it('rebuilds an existing UltraHDR JPEG using the encoder even with rotation=0 to ensure ISO compliance', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(true);
+
+        const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
+
+        await processImage(file, {
+            rotation: 0,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        // Key verification: encoder WAS used even though rotation=0
+        expect(encoderInstance.setCompressedBaseImage).toHaveBeenCalled();
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalled();
+        expect(encoderInstance.encode).toHaveBeenCalled();
+    });
+
+    it('allows adjusting headroom metadata during UltraHDR JPEG preservation', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(true);
+
+        const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
+
+        const targetBoost = 5.5;
+        await processImage(file, {
+            rotation: 0,
+            maxContentBoost: targetBoost,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.objectContaining({
+                hdrCapacityMax: targetBoost,
+                gainMapMax: [targetBoost, targetBoost, targetBoost]
+            })
+        );
+    });
+
+    it('forces re-encode and downsampling if an existing UltraHDR JPEG exceeds IMAGE_MAX_LONG_EDGE', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(true);
+
+        // SOF0 marker for 17000x17000 (exceeds 16384)
+        const largeUhdrBytes = new Uint8Array([
+            0xff, 0xd8, // SOI
+            0xff, 0xc0, 0x00, 0x11, // SOF0
+            0x08, // precision
+            0x42, 0x68, // height 17000
+            0x42, 0x68, // width 17000
+            0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+            0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00, // SOS
+            0xff, 0xd9 // EOI
+        ]);
+
+        const file = new File([largeUhdrBytes], 'large.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => largeUhdrBytes.buffer.slice(0));
+
+        // Mock decoder output
+        decoderInstance.getBaseImage.mockReturnValueOnce(largeUhdrBytes);
+        decoderInstance.getGainMapImage.mockReturnValueOnce(largeUhdrBytes);
+
+        // Mock Image to return large dimensions
+        const originalImage = global.Image;
+        global.Image = class MockImage {
+            constructor() {
+                this.width = 17000;
+                this.height = 17000;
+            }
+            set src(_v) { setTimeout(() => this.onload?.(), 0); }
+        };
+
+        const originalCreateElement = document.createElement.bind(document);
+        const canvasSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
+            if (tagName !== 'canvas') return originalCreateElement(tagName);
+            return {
+                width: 17000, height: 17000,
+                getContext: vi.fn(() => ({
+                    drawImage: vi.fn(),
+                    getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(4 * 16384 * 16384).fill(128), 16384, 16384)),
+                    putImageData: vi.fn(),
+                    save: vi.fn(),
+                    restore: vi.fn(),
+                    translate: vi.fn(),
+                    rotate: vi.fn()
+                })),
+                toBlob: vi.fn((callback) => callback(new Blob([new Uint8Array(10)], { type: 'image/jpeg' })))
+            };
+        });
+
+        const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
+        await processImage(file, { rotation: 0 });
+
+        // Verify it chose the forced re-encode path due to dimensions
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            expect.stringContaining('exceeds 16384px (true) — forcing re-encode path')
+        );
+
+        // It SHOULD have decoded images (which calls UHDRDecoder)
+        expect(decoderInstance.getBaseImage).toHaveBeenCalled();
+
+        global.Image = originalImage;
+        canvasSpy.mockRestore();
+    });
+
+    it('aligns base and gain-map components using auto-rotation in processUhdrWithRotation', async () => {
+        const core = await import('../processing-core.js');
+        const imageUtils = await import('../image-utils.js');
+
+        // Mock a JPEG with Orientation 6 (90 CW)
+        const uhdrBytesWithExif = new Uint8Array([
+            0xff, 0xd8, // SOI
+            0xff, 0xe1, // APP1
+            0x00, 0x22, // Length (32 payload bytes + 2 length bytes = 34, 0x22)
+            0x45, 0x78, 0x69, 0x66, 0x00, 0x00, // Exif\0\0
+            0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, // II* and IFD0 offset 8
+            0x01, 0x00, // IFD0 Entry count 1
+            0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, // Orientation tagging
+            0x00, 0x00, 0x00, 0x00 // Next IFD offset
+        ]);
+
+        // Fix the decoder mock return value for this specific test
+        decoderInstance.getBaseImage.mockReturnValue(uhdrBytesWithExif);
+
+        // Use real ImageData to avoid type errors in drawImage/putImageData
+        const mockImageData = new ImageData(new Uint8ClampedArray(400), 10, 10);
+        vi.spyOn(imageUtils, 'jpegBytesToImageData').mockResolvedValue(mockImageData);
+
+        const rotateSpy = vi.spyOn(imageUtils, 'rotateImageData').mockImplementation(async (img) => img);
+        vi.spyOn(core, 'compressImages').mockResolvedValue({ sdr: new Uint8Array(), gainMap: new Uint8Array() });
+
+        await core.processUhdrWithRotation(new Uint8Array([0]), { rotation: 0 });
+
+        // Should be called for base + gain map alignment (auto-rotation 90 for orientation 6)
+        expect(rotateSpy).toHaveBeenCalledWith(expect.anything(), 90);
     });
 
 });

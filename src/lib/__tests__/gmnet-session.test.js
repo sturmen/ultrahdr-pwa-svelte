@@ -1494,3 +1494,133 @@ describe('binarySearchMaxCapability', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('GMNet probe image aspect ratio handling', () => {
+  let GMNetInferenceSession;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import('../gmnet-session.js');
+    GMNetInferenceSession = mod.GMNetInferenceSession;
+  });
+
+  it('creates square probe images for WebGL inline models', async () => {
+    const session = new GMNetInferenceSession();
+
+    // Test with forceSquare=true (WebGL case)
+    const squareImage = session.createProbeImageData(128, true);
+    expect(squareImage.width).toBe(128);
+    expect(squareImage.height).toBe(128);
+  });
+
+  it('creates 4:3 aspect ratio probe images for WebGPU by default', async () => {
+    const session = new GMNetInferenceSession();
+
+    // Test with forceSquare=false (WebGPU case) - uses 3/4 height ratio
+    const image128 = session.createProbeImageData(128, false);
+    expect(image128.width).toBe(128);
+    expect(image128.height).toBe(96); // 128 * 3/4 = 96
+
+    const image512 = session.createProbeImageData(512, false);
+    expect(image512.width).toBe(512);
+    expect(image512.height).toBe(384); // 512 * 3/4 = 384
+  });
+
+  it('validates probe output length matches expected dimensions', async () => {
+    const session = new GMNetInferenceSession();
+
+    // Create a square probe image (WebGL case)
+    const squareImage = session.createProbeImageData(128, true);
+    const expectedLength = squareImage.width * squareImage.height * 4; // RGBA
+
+    expect(expectedLength).toBe(65536); // 128 * 128 * 4
+
+    // Create a 4:3 probe image (WebGPU case)
+    const aspectRatioImage = session.createProbeImageData(128, false);
+    const expectedAspectRatioLength = aspectRatioImage.width * aspectRatioImage.height * 4;
+
+    expect(expectedAspectRatioLength).toBe(49152); // 128 * 96 * 4
+  });
+
+  it('handles edge case of very small probe dimensions', async () => {
+    const session = new GMNetInferenceSession();
+
+    // Test minimum size with square mode
+    const minSquare = session.createProbeImageData(1, true);
+    expect(minSquare.width).toBe(1);
+    expect(minSquare.height).toBe(1);
+
+    // Test minimum size with aspect ratio mode
+    const minAspect = session.createProbeImageData(1, false);
+    expect(minAspect.width).toBe(1);
+    expect(minAspect.height).toBe(1); // Math.max(1, 1 * 3/4) = 1
+  });
+
+  it('simulates WebGL inline model input tensor shape validation', async () => {
+    const session = new GMNetInferenceSession();
+
+    // For WebGL, the probe should create square images that match the fixed 128x128 requirement
+    const webglProbeImage = session.createProbeImageData(128, true);
+
+    // Simulate what preprocessLocal would do - convert to CHW tensor [1, 3, height, width]
+    const float32Data = new Float32Array(3 * webglProbeImage.width * webglProbeImage.height);
+    for (let i = 0; i < webglProbeImage.width * webglProbeImage.height; i++) {
+      const r = webglProbeImage.data[i * 4] / 255.0;
+      float32Data[i] = r; // R channel
+      float32Data[webglProbeImage.width * webglProbeImage.height + i] =
+        webglProbeImage.data[i * 4 + 1] / 255.0; // G channel
+      float32Data[2 * webglProbeImage.width * webglProbeImage.height + i] =
+        webglProbeImage.data[i * 4 + 2] / 255.0; // B channel
+    }
+
+    const tensorShape = [1, 3, webglProbeImage.height, webglProbeImage.width];
+
+    // WebGL inline model expects exactly [1, 3, 128, 128]
+    expect(tensorShape).toEqual([1, 3, 128, 128]);
+  });
+
+  it('detects aspect ratio mismatch that would cause WebGL tensor shape error', async () => {
+    const session = new GMNetInferenceSession();
+
+    // If we accidentally created a non-square image for WebGL (the bug)
+    const buggyImage = session.createProbeImageData(128, false); // 4:3 aspect ratio
+
+    expect(buggyImage.width).toBe(128);
+    expect(buggyImage.height).toBe(96);
+
+    // This would cause tensor shape [1, 3, 96, 128] instead of expected [1, 3, 128, 128]
+    const buggyTensorShape = [1, 3, buggyImage.height, buggyImage.width];
+    expect(buggyTensorShape).not.toEqual([1, 3, 128, 128]);
+
+    // The correct approach is to use forceSquare=true for WebGL
+    const correctImage = session.createProbeImageData(128, true);
+    const correctTensorShape = [1, 3, correctImage.height, correctImage.width];
+    expect(correctTensorShape).toEqual([1, 3, 128, 128]);
+  });
+
+  it('validates output length calculation for different probe dimensions', async () => {
+    const session = new GMNetInferenceSession();
+
+    // Test various sizes with both square and aspect ratio modes
+    const testSizes = [64, 128, 256, 512];
+
+    for (const size of testSizes) {
+      // Square mode (WebGL)
+      const squareImage = session.createProbeImageData(size, true);
+      const expectedSquareLength = squareImage.width * squareImage.height * 4;
+
+      expect(squareImage.width).toBe(size);
+      expect(squareImage.height).toBe(size);
+      expect(expectedSquareLength).toBe(size * size * 4);
+
+      // Aspect ratio mode (WebGPU) - uses 3/4 height
+      const aspectRatioImage = session.createProbeImageData(size, false);
+      const expectedAspectRatioHeight = Math.max(1, Math.floor(size * 3 / 4));
+      const expectedAspectRatioLength = aspectRatioImage.width * aspectRatioImage.height * 4;
+
+      expect(aspectRatioImage.width).toBe(size);
+      expect(aspectRatioImage.height).toBe(expectedAspectRatioHeight);
+      expect(expectedAspectRatioLength).toBe(size * expectedAspectRatioHeight * 4);
+    }
+  });
+});

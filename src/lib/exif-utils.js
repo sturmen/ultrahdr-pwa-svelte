@@ -215,6 +215,67 @@ export function normalizeExifOrientationTo1(exifPayload) {
     return exifPayload;
 }
 
+export function extractExifOrientation(exifPayload) {
+    if (!(exifPayload instanceof Uint8Array) || exifPayload.length < 14) {
+        return 1;
+    }
+
+    if (
+        exifPayload[0] !== 0x45 ||
+        exifPayload[1] !== 0x78 ||
+        exifPayload[2] !== 0x69 ||
+        exifPayload[3] !== 0x66 ||
+        exifPayload[4] !== 0x00 ||
+        exifPayload[5] !== 0x00
+    ) {
+        return 1;
+    }
+
+    const tiffOffset = 6;
+    const byteOrderA = exifPayload[tiffOffset];
+    const byteOrderB = exifPayload[tiffOffset + 1];
+    const littleEndian = byteOrderA === 0x49 && byteOrderB === 0x49;
+    const bigEndian = byteOrderA === 0x4d && byteOrderB === 0x4d;
+    if (!littleEndian && !bigEndian) {
+        return 1;
+    }
+
+    const tiffMarker = readExifUint16(exifPayload, tiffOffset + 2, littleEndian);
+    if (tiffMarker !== 0x002a) {
+        return 1;
+    }
+
+    const ifd0RelativeOffset = readExifUint32(exifPayload, tiffOffset + 4, littleEndian);
+    if (ifd0RelativeOffset === null) {
+        return 1;
+    }
+
+    const ifd0Offset = tiffOffset + ifd0RelativeOffset;
+    const entryCount = readExifUint16(exifPayload, ifd0Offset, littleEndian);
+    if (entryCount === null) {
+        return 1;
+    }
+
+    for (let i = 0; i < entryCount; i++) {
+        const entryOffset = ifd0Offset + 2 + (i * 12);
+        const tag = readExifUint16(exifPayload, entryOffset, littleEndian);
+        if (tag !== 0x0112) { // Orientation tag
+            continue;
+        }
+
+        const type = readExifUint16(exifPayload, entryOffset + 2, littleEndian);
+        const count = readExifUint32(exifPayload, entryOffset + 4, littleEndian);
+        if (type !== 3 || count === null || count < 1) {
+            return 1;
+        }
+
+        const valueOffset = entryOffset + 8;
+        return readExifUint16(exifPayload, valueOffset, littleEndian) || 1;
+    }
+
+    return 1;
+}
+
 function readExifUint16(buffer, offset, littleEndian) {
     if (offset < 0 || offset + 2 > buffer.length) {
         return null;
