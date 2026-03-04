@@ -258,7 +258,6 @@
         {isDesktopLayout ? "Drag and drop images, or click to upload." : "Tap to upload images."}
       </span>
     </div>
-    <p class="headline">Convert one photo or batch process many at once.</p>
     <p class="sub-text">Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF</p>
   </label>
 </div>

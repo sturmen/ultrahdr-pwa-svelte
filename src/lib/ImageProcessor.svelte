@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher, onMount } from "svelte";
+  import DropZone from "./DropZone.svelte";
   import { getCapabilities } from "./capabilities.js";
   import { processImage } from "./processing";
   import JSZip from "jszip";
@@ -1257,11 +1258,11 @@
     closeSheet();
   }
 
-  async function handleAddFiles(event) {
-    const newFiles = Array.from(event.target.files || []).filter(
+  function enqueueFiles(fileList) {
+    const newFiles = Array.from(fileList || []).filter(
       (file) => file instanceof File,
     );
-    if (newFiles.length === 0) return;
+    if (newFiles.length === 0) return false;
 
     const addedItems = createQueueItems(newFiles);
     queue = [...queue, ...addedItems];
@@ -1280,7 +1281,18 @@
       startQueue();
     }
 
-    event.target.value = "";
+    return true;
+  }
+
+  async function handleAddFiles(event) {
+    enqueueFiles(event?.target?.files);
+    if (event?.target) {
+      event.target.value = "";
+    }
+  }
+
+  async function handleDropZoneFiles(event) {
+    enqueueFiles(event?.detail);
   }
 
   function toggleSelection(index) {
@@ -1536,11 +1548,11 @@
     void (async () => {
       try {
         const persistedQueue = await loadQueueState();
-        if (persistedQueue?.hasPending && (!files || files.length === 0)) {
-          queueRestoreNotice =
-            "Previous queue could not be restored. Please re-add files.";
-          setNotice(queueRestoreNotice);
-        }
+        // if (persistedQueue?.hasPending && (!files || files.length === 0)) {
+        //   queueRestoreNotice =
+        //     "Previous queue could not be restored. Please re-add files.";
+        //   setNotice(queueRestoreNotice);
+        // }
       } catch (e) {
         console.warn("[UI] Failed to load persisted queue state:", e);
       }
@@ -1620,9 +1632,6 @@
       {#if showConvertPanel}
         <div class="controls card panel convert-panel" id="panel-convert">
           <h2>Convert</h2>
-          <p class="panel-intro">
-            Queue images, process locally, then export to other apps.
-          </p>
 
           <div class="control-group" data-testid="quick-controls">
             <label for="boost">HDR Strength (Max Content Boost Stops)</label>
@@ -1940,11 +1949,7 @@
                 <span class="slider"></span>
               </label>
               <div class="switch-text">
-                <span class="switch-label">High-Quality JPEG Encoding</span>
-                <p class="help-text">
-                  Use Jpegli WASM encoder for smaller files and better quality.
-                  Significantly slower on large images.
-                </p>
+                <span class="switch-label">High-Efficiency JPEG Encoding</span>
               </div>
             </div>
 
@@ -2003,15 +2008,6 @@
                   <option value="wasm">WASM</option>
                 </select>
               </div>
-              {#if backendPreference === "wasm"}
-                <p class="help-text">
-                  Maximum resolution, slower processing speed.
-                </p>
-              {:else if backendPreference !== "auto"}
-                <p class="help-text">
-                  Manual backend mode is strict and fails loudly if unsupported.
-                </p>
-              {/if}
             </div>
 
             <div class="control-group horizontal">
@@ -2028,11 +2024,6 @@
                   <option value="off">In-memory only</option>
                 </select>
               </div>
-              {#if gmnetCheckpointingPreference === "force"}
-                <p class="help-text">
-                  Checkpoints tile progress to improve memory stability.
-                </p>
-              {/if}
             </div>
           </div>
         </div>
@@ -2203,14 +2194,16 @@
               </div>
             </div>
           {:else if !processing}
-            <div class="results-placeholder card">
-              <p>No results yet. Process an image from the Convert tab.</p>
-            </div>
+            {#if queue.length === 0}
+              <div class="results-placeholder card results-empty-gallery">
+                <DropZone on:files={handleDropZoneFiles} />
+              </div>
+            {:else}
+              <div class="results-placeholder card">
+                <p>No results yet. Process an image from the Convert tab.</p>
+              </div>
+            {/if}
           {/if}
-        </div>
-      {:else if !isDesktopLayout}
-        <div class="results-placeholder card">
-          <p>Open the Results tab to review and export processed images.</p>
         </div>
       {/if}
     </section>
@@ -2286,11 +2279,7 @@
             <span class="slider"></span>
           </label>
           <div class="switch-text">
-            <span class="switch-label">High-Quality JPEG Encoding</span>
-            <p class="help-text">
-              Use Jpegli WASM encoder for smaller files and better quality.
-              Significantly slower on large images.
-            </p>
+            <span class="switch-label">High-Efficiency JPEG Encoding</span>
           </div>
         </div>
 
@@ -2347,15 +2336,6 @@
               <option value="wasm">WASM</option>
             </select>
           </div>
-          {#if backendPreference === "wasm"}
-            <p class="help-text">
-              Maximum resolution, slower processing speed.
-            </p>
-          {:else if backendPreference !== "auto"}
-            <p class="help-text">
-              Manual backend mode is strict and fails loudly if unsupported.
-            </p>
-          {/if}
         </div>
 
         <div class="control-group horizontal">
@@ -2372,11 +2352,6 @@
               <option value="off">In-memory only</option>
             </select>
           </div>
-          {#if gmnetCheckpointingPreference === "force"}
-            <p class="help-text">
-              Checkpoints tile progress to improve memory stability.
-            </p>
-          {/if}
         </div>
       </div>
     </div>

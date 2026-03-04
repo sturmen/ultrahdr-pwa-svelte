@@ -91,6 +91,39 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
   });
 
+  it('shows empty-gallery drop zone in desktop two-pane layout when queue is empty', async () => {
+    window.matchMedia = createMatchMedia(true);
+    render(ImageProcessor, { props: { files: [] } });
+
+    expect(screen.getByTestId('desktop-two-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
+  });
+
+  it('keeps Add Images in convert tab and shows drop zone in empty mobile results gallery', async () => {
+    render(ImageProcessor, { props: { files: [] } });
+
+    expect(screen.getByRole('button', { name: /add images/i })).toBeInTheDocument();
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
+  });
+
+  it('processes files selected from empty-gallery drop zone', async () => {
+    render(ImageProcessor, { props: { files: [] } });
+
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    const input = document.getElementById('file-upload');
+    const file = new File(['new-file'], 'new-photo.jpg', { type: 'image/jpeg' });
+
+    await fireEvent.change(input, {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+  });
+
   it('shows only Convert/Results mobile tabs and opens settings directly from floating gear', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 

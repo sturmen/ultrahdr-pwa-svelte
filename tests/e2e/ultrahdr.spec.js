@@ -35,8 +35,22 @@ const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
  * Works for both the initial DropZone input and the "Add Images" input.
  */
 async function uploadFiles(page, filePaths, inputSelector = '#file-upload') {
-    const fileInput = page.locator(inputSelector);
-    await fileInput.setInputFiles(filePaths);
+    await page.waitForFunction(
+        (preferredSelector) =>
+            Boolean(document.querySelector(preferredSelector) || document.querySelector('#add-files')),
+        inputSelector,
+    );
+    const targetSelector = await page.evaluate((preferredSelector) => {
+        if (document.querySelector(preferredSelector)) return preferredSelector;
+        if (document.querySelector('#add-files')) return '#add-files';
+        return null;
+    }, inputSelector);
+
+    if (!targetSelector) {
+        throw new Error(`No usable file input found (tried: ${inputSelector}, #add-files)`);
+    }
+
+    await page.locator(targetSelector).setInputFiles(filePaths);
 }
 
 /**
@@ -131,6 +145,10 @@ async function dismissWasmRecommendationIfVisible(page) {
 }
 
 async function setStripExifToggle(page, enabled) {
+    await page.waitForFunction(() =>
+        Array.from(document.querySelectorAll('.switch-label'))
+            .some((el) => el.textContent?.includes('Strip EXIF data'))
+    );
     await page.evaluate((nextValue) => {
         const label = Array.from(document.querySelectorAll('.switch-label'))
             .find((el) => el.textContent?.includes('Strip EXIF data'));
@@ -143,6 +161,10 @@ async function setStripExifToggle(page, enabled) {
 }
 
 async function setJpegliToggle(page, enabled) {
+    await page.waitForFunction(() =>
+        Array.from(document.querySelectorAll('.switch-label'))
+            .some((el) => el.textContent?.includes('High-Quality JPEG Encoding'))
+    );
     await page.evaluate((nextValue) => {
         const label = Array.from(document.querySelectorAll('.switch-label'))
             .find((el) => el.textContent?.includes('High-Quality JPEG Encoding'));
@@ -630,9 +652,15 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             test.setTimeout(180_000);
             await page.goto('/');
 
-            await page.getByTestId('floating-gear').click();
+            const floatingGear = page.getByTestId('floating-gear');
+            if (await floatingGear.count()) {
+                await floatingGear.click();
+            }
             await setJpegliToggle(page, true);
-            await page.getByRole('button', { name: /^Done$/i }).click();
+            const doneButton = page.getByRole('button', { name: /^Done$/i });
+            if (await doneButton.count()) {
+                await doneButton.click();
+            }
 
             await uploadFiles(page, [SDR_IMAGE]);
             await waitForProcessing(page);

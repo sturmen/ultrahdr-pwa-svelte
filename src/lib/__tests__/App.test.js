@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import App from '../../App.svelte';
 import { consumeSharedFilesFromLaunch, registerLaunchQueueConsumer } from '../share-target-launch.js';
 import { initializeRuntime } from '../processing.js';
@@ -82,8 +82,9 @@ describe('App shell and startup gate', () => {
   it('registers launchQueue consumer on mount for PWA file handoff compatibility', async () => {
     render(App);
 
-    await screen.findByTestId('upload-drop-zone');
+    await screen.findByTestId('tab-convert');
     expect(registerLaunchQueueConsumer).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('home-processing-settings')).not.toBeInTheDocument();
   });
 
   it('renders initialization checklist while runtime is still initializing', async () => {
@@ -93,11 +94,11 @@ describe('App shell and startup gate', () => {
     render(App);
 
     expect(screen.getByTestId('runtime-init-loading')).toBeInTheDocument();
-    expect(screen.queryByTestId('upload-drop-zone')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tab-convert')).not.toBeInTheDocument();
 
     initGate.resolve({ ready: true, resolvedExecutionProvider: 'webgl' });
     await waitFor(() => {
-      expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
     });
     expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/webgl/i);
   });
@@ -106,7 +107,7 @@ describe('App shell and startup gate', () => {
     render(App);
 
     await screen.findByRole('heading', { name: /UltraHDR Converter/i });
-    await screen.findByTestId('upload-drop-zone');
+    await screen.findByTestId('tab-convert');
 
     expect(screen.getByTestId('app-shell')).toBeInTheDocument();
     expect(screen.queryByText(/private processing/i)).not.toBeInTheDocument();
@@ -117,7 +118,7 @@ describe('App shell and startup gate', () => {
   it('opens About page from footer and shows technical explanation with feature taglines', async () => {
     render(App);
 
-    await screen.findByTestId('upload-drop-zone');
+    await screen.findByTestId('tab-convert');
     await fireEvent.click(screen.getByRole('button', { name: /about/i }));
 
     expect(screen.getByRole('heading', { name: /About UltraHDR Converter/i })).toBeInTheDocument();
@@ -141,7 +142,7 @@ describe('App shell and startup gate', () => {
     await fireEvent.click(screen.getByTestId('runtime-init-retry'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
     });
     expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/webgl/i);
     expect(initializeRuntime).toHaveBeenCalledTimes(2);
@@ -173,7 +174,7 @@ describe('App shell and startup gate', () => {
 
     render(App);
 
-    await screen.findByTestId('upload-drop-zone');
+    await screen.findByTestId('tab-convert');
     expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/wasm/i);
     expect(screen.getByTestId('runtime-init-degraded')).toHaveTextContent(
       /compatibility mode/i,
@@ -186,7 +187,7 @@ describe('App shell and startup gate', () => {
 
     render(App);
 
-    await screen.findByTestId('upload-drop-zone');
+    await screen.findByTestId('tab-convert');
     await waitFor(() => {
       expect(inputClickSpy).toHaveBeenCalled();
     });
@@ -245,48 +246,11 @@ describe('App shell and startup gate', () => {
 
     initGate.resolve({ ready: true, resolvedExecutionProvider: 'webgpu' });
     await waitFor(() => {
-      expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
     });
   });
 
-  it('renders homepage pre-processing settings alongside drop zone when no files are queued', async () => {
-    render(App);
-
-    await screen.findByTestId('upload-drop-zone');
-    const settings = screen.getByTestId('home-processing-settings');
-    expect(settings).toBeInTheDocument();
-    expect(within(settings).getByTestId('home-backend-preference-select')).toBeInTheDocument();
-    expect(within(settings).getByTestId('home-gmnet-memory-mode-select')).toBeInTheDocument();
-    expect(
-      within(settings).queryByTestId('home-settings-advanced-content'),
-    ).not.toBeInTheDocument();
-  });
-
-  it('expands homepage advanced settings and persists values across remount', async () => {
-    const firstRender = render(App);
-    await screen.findByTestId('home-processing-settings');
-
-    await fireEvent.change(screen.getByTestId('home-backend-preference-select'), {
-      target: { value: 'webgl' },
-    });
-    await fireEvent.change(screen.getByTestId('home-gmnet-memory-mode-select'), {
-      target: { value: 'force' },
-    });
-    expect(screen.getByTestId('home-gmnet-memory-mode-select')).toHaveValue('force');
-    await fireEvent.click(screen.getByTestId('home-settings-expand-toggle'));
-    expect(screen.getByTestId('home-settings-advanced-content')).toBeInTheDocument();
-    expect(screen.getByTestId('home-max-content-boost')).toBeInTheDocument();
-    expect(screen.getByTestId('home-quality-select')).toBeInTheDocument();
-
-    firstRender.unmount();
-
-    render(App);
-    await screen.findByTestId('home-processing-settings');
-    expect(screen.getByTestId('home-backend-preference-select')).toHaveValue('webgl');
-    expect(screen.getByTestId('home-gmnet-memory-mode-select')).toHaveValue('force');
-  });
-
-  it('bypasses homepage settings and opens processor directly for share-target files', async () => {
+  it('opens processor directly for share-target files', async () => {
     consumeSharedFilesFromLaunch.mockResolvedValue([
       new File(['shared'], 'shared.jpg', { type: 'image/jpeg' }),
     ]);

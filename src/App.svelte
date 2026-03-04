@@ -1,7 +1,5 @@
 <script>
   import { onMount, tick } from "svelte";
-  import DropZone from "./lib/DropZone.svelte";
-  import HomeProcessingSettings from "./lib/HomeProcessingSettings.svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
   import InitializationGate from "./lib/InitializationGate.svelte";
   import {
@@ -13,7 +11,6 @@
     consumeSharedFilesFromLaunch,
     registerLaunchQueueConsumer,
   } from "./lib/share-target-launch.js";
-  import { loadQueueState } from "./lib/share-store.js";
   import {
     createDefaultPwaUpdateState,
     createPwaUpdateCoordinator,
@@ -24,7 +21,6 @@
   let files = [];
   let shareLaunchChecked = false;
   let launchSource = "regular";
-  let restoreNotice = null;
   let launchIntent = { action: null, tab: null };
   let activeView = "converter";
   let isProcessingBusy = false;
@@ -226,15 +222,6 @@
       launchSource = "share-target";
     } else {
       launchSource = "regular";
-      try {
-        const persistedQueue = await loadQueueState();
-        if (persistedQueue?.hasPending) {
-          restoreNotice =
-            "Previous queue could not be restored. Please re-add files.";
-        }
-      } catch (e) {
-        console.warn("[App] Unable to load persisted queue state:", e);
-      }
     }
     shareLaunchChecked = true;
     await maybeAutoPickImages();
@@ -250,10 +237,6 @@
       return;
     }
     await initializeLaunchContext();
-  }
-
-  function handleFiles(event) {
-    files = Array.from(event.detail);
   }
 
   function handleReset() {
@@ -309,7 +292,9 @@
   async function maybeAutoPickImages() {
     if (launchIntent.action !== "pick" || files.length > 0) return;
     await tick();
-    const input = document.getElementById("file-upload");
+    const input =
+      document.getElementById("file-upload") ||
+      document.getElementById("add-files");
     if (input && typeof input.click === "function") {
       input.click();
     }
@@ -425,14 +410,6 @@
       <div class="drop-container">
         <p class="share-loading">Loading shared images...</p>
       </div>
-    {:else if files.length === 0}
-      <div class="drop-container">
-        <HomeProcessingSettings />
-        <DropZone on:files={handleFiles} />
-        {#if restoreNotice}
-          <p class="restore-notice">{restoreNotice}</p>
-        {/if}
-      </div>
     {:else}
       <ImageProcessor
         {files}
@@ -529,12 +506,6 @@
     color: var(--text-secondary);
     padding: 2rem 1rem;
     text-align: center;
-  }
-
-  .restore-notice {
-    margin: 0.8rem 0 0;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
   }
 
   .about-page {
