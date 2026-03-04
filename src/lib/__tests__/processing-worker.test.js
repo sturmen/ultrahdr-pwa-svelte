@@ -702,7 +702,7 @@ describe('processing worker wrapper', () => {
       expect.objectContaining({
         phase: 'stage-progress',
         stage: 'generate-gain-map',
-        note: expect.stringMatching(/application may appear hung/i),
+        note: expect.stringMatching(/starting inference/i),
       }),
     );
 

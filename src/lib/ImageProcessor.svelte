@@ -80,6 +80,16 @@
   let activeMobileTab = "convert";
   let activeDesktopTab = "all";
   let openSheet = "none";
+  let viewerOpen = false;
+  let viewerIndex = -1;
+  let viewerTouchStartX = null;
+  let viewerTouchStartY = null;
+  let viewerTouchCurrentX = null;
+  let viewerTouchCurrentY = null;
+  let viewerCornerHover = false;
+  let viewerBounceDirection = "none";
+  let viewerBounceTimeout = null;
+  let viewerCloseVisible = false;
   let selectionToggleState = "none";
   let queueControlVisibility = "hidden";
   let isDesktopLayout = false;
@@ -107,6 +117,9 @@
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
+  const VIEWER_SWIPE_THRESHOLD_PX = 48;
+  const VIEWER_VERTICAL_GUARD_PX = 80;
+  const VIEWER_BOUNCE_RESET_MS = 180;
 
   const PROGRESS_STAGE_ORDER = [
     "wasm-load",
@@ -221,6 +234,17 @@
   }
   $: if (isDesktopLayout && openSheet === "settings") {
     openSheet = "none";
+  }
+  $: viewerCloseVisible = !isDesktopLayout || viewerCornerHover;
+  $: if (!viewerOpen) {
+    viewerCornerHover = false;
+    viewerBounceDirection = "none";
+  }
+  $: if (viewerOpen && results.length === 0) {
+    closeViewer();
+  }
+  $: if (viewerOpen && viewerIndex >= results.length && results.length > 0) {
+    viewerIndex = results.length - 1;
   }
   $: if (!keepScreenAwake) {
     void releaseWakeLock();
@@ -639,6 +663,104 @@
 
   function closeSheet() {
     openSheet = "none";
+  }
+
+  function clearViewerBounceTimeout() {
+    if (viewerBounceTimeout !== null) {
+      clearTimeout(viewerBounceTimeout);
+      viewerBounceTimeout = null;
+    }
+  }
+
+  function triggerViewerBounce(direction) {
+    viewerBounceDirection = direction;
+    clearViewerBounceTimeout();
+    viewerBounceTimeout = setTimeout(() => {
+      viewerBounceDirection = "none";
+      viewerBounceTimeout = null;
+    }, VIEWER_BOUNCE_RESET_MS);
+  }
+
+  function openViewer(index) {
+    if (!Number.isInteger(index) || !results[index]) return;
+    viewerIndex = index;
+    viewerOpen = true;
+    viewerCornerHover = false;
+    viewerBounceDirection = "none";
+  }
+
+  function closeViewer() {
+    viewerOpen = false;
+    viewerIndex = -1;
+    viewerCornerHover = false;
+    viewerBounceDirection = "none";
+    clearViewerBounceTimeout();
+  }
+
+  function showPreviousInViewer() {
+    if (!viewerOpen) return;
+    if (viewerIndex <= 0) {
+      triggerViewerBounce("left");
+      return;
+    }
+    viewerIndex -= 1;
+    viewerBounceDirection = "none";
+  }
+
+  function showNextInViewer() {
+    if (!viewerOpen) return;
+    if (viewerIndex >= results.length - 1) {
+      triggerViewerBounce("right");
+      return;
+    }
+    viewerIndex += 1;
+    viewerBounceDirection = "none";
+  }
+
+  function handleViewerTouchStart(event) {
+    const touch = event?.touches?.[0];
+    if (!touch) return;
+    viewerTouchStartX = touch.clientX;
+    viewerTouchStartY = touch.clientY;
+    viewerTouchCurrentX = touch.clientX;
+    viewerTouchCurrentY = touch.clientY;
+  }
+
+  function handleViewerTouchMove(event) {
+    const touch = event?.touches?.[0];
+    if (!touch) return;
+    viewerTouchCurrentX = touch.clientX;
+    viewerTouchCurrentY = touch.clientY;
+  }
+
+  function handleViewerTouchEnd(event) {
+    if (viewerTouchStartX === null || viewerTouchStartY === null) return;
+    const touch = event?.changedTouches?.[0];
+    const endX =
+      touch?.clientX ??
+      viewerTouchCurrentX ??
+      viewerTouchStartX;
+    const endY =
+      touch?.clientY ??
+      viewerTouchCurrentY ??
+      viewerTouchStartY;
+    const deltaX = endX - viewerTouchStartX;
+    const deltaY = endY - viewerTouchStartY;
+
+    viewerTouchStartX = null;
+    viewerTouchStartY = null;
+    viewerTouchCurrentX = null;
+    viewerTouchCurrentY = null;
+
+    if (Math.abs(deltaX) < VIEWER_SWIPE_THRESHOLD_PX) return;
+    if (Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    if (Math.abs(deltaY) > VIEWER_VERTICAL_GUARD_PX) return;
+
+    if (deltaX > 0) {
+      showPreviousInViewer();
+      return;
+    }
+    showNextInViewer();
   }
 
   function toggleSelectionSet() {
@@ -1413,6 +1535,7 @@
   function clearResultsState() {
     releaseResultUrls(results);
     results = [];
+    closeViewer();
     selectedIndices = new Set();
     latestPipelineEvent = null;
     processingPathByQueueId = new Map();
@@ -1469,6 +1592,16 @@
   function removeImage(index) {
     const removed = results[index];
     if (removed?.url) URL.revokeObjectURL(removed.url);
+
+    if (viewerOpen) {
+      if (results.length <= 1) {
+        closeViewer();
+      } else if (index === viewerIndex) {
+        viewerIndex = Math.min(viewerIndex, results.length - 2);
+      } else if (index < viewerIndex) {
+        viewerIndex -= 1;
+      }
+    }
 
     const removedQueueId = removed?.queueId;
     if (removedQueueId !== undefined) {
@@ -1538,11 +1671,30 @@
       void persistQueueStateSnapshot();
     };
 
+    const handleWindowKeyDown = (event) => {
+      if (!viewerOpen) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeViewer();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        showPreviousInViewer();
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        showNextInViewer();
+      }
+    };
+
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", handleVisibilityChange);
     }
     if (typeof window !== "undefined") {
       window.addEventListener("pagehide", handlePageHide);
+      window.addEventListener("keydown", handleWindowKeyDown);
     }
 
     void (async () => {
@@ -1576,7 +1728,10 @@
       }
       if (typeof window !== "undefined") {
         window.removeEventListener("pagehide", handlePageHide);
+        window.removeEventListener("keydown", handleWindowKeyDown);
       }
+
+      clearViewerBounceTimeout();
 
       if (mediaQuery && handleMediaChange) {
         if (typeof mediaQuery.removeEventListener === "function") {
@@ -2134,28 +2289,32 @@
                       QUEUE_ITEM_STATES.STALE}
                     class:failed={getQueueItemStatus(result.queueId) ===
                       QUEUE_ITEM_STATES.FAILED}
-                    on:click={() => toggleSelection(i)}
-                    role="button"
-                    tabindex="0"
-                    on:keydown={(e) => e.key === "Enter" && toggleSelection(i)}
                   >
                     <div class="selection-indicator">
-                      {#if selectedIndices.has(i)}
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 24 24"
-                          fill="currentColor"
-                          class="w-6 h-6"
-                        >
-                          <path
-                            fill-rule="evenodd"
-                            d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
-                            clip-rule="evenodd"
-                          />
-                        </svg>
-                      {:else}
-                        <div class="circle"></div>
-                      {/if}
+                      <button
+                        type="button"
+                        class="selection-toggle"
+                        on:click|stopPropagation={() => toggleSelection(i)}
+                        aria-label={`Toggle selection for ${result.originalName}`}
+                        data-testid={`result-select-${i}`}
+                      >
+                        {#if selectedIndices.has(i)}
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            class="w-6 h-6"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
+                              clip-rule="evenodd"
+                            />
+                          </svg>
+                        {:else}
+                          <div class="circle"></div>
+                        {/if}
+                      </button>
                     </div>
 
                     <button
@@ -2178,7 +2337,15 @@
                     </button>
 
                     <div class="preview">
-                      <img src={result.url} alt="Processed result" />
+                      <button
+                        type="button"
+                        class="preview-btn"
+                        on:click={() => openViewer(i)}
+                        data-testid={`result-thumbnail-${i}`}
+                        aria-label={`Open ${result.originalName}`}
+                      >
+                        <img src={result.url} alt={result.originalName} />
+                      </button>
                     </div>
                     <div class="info">
                       <p class="filename">{result.originalName}</p>
@@ -2248,6 +2415,50 @@
           />
         </svg>
         <span class="sr-only">Open settings</span>
+      </button>
+    </div>
+  {/if}
+
+  {#if viewerOpen && results[viewerIndex]}
+    <div
+      class="photo-viewer-modal"
+      data-testid="photo-viewer-modal"
+      data-bounce={viewerBounceDirection}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Photo viewer"
+      tabindex="-1"
+      on:touchstart={handleViewerTouchStart}
+      on:touchmove={handleViewerTouchMove}
+      on:touchend={handleViewerTouchEnd}
+    >
+      <div class="photo-viewer-stage">
+        <img
+          class="photo-viewer-image"
+          data-testid="photo-viewer-image"
+          src={results[viewerIndex].url}
+          alt={results[viewerIndex].originalName}
+        />
+      </div>
+      <button
+        type="button"
+        class="photo-viewer-corner-hotspot"
+        data-testid="photo-viewer-corner-hotspot"
+        aria-label="Show close button"
+        on:mouseenter={() => (viewerCornerHover = true)}
+        on:mouseleave={() => (viewerCornerHover = false)}
+      ></button>
+      <button
+        type="button"
+        class="photo-viewer-close"
+        class:visible={viewerCloseVisible}
+        data-testid="photo-viewer-close"
+        data-visible={viewerCloseVisible ? "true" : "false"}
+        aria-label="Close photo viewer"
+        style="position: absolute; top: 0.5rem; right: 0.5rem; top: calc(env(safe-area-inset-top, 0px) + 0.5rem); right: calc(env(safe-area-inset-right, 0px) + 0.5rem);"
+        on:click={closeViewer}
+      >
+        ×
       </button>
     </div>
   {/if}
@@ -3010,7 +3221,7 @@
     flex-direction: column;
     gap: 0.5rem;
     position: relative;
-    cursor: pointer;
+    cursor: default;
     border: 1px solid transparent;
     transition:
       transform 0.15s ease,
@@ -3040,6 +3251,16 @@
     right: 0.7rem;
     z-index: 2;
     color: var(--primary-color);
+  }
+
+  .selection-toggle {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
   }
 
   .remove-btn {
@@ -3081,10 +3302,21 @@
     background: rgba(0, 0, 0, 0.45);
   }
 
+  .preview-btn {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+    border-radius: 8px;
+    overflow: hidden;
+    display: block;
+    cursor: zoom-in;
+  }
+
   .preview img {
     width: 100%;
     height: auto;
-    border-radius: 8px;
     display: block;
   }
 
@@ -3196,6 +3428,101 @@
     margin: 0;
     background: rgba(0, 0, 0, 0.35);
     z-index: 29;
+  }
+
+  .photo-viewer-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.92);
+    display: grid;
+    place-items: center;
+    touch-action: pan-y;
+  }
+
+  .photo-viewer-stage {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    padding: 0.75rem;
+  }
+
+  .photo-viewer-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+
+  .photo-viewer-corner-hotspot {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 110px;
+    height: 110px;
+    z-index: 1;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+  }
+
+  .photo-viewer-close {
+    position: absolute;
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, #fff 30%, transparent);
+    background: color-mix(in srgb, #000 35%, transparent);
+    color: #fff;
+    font-size: 1.7rem;
+    line-height: 1;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+    z-index: 2;
+  }
+
+  .photo-viewer-close.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .photo-viewer-modal[data-bounce="left"] .photo-viewer-stage {
+    animation: photo-viewer-bounce-left 0.18s ease-out;
+  }
+
+  .photo-viewer-modal[data-bounce="right"] .photo-viewer-stage {
+    animation: photo-viewer-bounce-right 0.18s ease-out;
+  }
+
+  @keyframes photo-viewer-bounce-left {
+    0% {
+      transform: translateX(0);
+    }
+    35% {
+      transform: translateX(24px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes photo-viewer-bounce-right {
+    0% {
+      transform: translateX(0);
+    }
+    35% {
+      transform: translateX(-24px);
+    }
+    100% {
+      transform: translateX(0);
+    }
   }
 
   .sheet-card {

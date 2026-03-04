@@ -162,6 +162,166 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(within(exportSheet).queryByRole('button', { name: /clear selection/i })).not.toBeInTheDocument();
   });
 
+  it('opens a full-screen photo viewer from a result thumbnail and closes it with X', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(2) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    expect(screen.getByTestId('photo-viewer-modal')).toBeInTheDocument();
+    expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+    expect(screen.getByTestId('photo-viewer-close')).toHaveAttribute('data-visible', 'true');
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-close'));
+    expect(screen.queryByTestId('photo-viewer-modal')).not.toBeInTheDocument();
+  });
+
+  it('uses explicit selection control while thumbnail clicks open viewer', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    expect(screen.getByRole('button', { name: /^export \(1\)$/i })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    expect(screen.getByTestId('photo-viewer-modal')).toBeInTheDocument();
+    await fireEvent.click(screen.getByTestId('photo-viewer-close'));
+
+    await fireEvent.click(screen.getByTestId('result-select-0'));
+    expect(screen.getByRole('button', { name: /^export \(0\)$/i })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('result-select-0'));
+    expect(screen.getByRole('button', { name: /^export \(1\)$/i })).toBeInTheDocument();
+  });
+
+  it('supports swipe navigation in viewer and bounces at edges without wrap-around', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(2) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    const modal = screen.getByTestId('photo-viewer-modal');
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 220, clientY: 120 }],
+    });
+    await fireEvent.touchMove(modal, {
+      touches: [{ clientX: 70, clientY: 126 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 70, clientY: 126 }],
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-1.jpg');
+    });
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 220, clientY: 120 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 80, clientY: 122 }],
+    });
+    expect(modal).toHaveAttribute('data-bounce', 'right');
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 80, clientY: 120 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 220, clientY: 122 }],
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+    });
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 80, clientY: 120 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 220, clientY: 122 }],
+    });
+    expect(modal).toHaveAttribute('data-bounce', 'left');
+  });
+
+  it('supports keyboard navigation and escape close while viewer is open', async () => {
+    window.matchMedia = createMatchMedia(true);
+    render(ImageProcessor, { props: { files: makeFiles(2) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    await fireEvent.keyDown(window, { key: 'ArrowRight' });
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-1.jpg');
+    });
+
+    await fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+    });
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('photo-viewer-modal')).not.toBeInTheDocument();
+  });
+
+  it('shows close control only when hovering top-right corner on desktop', async () => {
+    window.matchMedia = createMatchMedia(true);
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    const closeButton = screen.getByTestId('photo-viewer-close');
+    const hotspot = screen.getByTestId('photo-viewer-corner-hotspot');
+
+    expect(closeButton).toHaveAttribute('data-visible', 'false');
+    await fireEvent.mouseEnter(hotspot);
+    expect(closeButton).toHaveAttribute('data-visible', 'true');
+    await fireEvent.mouseLeave(hotspot);
+    expect(closeButton).toHaveAttribute('data-visible', 'false');
+  });
+
+  it('keeps close control always visible on mobile viewer', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    const closeButton = screen.getByTestId('photo-viewer-close');
+    const hotspot = screen.getByTestId('photo-viewer-corner-hotspot');
+
+    expect(closeButton).toHaveAttribute('data-visible', 'true');
+    await fireEvent.mouseLeave(hotspot);
+    expect(closeButton).toHaveAttribute('data-visible', 'true');
+  });
+
+  it('anchors the close control to the top-right corner of the viewer', async () => {
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    const closeButton = screen.getByTestId('photo-viewer-close');
+    const computed = window.getComputedStyle(closeButton);
+
+    expect(computed.position).toBe('absolute');
+    expect(computed.top).not.toBe('auto');
+    expect(computed.right).not.toBe('auto');
+  });
+
   it('keeps rotation controls on mobile results and hides them in mobile settings sheet', async () => {
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
