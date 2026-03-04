@@ -17,6 +17,7 @@
     "test:e2e:mobile": "npx playwright test --project=mobile-webkit-ios --project=mobile-chromium-android-gpu --project=mobile-chromium-android-fallback",
     "test:e2e:android-webgpu": "npx playwright test --config=playwright.android-real.config.js",
     "test:ui": "vitest run --ui",
+    "test:integration:jpegli-determinism": "vitest run --config vite.config.jpegli-determinism.js",
     "test:coverage": "vitest run --config vite.config.test.js --coverage --coverage.provider=istanbul"
   },
   "keywords": [],

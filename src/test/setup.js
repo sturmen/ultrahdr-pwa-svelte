@@ -56,10 +56,31 @@ global.fetch = vi.fn((url) => {
 if (typeof window !== 'undefined') {
   let mockWasmMemOffset = 0;
   const mockWasmMemory = new ArrayBuffer(64 * 1024 * 1024); // 64MB
+  let mockNextScanline = 0;
+  let mockImageHeight = 0;
 
   window.createJpegliWasm = vi.fn(() => Promise.resolve({
     _jpegli_wasm_encoder_create: vi.fn(() => 12345),
     _jpegli_wasm_encoder_destroy: vi.fn(),
+    _jpegli_wasm_encoder_start: vi.fn((_state, _ptr, _width, height) => {
+      mockNextScanline = 0;
+      mockImageHeight = Number(height) || 0;
+      return 0;
+    }),
+    _jpegli_wasm_encoder_process_rows: vi.fn((_state, maxRows) => {
+      if (mockNextScanline >= mockImageHeight) {
+        return 0;
+      }
+      const rows = Math.max(
+        1,
+        Math.min(mockImageHeight - mockNextScanline, Math.floor(Number(maxRows) || 1))
+      );
+      mockNextScanline += rows;
+      return rows;
+    }),
+    _jpegli_wasm_encoder_finish: vi.fn(() => 0),
+    _jpegli_wasm_encoder_get_next_scanline: vi.fn(() => mockNextScanline),
+    _jpegli_wasm_encoder_get_image_height: vi.fn(() => mockImageHeight),
     _jpegli_wasm_encode: vi.fn(() => 0),
     _jpegli_wasm_get_output_data: vi.fn(() => 1024),
     _jpegli_wasm_get_output_size: vi.fn(() => 1024),
@@ -121,4 +142,3 @@ global.console = {
 };
 
 // Console is already mocked above if needed
-

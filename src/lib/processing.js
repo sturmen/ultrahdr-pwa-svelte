@@ -623,7 +623,7 @@ function initializeWorkerClient(initOptions = null) {
 
       if (job.inferenceHeartbeatIntervalId === null) {
         const hasStartNote = typeof detail?.note === 'string'
-          && detail.note.toLowerCase().includes('application may appear hung');
+          && detail.note.toLowerCase().includes('Starting inference');
         if (!hasStartNote) {
           emitProgressToJob(job, buildInferenceHeartbeatEvent(job, nowMs));
         }

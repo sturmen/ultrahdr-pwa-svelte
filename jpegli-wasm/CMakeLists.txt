@@ -5,9 +5,15 @@ if(NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     message(FATAL_ERROR "This project requires Emscripten. Use emcmake cmake ...")
 endif()
 
-# Force a writable Emscripten cache directory to avoid Homebrew EPERM errors
-add_compile_options(--cache=/tmp/emscripten-cache)
-add_link_options(--cache=/tmp/emscripten-cache)
+# Prefer caller-provided Emscripten cache path. Fallback keeps prior behavior.
+if(DEFINED ENV{EM_CACHE} AND NOT "$ENV{EM_CACHE}" STREQUAL "")
+    set(EMSCRIPTEN_CACHE_PATH "$ENV{EM_CACHE}")
+else()
+    set(EMSCRIPTEN_CACHE_PATH "/tmp/emscripten-cache")
+endif()
+
+add_compile_options(--cache=${EMSCRIPTEN_CACHE_PATH})
+add_link_options(--cache=${EMSCRIPTEN_CACHE_PATH})
 
 # Prepend our mock cmake modules path to intercept find_package(Threads)
 list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -64,11 +70,14 @@ target_link_options(jpegli_wasm PRIVATE
     -O3 -flto
     -sWASM=1
     -sALLOW_MEMORY_GROWTH=1
+    -sMIN_WEBGL_VERSION=0
+    -sMAX_WEBGL_VERSION=0
+    -sGL_ENABLE_GET_PROC_ADDRESS=0
     -sMODULARIZE=1
     -sEXPORT_NAME="createJpegliWasm"
     -sWASM_ASYNC_COMPILATION=0
     -sSINGLE_FILE=0
     "-sENVIRONMENT=web,worker,node"
-    "-sEXPORTED_FUNCTIONS=['_jpegli_wasm_encoder_create','_jpegli_wasm_encode','_jpegli_wasm_get_output_data','_jpegli_wasm_get_output_size','_jpegli_wasm_encoder_destroy','_malloc','_free']"
+    "-sEXPORTED_FUNCTIONS=['_jpegli_wasm_encoder_create','_jpegli_wasm_encoder_start','_jpegli_wasm_encoder_process_rows','_jpegli_wasm_encoder_finish','_jpegli_wasm_encoder_get_next_scanline','_jpegli_wasm_encoder_get_image_height','_jpegli_wasm_encode','_jpegli_wasm_get_output_data','_jpegli_wasm_get_output_size','_jpegli_wasm_encoder_destroy','_malloc','_free']"
     "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','getValue','setValue','UTF8ToString','HEAPU8','HEAP32','HEAPF32']"
 )

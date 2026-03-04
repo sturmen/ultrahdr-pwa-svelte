@@ -45,6 +45,16 @@ export function buildJpegliWasm() {
     if (!fs.existsSync(emCachePath)) {
         fs.mkdirSync(emCachePath, { recursive: true });
     }
+    // Homebrew Emscripten currently emits relative system-lib source paths that
+    // resolve under EM_CACHE; mirror /opt there so those paths remain valid.
+    const cacheOptPath = path.join(emCachePath, 'opt');
+    try {
+        if (!fs.existsSync(cacheOptPath)) {
+            fs.symlinkSync('/opt', cacheOptPath);
+        }
+    } catch (symlinkError) {
+        console.warn(`Could not create cache symlink ${cacheOptPath} -> /opt:`, symlinkError);
+    }
 
     const execOptions = {
         cwd: BUILD_DIR_JPEGLI,

@@ -11,6 +11,7 @@ dist/
 libultrahdr/build/
 ultrahdr-wasm/build/
 jpegli-wasm/build/
+build-jpegli-wasm/
 *.o
 *.a
 *.so

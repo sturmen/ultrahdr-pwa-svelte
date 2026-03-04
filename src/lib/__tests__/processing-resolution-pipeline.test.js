@@ -76,7 +76,22 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 }));
 
 vi.mock('../jpegli-decoder.js', () => ({
-  encodeJpegli: vi.fn(async (imageData, quality) => {
+  encodeJpegli: vi.fn(async (imageData, quality, options = {}) => {
+    options?.onProgress?.(20, {
+      jpegliRowsEncoded: 2,
+      jpegliTotalRows: 10,
+      jpegliChunkRows: 2,
+    });
+    options?.onProgress?.(70, {
+      jpegliRowsEncoded: 7,
+      jpegliTotalRows: 10,
+      jpegliChunkRows: 2,
+    });
+    options?.onProgress?.(100, {
+      jpegliRowsEncoded: 10,
+      jpegliTotalRows: 10,
+      jpegliChunkRows: 2,
+    });
     jpegEncodeCanvasSizes.push({ width: imageData.width, height: imageData.height });
     return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]); // Fake JPEG bytes
   })
@@ -225,6 +240,33 @@ describe('processing fixed-resolution generated pipeline', () => {
       .map((event) => event.stage);
     expect(stageEvents).not.toContain('probe-gmnet-capability');
     expect(stageEvents).toContain('prepare-gmnet-input');
+  });
+
+  it('emits stage-progress updates for both jpegli encode stages when useJpegli=true', async () => {
+    decodeDimensions.width = 3200;
+    decodeDimensions.height = 2400;
+    const onProgress = vi.fn();
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.png', { type: 'image/png' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      useJpegli: true,
+      onProgress,
+    });
+
+    const stageProgressEvents = onProgress.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event?.phase === 'stage-progress');
+
+    expect(
+      stageProgressEvents.some((event) => event?.stage === 'encode-sdr-to-jpeg'),
+    ).toBe(true);
+    expect(
+      stageProgressEvents.some((event) => event?.stage === 'encode-gain-map-to-jpeg'),
+    ).toBe(true);
   });
 
   it('does not apply GPU capability clamp when wasm backend is explicitly forced', async () => {

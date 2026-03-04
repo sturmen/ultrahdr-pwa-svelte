@@ -1214,8 +1214,27 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
             );
         }
 
+        const createJpegliProgressOptions = (stage, label) => {
+            if (!telemetry || !options.useJpegli) {
+                return {};
+            }
+            return {
+                onProgress: (stageProgress, metadata = {}) => {
+                    const numericProgress = Number(stageProgress);
+                    const clampedProgress = Number.isFinite(numericProgress)
+                        ? Math.max(0, Math.min(100, numericProgress))
+                        : 0;
+                    telemetry.emitStageProgress(stage, clampedProgress, {
+                        note: `${label} ${Math.round(clampedProgress)}%`,
+                        ...(metadata && typeof metadata === 'object' ? metadata : {}),
+                    });
+                },
+                chunkRows: options.jpegliChunkRows,
+            };
+        };
+
         const encoderFn = options.useJpegli ?
-            async (data, q) => await imageDataToJpegBytes(data, q) :
+            async (data, q, encodeOptions = {}) => await imageDataToJpegBytes(data, q, encodeOptions) :
             async (data, q) => await blobToUint8Array(await imageDataToJpegBlob(data, q));
 
         console.log("[start] encode-sdr-to-jpeg")
@@ -1229,14 +1248,36 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
             }
         } else {
             sdrJpegBytes = telemetry ?
-                await telemetry.runStage('encode-sdr-to-jpeg', async () => encoderFn(rotatedSdrImageData, quality)) :
-                await encoderFn(rotatedSdrImageData, quality);
+                await telemetry.runStage(
+                    'encode-sdr-to-jpeg',
+                    async () => encoderFn(
+                        rotatedSdrImageData,
+                        quality,
+                        createJpegliProgressOptions('encode-sdr-to-jpeg', 'Encoding SDR JPEG'),
+                    )
+                ) :
+                await encoderFn(
+                    rotatedSdrImageData,
+                    quality,
+                    createJpegliProgressOptions('encode-sdr-to-jpeg', 'Encoding SDR JPEG'),
+                );
         }
         console.log("[end] encode-sdr-to-jpeg success")
         console.log("[start] encode-gain-map-to-jpeg")
         const gainMapJpegBytes = telemetry ?
-            await telemetry.runStage('encode-gain-map-to-jpeg', async () => encoderFn(encoderGainMapImageData, quality)) :
-            await encoderFn(encoderGainMapImageData, quality);
+            await telemetry.runStage(
+                'encode-gain-map-to-jpeg',
+                async () => encoderFn(
+                    encoderGainMapImageData,
+                    quality,
+                    createJpegliProgressOptions('encode-gain-map-to-jpeg', 'Encoding gain map JPEG'),
+                )
+            ) :
+            await encoderFn(
+                encoderGainMapImageData,
+                quality,
+                createJpegliProgressOptions('encode-gain-map-to-jpeg', 'Encoding gain map JPEG'),
+            );
         console.log("[end] encode-gain-map-to-jpeg success")
         let finalExifPayload = exifPayload;
         if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
@@ -1306,10 +1347,11 @@ import {
     encodeJpegli
 } from './jpegli-decoder.js';
 
-async function imageDataToJpegBytes(imageData, quality = 0.95) {
+async function imageDataToJpegBytes(imageData, quality = 0.95, options = {}) {
     // Quality for jpegli is 0-100, normalize from 0-1
     const wasmQuality = Math.max(1, Math.min(100, Math.round(quality * 100)));
-    return await encodeJpegli(imageData, wasmQuality);
+    console.log("encoding using jpegli")
+    return await encodeJpegli(imageData, wasmQuality, options);
 }
 
 /**
