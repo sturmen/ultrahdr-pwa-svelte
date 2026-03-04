@@ -1,4 +1,3 @@
-import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -28,16 +27,9 @@ function createSteps() {
     },
     {
       id: 'gmnet-smoke-run',
-      label: 'Run GMNet smoke and capability checks',
+      label: 'Run GMNet smoke test',
       status: 'running',
-      note: 'Testing 2048x2048 capability (webgpu)...',
-      attempts: [
-        {
-          provider: 'webgpu',
-          candidateLongEdge: 2048,
-          status: 'running',
-        },
-      ],
+      note: 'Running GMNet smoke test (webgpu)...',
     },
   ];
 }
@@ -145,22 +137,31 @@ describe('InitializationGate', () => {
     expect(screen.getByTestId('runtime-init-retry')).toBeInTheDocument();
   });
 
-  it('renders gmnet probe attempts as a sublist with per-resolution status rows', async () => {
+  it('does not render probe attempt sublists, even when legacy attempt payloads are present', async () => {
     const firstRender = render(InitializationGate, {
       props: {
         state: 'running',
-        steps: createSteps(),
+        steps: createSteps().map((step) =>
+          step.id === 'gmnet-smoke-run'
+            ? {
+              ...step,
+              attempts: [
+                {
+                  provider: 'webgpu',
+                  candidateLongEdge: 2048,
+                  status: 'running',
+                },
+              ],
+            }
+            : step
+        ),
         failure: null,
       },
     });
 
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempts')).toBeInTheDocument();
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
-      /2048x2048/i,
-    );
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
-      /running/i,
-    );
+    expect(
+      screen.queryByTestId('runtime-step-gmnet-smoke-run-attempts'),
+    ).not.toBeInTheDocument();
 
     firstRender.unmount();
 
@@ -180,7 +181,7 @@ describe('InitializationGate', () => {
                 },
                 {
                   provider: 'webgpu',
-                  candidateLongEdge: GMNET_MAX_LONG_EDGE,
+                  candidateLongEdge: 4094,
                   status: 'failed',
                 },
               ],
@@ -190,11 +191,8 @@ describe('InitializationGate', () => {
       },
     });
 
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
-      /passed/i,
-    );
-    expect(screen.getByTestId(`runtime-step-gmnet-smoke-run-attempt-webgpu-${GMNET_MAX_LONG_EDGE}`)).toHaveTextContent(
-      /failed/i,
-    );
+    expect(
+      screen.queryByTestId('runtime-step-gmnet-smoke-run-attempts'),
+    ).not.toBeInTheDocument();
   });
 });

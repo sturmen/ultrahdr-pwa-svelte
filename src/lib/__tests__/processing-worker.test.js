@@ -1,4 +1,3 @@
-import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -134,7 +133,7 @@ describe('processing worker wrapper', () => {
     vi.useRealTimers();
   });
 
-  it('fails fast when worker runtime is unavailable instead of falling back to main thread', async () => {
+  it('falls back to main-thread processing when worker runtime is unavailable', async () => {
     globalThis.Worker = undefined;
     globalThis.OffscreenCanvas = undefined;
     globalThis.createImageBitmap = undefined;
@@ -142,13 +141,12 @@ describe('processing worker wrapper', () => {
     const { processImage } = await import('../processing.js');
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
 
-    await expect(processImage(file, {})).rejects.toMatchObject({
-      name: 'ProcessingWorkerUnavailableError',
-    });
-    expect(processImageCoreMock).not.toHaveBeenCalled();
+    const result = await processImage(file, {});
+    expect(result).toBeInstanceOf(Blob);
+    expect(processImageCoreMock).toHaveBeenCalledTimes(1);
   });
 
-  it('fails fast when worker initialization fails instead of falling back to main thread', async () => {
+  it('falls back to main-thread processing when worker initialization fails', async () => {
     globalThis.Worker = class BrokenWorker {
       constructor() {
         throw new Error('worker init broke');
@@ -160,8 +158,21 @@ describe('processing worker wrapper', () => {
     const { processImage } = await import('../processing.js');
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
 
-    await expect(processImage(file, {})).rejects.toMatchObject({
-      name: 'ProcessingWorkerInitError',
+    const result = await processImage(file, {});
+    expect(result).toBeInstanceOf(Blob);
+    expect(processImageCoreMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('can disable main-thread fallback for worker runtime unavailability', async () => {
+    globalThis.Worker = undefined;
+    globalThis.OffscreenCanvas = undefined;
+    globalThis.createImageBitmap = undefined;
+
+    const { processImage } = await import('../processing.js');
+    const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
+
+    await expect(processImage(file, { allowMainThreadFallback: false })).rejects.toMatchObject({
+      name: 'ProcessingWorkerUnavailableError',
     });
     expect(processImageCoreMock).not.toHaveBeenCalled();
   });
@@ -227,11 +238,58 @@ describe('processing worker wrapper', () => {
       expect.objectContaining({
         ready: true,
         resolvedExecutionProvider: 'webgl',
+        runtimeMode: 'worker-gpu',
       }),
     );
   });
 
-  it('initializeRuntime forwards probe payload fields from init-progress unchanged', async () => {
+  it('initializeRuntime exposes worker-wasm runtime mode when startup resolves to WASM', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+    MockWorker.onInit = (worker) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'ready',
+            runtime: {
+              resolvedExecutionProvider: 'wasm',
+            },
+          },
+        });
+      });
+    };
+
+    const { initializeRuntime } = await import('../processing.js');
+    const result = await initializeRuntime();
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ready: true,
+        resolvedExecutionProvider: 'wasm',
+        runtimeMode: 'worker-wasm',
+      }),
+    );
+  });
+
+  it('initializeRuntime falls back to main thread and reports main-thread-wasm runtime mode', async () => {
+    globalThis.Worker = undefined;
+    globalThis.OffscreenCanvas = undefined;
+    globalThis.createImageBitmap = undefined;
+
+    const { initializeRuntime } = await import('../processing.js');
+    const result = await initializeRuntime();
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ready: true,
+        resolvedExecutionProvider: 'wasm',
+        runtimeMode: 'main-thread-wasm',
+      }),
+    );
+  });
+
+  it('initializeRuntime strips legacy probe fields from init-progress payloads', async () => {
     globalThis.Worker = MockWorker;
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
@@ -257,7 +315,7 @@ describe('processing worker wrapper', () => {
               gmnetCapability: {
                 provider: 'webgpu',
                 gainMapMaxLongEdge: 2048,
-                outputMaxLongEdge: GMNET_MAX_LONG_EDGE,
+                outputMaxLongEdge: 4096,
                 source: 'cache',
                 attempts: [{ provider: 'webgpu', candidateLongEdge: 2048, status: 'passed' }],
               },
@@ -283,28 +341,22 @@ describe('processing worker wrapper', () => {
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
         stepId: 'gmnet-smoke-run',
-        probeAttempt: expect.objectContaining({
-          provider: 'webgpu',
-          candidateLongEdge: 2048,
-          status: 'running',
-        }),
-        probeAttempts: expect.arrayContaining([
-          expect.objectContaining({
-            candidateLongEdge: 2048,
-            status: 'passed',
-          }),
-        ]),
         gmnetCapabilitySource: 'cache',
         gmnetCapability: expect.objectContaining({
           provider: 'webgpu',
           gainMapMaxLongEdge: 2048,
-          outputMaxLongEdge: GMNET_MAX_LONG_EDGE,
+          outputMaxLongEdge: 4096,
         }),
       }),
     );
+    const smokeEvent = onProgress.mock.calls
+      .map(([event]) => event)
+      .find((event) => event?.stepId === 'gmnet-smoke-run');
+    expect(smokeEvent?.probeAttempt).toBeUndefined();
+    expect(smokeEvent?.probeAttempts).toBeUndefined();
   });
 
-  it('forwards gmnetCapabilityHintsByProvider in initializeRuntime init options', async () => {
+  it('does not forward gmnetCapabilityHintsByProvider in initializeRuntime init options', async () => {
     globalThis.Worker = MockWorker;
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
@@ -315,12 +367,13 @@ describe('processing worker wrapper', () => {
         gmnetCapabilityHintsByProvider: {
           webgpu: {
             provider: 'webgpu',
-            gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
-            outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
+            gainMapMaxLongEdge: 4094,
+            outputMaxLongEdge: 8192,
             source: 'cache',
-            attempts: [{ provider: 'webgpu', candidateLongEdge: GMNET_MAX_LONG_EDGE, status: 'passed' }],
+            attempts: [{ provider: 'webgpu', candidateLongEdge: 4094, status: 'passed' }],
           },
         },
+        smokeAssetPath: 'models/gmnet-smoke-explicit.png',
       },
     });
 
@@ -328,15 +381,10 @@ describe('processing worker wrapper', () => {
     const initMessage = worker.posted.find((message) => message.type === 'init');
     expect(initMessage?.options).toEqual(
       expect.objectContaining({
-        gmnetCapabilityHintsByProvider: expect.objectContaining({
-          webgpu: expect.objectContaining({
-            provider: 'webgpu',
-            gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
-            outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
-          }),
-        }),
+        smokeAssetPath: 'models/gmnet-smoke-explicit.png',
       }),
     );
+    expect(initMessage?.options?.gmnetCapabilityHintsByProvider).toBeUndefined();
   });
 
   it('initializeRuntime rejects with structured init-error payload from worker', async () => {
@@ -408,7 +456,7 @@ describe('processing worker wrapper', () => {
     expect(Array.isArray(window[PIPELINE_HISTORY_KEY])).toBe(true);
   });
 
-  it('forwards gmnet capability progress payloads without mutation', async () => {
+  it('forwards gmnet execution provider progress payloads on non-probe stages', async () => {
     globalThis.Worker = MockWorker;
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
@@ -421,16 +469,9 @@ describe('processing worker wrapper', () => {
             jobId: message.jobId,
             event: {
               phase: 'stage-progress',
-              stage: 'probe-gmnet-capability',
+              stage: 'generate-gain-map',
               gmnetExecutionProvider: 'webgl',
-              gmnetCapabilitySource: 'fixed-model',
-              gmnetCapability: {
-                provider: 'webgl',
-                gainMapMaxLongEdge: 128,
-                outputMaxLongEdge: 256,
-                source: 'fixed-model',
-                attempts: [{ candidateLongEdge: 128, status: 'passed' }],
-              },
+              note: 'Running tile 1/4',
             },
           },
         });
@@ -456,13 +497,81 @@ describe('processing worker wrapper', () => {
 
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
-        stage: 'probe-gmnet-capability',
-        gmnetCapabilitySource: 'fixed-model',
-        gmnetCapability: expect.objectContaining({
-          provider: 'webgl',
-          gainMapMaxLongEdge: 128,
-          outputMaxLongEdge: 256,
-        }),
+        stage: 'generate-gain-map',
+        gmnetExecutionProvider: 'webgl',
+      }),
+    );
+  });
+
+  it('forwards gmnetCheckpointing process option to worker jobs', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+
+    const { processImage } = await import('../processing.js');
+    const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      gmnetCheckpointing: 'force',
+    });
+
+    const worker = MockWorker.instances[0];
+    const processMessage = worker.posted.find((message) => message.type === 'process');
+    expect(processMessage?.options).toEqual(
+      expect.objectContaining({
+        gmnetCheckpointing: 'force',
+      }),
+    );
+  });
+
+  it('forwards checkpoint telemetry metadata through progress callbacks', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+
+    MockWorker.onProcess = (worker, message) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'progress',
+            jobId: message.jobId,
+            event: {
+              phase: 'stage-progress',
+              stage: 'generate-gain-map',
+              stageProgress: 40,
+              gmnetExecutionProvider: 'webgpu',
+              gmnetMemoryMode: 'checkpointed',
+              gmnetCheckpointTilesCompleted: 2,
+              gmnetCheckpointTilesTotal: 8,
+              gmnetCheckpointResumed: true,
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        const buffer = new Uint8Array([1, 2, 3]).buffer;
+        worker.emit('message', {
+          data: {
+            type: 'result',
+            jobId: message.jobId,
+            mimeType: 'image/jpeg',
+            buffer,
+          },
+        });
+      });
+    };
+
+    const { processImage } = await import('../processing.js');
+    const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
+    const onProgress = vi.fn();
+
+    await processImage(file, { onProgress });
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gmnetMemoryMode: 'checkpointed',
+        gmnetCheckpointTilesCompleted: 2,
+        gmnetCheckpointTilesTotal: 8,
+        gmnetCheckpointResumed: true,
       }),
     );
   });

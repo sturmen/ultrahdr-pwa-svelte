@@ -7,7 +7,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createCanvas, loadImage } from 'canvas';
 import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
-import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupProbeBypass } from './runtime-gate.js';
+import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOverride } from './runtime-gate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -521,18 +521,6 @@ function relativeDelta(a, b) {
     return Math.abs(a - b) / denom;
 }
 
-async function readRuntimeProvider(page) {
-    const marker = await page.getByTestId('runtime-init-provider').textContent();
-    const match = /runtime provider:\s*([a-z0-9_-]+)/i.exec(marker || '');
-    return (match?.[1] || '').trim().toLowerCase() || null;
-}
-
-async function setCapabilityOverride(page, override) {
-    await page.evaluate((value) => {
-        window.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE = value;
-    }, override);
-}
-
 function extractHeicHeadroom(heicPath) {
     const xmpXml = execFileSync('exiftool', ['-a', '-b', '-XMP', heicPath], { stdio: 'pipe' }).toString('utf8');
     const match = xmpXml.match(/<HDRGainMap:HDRGainMapHeadroom>\s*([0-9.+\-eE]+)\s*<\/HDRGainMap:HDRGainMapHeadroom>/i)
@@ -561,15 +549,21 @@ function extractOutputHeadroom(ultraHdrPath, tempDir) {
     return Math.pow(2, hdrCapacityMaxLog2);
 }
 
-function expectedStartupProviderForProject(projectName) {
+function expectedStartupRuntimePolicyForProject(projectName) {
     const enforceChromiumWebGpu = process.env.ULTRAHDR_EXPECT_CHROMIUM_WEBGPU === '1';
     if (projectName === 'chromium' && enforceChromiumWebGpu) {
-        return 'webgpu';
+        return { expectedProvider: 'webgpu' };
+    }
+    if (projectName === 'firefox') {
+        return {
+            expectedProviders: ['webgpu', 'webgl'],
+            forbiddenProviders: ['wasm'],
+        };
     }
     if (projectName === 'webkit') {
-        return 'webgl';
+        return { expectedProvider: 'webgl' };
     }
-    return null;
+    return {};
 }
 
 // ============================================================
@@ -591,11 +585,12 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             }
             window.__ULTRAHDR_BACKEND_PREFERENCE = 'auto';
         });
-        await installStartupProbeBypass(page, { projectName: testInfo.project.name });
+        await installStartupRuntimeOverride(page, { projectName: testInfo.project.name });
         await page.goto('/');
         try {
+            const runtimePolicy = expectedStartupRuntimePolicyForProject(testInfo.project.name);
             await ensureRuntimeGateReady(page, testInfo, {
-                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+                ...runtimePolicy,
             });
         } catch (error) {
             const message = String(error?.message || '');
@@ -701,36 +696,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             }
         });
 
-        test('should apply capability override clamp and show restriction warning', async ({ page, browserName }) => {
+        test('does not show capability restriction warning UI during normal processing', async ({ page }) => {
             test.setTimeout(180_000);
-            const runtimeProvider = await readRuntimeProvider(page);
-            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-capability-cap-${browserName}-`));
-            try {
-                await setCapabilityOverride(page, {
-                    provider: runtimeProvider || 'webgpu',
-                    gainMapMaxLongEdge: 256,
-                    outputMaxLongEdge: 512,
-                    source: 'test-override',
-                    attempts: [],
-                });
+            await uploadFiles(page, [SDR_IMAGE]);
+            await waitForProcessing(page);
 
-                await uploadFiles(page, [SDR_IMAGE]);
-                await waitForProcessing(page);
-
-                await expect(page.getByTestId('capability-restriction-banner')).toBeVisible();
-                await expect(page.getByTestId('capability-restriction-banner')).toContainText('512');
-
-                const outputBuffer = await downloadFirstResult(page);
-                const outputJpegPath = path.join(tempDir, 'output-ultrahdr.jpg');
-                fs.writeFileSync(outputJpegPath, outputBuffer);
-
-                const outputGainMapPath = extractUltraHdrGainMapJpeg(outputJpegPath, tempDir);
-                const outputGainMapBitmap = await loadBitmap(outputGainMapPath);
-                expect(outputGainMapBitmap.width).toBe(256);
-                expect(outputGainMapBitmap.height).toBe(144);
-            } finally {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-            }
+            await expect(page.getByTestId('capability-restriction-banner')).toHaveCount(0);
+            await page.getByRole('button', { name: /^Export/i }).first().click();
+            await expect(page.getByTestId('export-capability-restriction')).toHaveCount(0);
         });
     });
 
@@ -794,7 +767,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             test.setTimeout(240_000); // Re-processing + startup gate can be slow in CI.
             await page.goto('/');
             await ensureRuntimeGateReady(page, testInfo, {
-                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+                ...expectedStartupRuntimePolicyForProject(testInfo.project.name),
             });
 
             // Upload a smaller SDR image for faster re-processing
@@ -1220,7 +1193,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             test.setTimeout(180_000);
             await page.goto('/');
             await ensureRuntimeGateReady(page, testInfo, {
-                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+                ...expectedStartupRuntimePolicyForProject(testInfo.project.name),
             });
 
             // Verify the drop zone is visible
@@ -1234,7 +1207,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             test.setTimeout(180_000);
             await page.goto('/');
             await ensureRuntimeGateReady(page, testInfo, {
-                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+                ...expectedStartupRuntimePolicyForProject(testInfo.project.name),
             });
 
             await expect(page.getByText('Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF')).toBeVisible();
@@ -1242,24 +1215,21 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     });
 });
 
-test.describe('Runtime Startup Probe Streaming', () => {
-    test('shows at least one GMNet probe attempt before runtime ready', async ({ page, browserName }, testInfo) => {
+test.describe('Runtime Startup Gate', () => {
+    test('reaches runtime-ready without rendering probe-attempt rows', async ({ page, browserName }, testInfo) => {
         const failureReason = getRuntimeGateFailure(testInfo.project.name);
         test.skip(Boolean(failureReason), failureReason || '');
         test.setTimeout(240_000);
-        await installStartupProbeBypass(page, {
+        await installStartupRuntimeOverride(page, {
             projectName: testInfo.project.name,
-            skipProbeBypass: true,
         });
 
         await page.goto('/');
 
-        const attemptRow = page.locator('[data-testid^="runtime-step-gmnet-smoke-run-attempt-"]').first();
-        await expect(attemptRow).toBeVisible({ timeout: 120_000 });
-        await expect(page.getByTestId('runtime-init-ready')).toHaveCount(0);
+        await expect(page.locator('[data-testid^=\"runtime-step-gmnet-smoke-run-attempt-\"]')).toHaveCount(0);
         try {
             await ensureRuntimeGateReady(page, testInfo, {
-                expectedProvider: expectedStartupProviderForProject(testInfo.project.name),
+                ...expectedStartupRuntimePolicyForProject(testInfo.project.name),
             });
         } catch (error) {
             const message = String(error?.message || '');

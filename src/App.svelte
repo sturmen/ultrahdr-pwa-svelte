@@ -1,6 +1,7 @@
 <script>
   import { onMount, tick } from "svelte";
   import DropZone from "./lib/DropZone.svelte";
+  import HomeProcessingSettings from "./lib/HomeProcessingSettings.svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
   import InitializationGate from "./lib/InitializationGate.svelte";
   import {
@@ -8,7 +9,10 @@
     RUNTIME_INIT_STEP_LABELS,
     RUNTIME_INIT_STEP_ORDER,
   } from "./lib/processing.js";
-  import { consumeSharedFilesFromLaunch } from "./lib/share-target-launch.js";
+  import {
+    consumeSharedFilesFromLaunch,
+    registerLaunchQueueConsumer,
+  } from "./lib/share-target-launch.js";
   import { loadQueueState } from "./lib/share-store.js";
   import {
     createDefaultPwaUpdateState,
@@ -31,7 +35,8 @@
   let runtimeInitFailure = null;
   let runtimeInitRunId = 0;
   let runtimeInitExecutionProvider = null;
-  let runtimeInitGmnetCapability = null;
+  let runtimeInitMode = null;
+  let runtimeInitDegraded = false;
   let appDisposed = false;
 
   function createRuntimeInitSteps() {
@@ -42,7 +47,6 @@
       note: "",
       diagnostics: null,
       errorCode: null,
-      attempts: [],
     }));
   }
 
@@ -79,7 +83,6 @@
           note: "",
           diagnostics: null,
           errorCode: null,
-          attempts: [],
           ...changes,
         },
       ];
@@ -94,85 +97,6 @@
           }
         : step,
     );
-  }
-
-  function normalizeProbeAttempt(rawAttempt) {
-    if (!rawAttempt || typeof rawAttempt !== "object") {
-      return null;
-    }
-    const provider = normalizeExecutionProvider(rawAttempt.provider || "");
-    const candidateLongEdge = Math.floor(Number(rawAttempt.candidateLongEdge));
-    if (
-      !provider ||
-      !Number.isFinite(candidateLongEdge) ||
-      candidateLongEdge < 1
-    ) {
-      return null;
-    }
-    const rawStatus = String(rawAttempt.status || "")
-      .trim()
-      .toLowerCase();
-    const status =
-      rawStatus === "passed" ||
-      rawStatus === "failed" ||
-      rawStatus === "running"
-        ? rawStatus
-        : "running";
-    const probeHeight = Math.max(1, Math.floor((candidateLongEdge * 2) / 3));
-    return {
-      provider,
-      candidateLongEdge,
-      probeHeight,
-      status,
-      durationMs: Number.isFinite(Number(rawAttempt.durationMs))
-        ? Number(rawAttempt.durationMs)
-        : undefined,
-      error:
-        rawAttempt.error && typeof rawAttempt.error === "object"
-          ? {
-              name:
-                typeof rawAttempt.error.name === "string"
-                  ? rawAttempt.error.name
-                  : "Error",
-              message:
-                typeof rawAttempt.error.message === "string"
-                  ? rawAttempt.error.message
-                  : String(rawAttempt.error),
-            }
-          : undefined,
-    };
-  }
-
-  function mergeRuntimeStepAttempts(existingAttempts = [], event = null) {
-    if (!event || typeof event !== "object") {
-      return existingAttempts;
-    }
-    if (Array.isArray(event.probeAttempts)) {
-      return event.probeAttempts
-        .map((attempt) => normalizeProbeAttempt(attempt))
-        .filter(Boolean);
-    }
-
-    const incomingAttempt = normalizeProbeAttempt(event.probeAttempt);
-    if (!incomingAttempt) {
-      return existingAttempts;
-    }
-    const key = `${incomingAttempt.provider}:${incomingAttempt.candidateLongEdge}`;
-    const nextAttempts = Array.isArray(existingAttempts)
-      ? [...existingAttempts]
-      : [];
-    const existingIndex = nextAttempts.findIndex(
-      (attempt) => `${attempt.provider}:${attempt.candidateLongEdge}` === key,
-    );
-    if (existingIndex === -1) {
-      nextAttempts.push(incomingAttempt);
-    } else {
-      nextAttempts[existingIndex] = {
-        ...nextAttempts[existingIndex],
-        ...incomingAttempt,
-      };
-    }
-    return nextAttempts;
   }
 
   function normalizeExecutionProvider(value) {
@@ -200,10 +124,6 @@
           ? { ...event.diagnostics }
           : null,
       errorCode: typeof event.errorCode === "string" ? event.errorCode : null,
-      attempts: mergeRuntimeStepAttempts(
-        runtimeInitSteps.find((step) => step.id === stepId)?.attempts || [],
-        event,
-      ),
     });
   }
 
@@ -245,7 +165,8 @@
     runtimeInitState = "running";
     runtimeInitFailure = null;
     runtimeInitExecutionProvider = null;
-    runtimeInitGmnetCapability = null;
+    runtimeInitMode = null;
+    runtimeInitDegraded = false;
     runtimeInitSteps = createRuntimeInitSteps();
 
     try {
@@ -268,11 +189,13 @@
       runtimeInitExecutionProvider = normalizeExecutionProvider(
         runtimeResult?.resolvedExecutionProvider,
       );
-      runtimeInitGmnetCapability =
-        runtimeResult?.gmnetCapability &&
-        typeof runtimeResult.gmnetCapability === "object"
-          ? { ...runtimeResult.gmnetCapability }
+      runtimeInitMode =
+        typeof runtimeResult?.runtimeMode === "string"
+          ? runtimeResult.runtimeMode
           : null;
+      runtimeInitDegraded =
+        Boolean(runtimeResult?.runtimeDegraded) ||
+        runtimeInitMode === "main-thread-wasm";
       runtimeInitState = "ready";
       return true;
     } catch (error) {
@@ -281,6 +204,8 @@
       }
       runtimeInitFailure = buildRuntimeInitFailure(error);
       runtimeInitState = "failed";
+      runtimeInitMode = null;
+      runtimeInitDegraded = false;
       updateRuntimeStep(runtimeInitFailure.stepId, {
         status: "failed",
         note: runtimeInitFailure.userMessage,
@@ -405,6 +330,7 @@
 
   onMount(() => {
     appDisposed = false;
+    registerLaunchQueueConsumer();
     pwaUpdateCoordinator = createPwaUpdateCoordinator({
       onStateChange: (nextState) => {
         pwaUpdateState = nextState;
@@ -439,6 +365,12 @@
       <span class="runtime-ready-marker" data-testid="runtime-init-provider">
         Runtime provider: {runtimeInitExecutionProvider || "unknown"}
       </span>
+      {#if runtimeInitDegraded}
+        <p class="runtime-ready-marker" data-testid="runtime-init-degraded">
+          Compatibility mode active ({runtimeInitMode || "degraded runtime"}).
+          Some devices may process more slowly.
+        </p>
+      {/if}
     {/if}
     {#if runtimeInitState !== "ready"}
       <InitializationGate
@@ -495,6 +427,7 @@
       </div>
     {:else if files.length === 0}
       <div class="drop-container">
+        <HomeProcessingSettings />
         <DropZone on:files={handleFiles} />
         {#if restoreNotice}
           <p class="restore-notice">{restoreNotice}</p>
@@ -506,7 +439,6 @@
         {launchSource}
         {launchIntent}
         runtimeExecutionProvider={runtimeInitExecutionProvider}
-        runtimeGmnetCapability={runtimeInitGmnetCapability}
         on:reset={handleReset}
         on:processingbusychange={handleProcessingBusyChange}
       />

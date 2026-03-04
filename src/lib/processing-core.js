@@ -41,8 +41,6 @@ const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const GAIN_MAP_GAMMA_LINEAR = 1.0;
 const GAIN_MAP_OFFSET_SDR_LINEAR = 0.0;
 
-const GAIN_MAP_TO_OUTPUT_LONG_EDGE_RATIO = 2;
-
 const DEFAULT_PROCESS_OPTIONS = {
     maxContentBoost: DEFAULT_MAX_CONTENT_BOOST,
     rotation: 0,
@@ -110,76 +108,6 @@ export function getConstrainedDimensions(width, height, maxDimension = IMAGE_MAX
         width: constrainedWidth,
         height: constrainedHeight,
         changed: constrainedWidth !== w || constrainedHeight !== h
-    };
-}
-
-function normalizeExecutionProvider(value) {
-    if (typeof value !== 'string') {
-        return null;
-    }
-    const normalized = value.trim().toLowerCase();
-    return normalized || null;
-}
-
-function normalizeGmnetCapability(input) {
-    if (!input || typeof input !== 'object') {
-        return null;
-    }
-    const provider = normalizeExecutionProvider(input.provider);
-    const gainMapMaxLongEdge = Number(input.gainMapMaxLongEdge);
-    const outputMaxLongEdge = Number(input.outputMaxLongEdge);
-    if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
-        return null;
-    }
-    const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
-        ? Math.floor(outputMaxLongEdge)
-        : Math.floor(gainMapMaxLongEdge * GAIN_MAP_TO_OUTPUT_LONG_EDGE_RATIO);
-    return {
-        provider,
-        gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
-        outputMaxLongEdge: normalizedOutputMaxLongEdge,
-        source: typeof input.source === 'string' && input.source.length > 0
-            ? input.source
-            : 'probe',
-        attempts: Array.isArray(input.attempts) ? input.attempts : [],
-    };
-}
-
-function resolveCapabilityConstrainedMaxDimension(capability) {
-    const normalizedCapability = normalizeGmnetCapability(capability);
-    if (!normalizedCapability) {
-        return {
-            capability: null,
-            appliedMaxDimension: IMAGE_MAX_LONG_EDGE,
-            capabilityOutputMaxLongEdge: null,
-        };
-    }
-    const capabilityOutputMaxLongEdge = Math.max(
-        1,
-        Math.floor(
-            Number.isFinite(normalizedCapability.outputMaxLongEdge)
-                ? normalizedCapability.outputMaxLongEdge
-                : normalizedCapability.gainMapMaxLongEdge * GAIN_MAP_TO_OUTPUT_LONG_EDGE_RATIO
-        ),
-    );
-    return {
-        capability: normalizedCapability,
-        appliedMaxDimension: Math.min(IMAGE_MAX_LONG_EDGE, capabilityOutputMaxLongEdge),
-        capabilityOutputMaxLongEdge,
-    };
-}
-
-function resolveTestCapabilityOverride(runtime = globalThis) {
-    const override = runtime?.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE;
-    const normalized = normalizeGmnetCapability(override);
-    if (!normalized) {
-        return null;
-    }
-    return {
-        ...normalized,
-        source: typeof normalized.source === 'string' && normalized.source.length > 0
-            ? normalized.source
-            : 'test-override',
     };
 }
 
@@ -604,6 +532,8 @@ export function __resetGainMapGeneratorForTests() {
  * @param {boolean} options.stripExif - Whether to strip EXIF data.
  * @param {boolean} [options.useGmnet=true] - Must remain enabled; false throws hard error.
  * @param {"realworld" | "synthetic"} [options.gmnetModelVariant] - Selects the GMNet ONNX variant.
+ * @param {"off" | "auto" | "force"} [options.gmnetCheckpointing]
+ *   - GMNet tiled inference memory mode; "auto" resolves per-browser policy.
  * @param {(event: Object) => void} [options.onProgress] - Optional telemetry callback.
  * @param {number} [options.fileIndex] - Optional file index in current batch.
  * @param {number} [options.totalFiles] - Optional total files in current batch.
@@ -804,62 +734,18 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
         let workingImageData = imageData;
         console.log('[Process] Image data retrieved');
 
-        const gmnetCapability = await telemetry.runStage('probe-gmnet-capability', async () => {
-            const overrideCapability = resolveTestCapabilityOverride(globalThis);
-            if (overrideCapability) {
-                telemetry.emitStageProgress('probe-gmnet-capability', 100, withProcessingPath({
-                    note: `Using GMNet capability override (${overrideCapability.provider}, gain-map max ${overrideCapability.gainMapMaxLongEdge}px).`,
-                    gmnetCapability: overrideCapability,
-                    gmnetCapabilitySource: overrideCapability.source,
-                    gmnetExecutionProvider: overrideCapability.provider,
-                }));
-                return overrideCapability;
-            }
-
-            const generator = getGainMapGenerator();
-            if (!generator || typeof generator.resolveCapability !== 'function') {
-                return null;
-            }
-            const resolvedCapability = normalizeGmnetCapability(await generator.resolveCapability({
-                gmnetModelVariant: mergedOptions.gmnetModelVariant,
-                forceExecutionProviders: mergedOptions.forceExecutionProviders,
-                capabilityHint: mergedOptions.gmnetCapabilityHint,
-            }));
-            if (resolvedCapability) {
-                telemetry.emitStageProgress('probe-gmnet-capability', 100, withProcessingPath({
-                    note: `GMNet capability resolved (${resolvedCapability.provider}, gain-map max ${resolvedCapability.gainMapMaxLongEdge}px).`,
-                    gmnetCapability: resolvedCapability,
-                    gmnetCapabilitySource: resolvedCapability.source,
-                    gmnetExecutionProvider: resolvedCapability.provider,
-                }));
-            }
-            return resolvedCapability;
-        }, withProcessingPath());
-
-        const {
-            capability: normalizedGmnetCapability,
-            appliedMaxDimension,
-            capabilityOutputMaxLongEdge,
-        } = resolveCapabilityConstrainedMaxDimension(gmnetCapability);
         const constrainedDimensions = getConstrainedDimensions(
             workingImageData.width,
             workingImageData.height,
-            appliedMaxDimension,
+            IMAGE_MAX_LONG_EDGE,
         );
         if (constrainedDimensions.changed) {
-            const constrainPayload = normalizedGmnetCapability
-                ? {
-                    gmnetCapability: normalizedGmnetCapability,
-                    gmnetCapabilitySource: normalizedGmnetCapability.source,
-                    gmnetExecutionProvider: normalizedGmnetCapability.provider,
-                    defaultMaxDimension: IMAGE_MAX_LONG_EDGE,
-                    capabilityOutputMaxLongEdge,
-                    appliedMaxDimension,
-                    constrainedByCapability: appliedMaxDimension < IMAGE_MAX_LONG_EDGE,
-                    originalWidth: workingImageData.width,
-                    originalHeight: workingImageData.height,
-                }
-                : {};
+            const constrainPayload = {
+                defaultMaxDimension: IMAGE_MAX_LONG_EDGE,
+                appliedMaxDimension: IMAGE_MAX_LONG_EDGE,
+                originalWidth: workingImageData.width,
+                originalHeight: workingImageData.height,
+            };
             originalSdrJpegBytes = null; // Cannot use lossless original bytes if resized
             workingImageData = await telemetry.runStage('constrain-sdr-image', async () =>
                 resizeImageData(
@@ -881,20 +767,22 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             );
         }
 
-        const gmnetWidth = Math.max(1, Math.floor(workingImageData.width / 2));
-        const gmnetHeight = Math.max(1, Math.floor(workingImageData.height / 2));
-        let gainMapSourceImageData = workingImageData;
-        if (gmnetWidth !== workingImageData.width || gmnetHeight !== workingImageData.height) {
-            gainMapSourceImageData = await telemetry.runStage(
-                'prepare-gmnet-input',
-                async () => resizeImageData(
+        const gmnetWidth = workingImageData.width;
+        const gmnetHeight = workingImageData.height;
+        const gainMapSourceImageData = await telemetry.runStage(
+            'prepare-gmnet-input',
+            async () => {
+                if (gmnetWidth === workingImageData.width && gmnetHeight === workingImageData.height) {
+                    return workingImageData;
+                }
+                return resizeImageData(
                     workingImageData,
                     gmnetWidth,
                     gmnetHeight
-                ),
-                withProcessingPath(),
-            );
-        }
+                );
+            },
+            withProcessingPath(),
+        );
 
         throwIfAborted(mergedOptions.abortSignal);
 
@@ -904,7 +792,6 @@ export async function processImage(file, options = DEFAULT_PROCESS_OPTIONS) {
             'generate-gain-map',
             async () => generateGainMapData(gainMapSourceImageData, {
                 ...mergedOptions,
-                gmnetCapabilityHint: normalizedGmnetCapability || mergedOptions.gmnetCapabilityHint,
                 onStageProgress: (stageProgress, note, metadata = null) => {
                     telemetry.emitStageProgress('generate-gain-map', stageProgress, withProcessingPath({
                         note,
@@ -1253,6 +1140,8 @@ async function loadImageDataAndExif(source, config = {}) {
  * @param {number} [options.maxContentBoost=2.3] - Maximum HDR boost factor for metadata.
  * @param {"realworld" | "synthetic"} [options.gmnetModelVariant="realworld"] - Selects model variant.
  * @param {boolean} [options.useGmnet=true] - Must remain enabled; false throws hard error.
+ * @param {"off" | "auto" | "force"} [options.gmnetCheckpointing]
+ *   - GMNet tiled inference memory mode.
  * @param {(progress: number, note?: string, metadata?: Object) => void} [options.onStageProgress]
  *   - Optional granular progress callback.
  * @returns {Promise<{gainMapImageData: ImageData, metadata: Object}>}

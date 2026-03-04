@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clearSharedFiles,
@@ -14,9 +14,21 @@ import {
 } from '../share-store.js';
 
 describe('share-store', () => {
+  const originalNavigator = global.navigator;
+
   beforeEach(() => {
     __resetShareStoreForTests();
     global.indexedDB = undefined;
+    global.navigator = {
+      ...(originalNavigator || {}),
+      storage: {
+        persist: async () => true,
+      },
+    };
+  });
+
+  afterEach(() => {
+    global.navigator = originalNavigator;
   });
 
   it('stores and consumes shared files in fallback mode', async () => {
@@ -30,6 +42,20 @@ describe('share-store', () => {
 
     expect(consumed).toHaveLength(2);
     expect(consumed.map((file) => file.name)).toEqual(['a.jpg', 'b.jpg']);
+  });
+
+  it('requests persistent storage before storing shared files when supported', async () => {
+    const persist = vi.fn(async () => true);
+    global.navigator = {
+      ...(originalNavigator || {}),
+      storage: {
+        persist,
+      },
+    };
+
+    await storeSharedFiles([new File(['a'], 'a.jpg', { type: 'image/jpeg' })]);
+
+    expect(persist).toHaveBeenCalledTimes(1);
   });
 
   it('consume clears store after read', async () => {

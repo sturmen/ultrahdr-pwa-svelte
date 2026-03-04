@@ -151,11 +151,16 @@ describe('processImage gain map decision (fixture driven)', () => {
     gmnetCalls.length = 0;
     globalThis.Worker = undefined;
     globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async () => ({
-      width: 8,
-      height: 8,
-      close: vi.fn(),
-    }));
+    globalThis.createImageBitmap = vi.fn(async (input) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = input instanceof ImageData ? input.width : 8;
+      canvas.height = input instanceof ImageData ? input.height : 8;
+      if (input instanceof ImageData) {
+        const context = canvas.getContext('2d');
+        context?.putImageData(input, 0, 0);
+      }
+      return canvas;
+    });
   });
 
   it('uses generated path for test_sdr.jpg', async () => {

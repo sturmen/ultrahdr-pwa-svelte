@@ -1,3 +1,9 @@
+import {
+  getStorageBudget,
+  requestPersistentStorage,
+  shouldCheckpoint,
+} from './storage-diagnostics.js';
+
 const DB_NAME = "ultrahdr-share-store";
 const DB_VERSION = 2;
 const SHARED_FILES_STORE = "shared-files";
@@ -63,6 +69,24 @@ function cloneFiles(files) {
 
 export async function storeSharedFiles(files) {
   const normalizedFiles = cloneFiles(files);
+  const totalBytes = normalizedFiles.reduce(
+    (sum, file) => sum + (Number(file?.size) || 0),
+    0,
+  );
+
+  await requestPersistentStorage(globalThis);
+  const storageBudget = await getStorageBudget(globalThis);
+  if (
+    storageBudget?.supported
+    && !shouldCheckpoint(totalBytes, storageBudget, {
+      reserveBytes: 8 * 1024 * 1024,
+      minFreeRatio: 0.05,
+    })
+  ) {
+    const memory = getMemoryStore();
+    memory.sharedFiles = normalizedFiles;
+    return;
+  }
 
   if (!canUseIndexedDb()) {
     const memory = getMemoryStore();
@@ -70,19 +94,24 @@ export async function storeSharedFiles(files) {
     return;
   }
 
-  const db = await openDb();
-  await new Promise((resolve, reject) => {
-    const transaction = db.transaction([SHARED_FILES_STORE], "readwrite");
-    const store = transaction.objectStore(SHARED_FILES_STORE);
-    store.clear();
+  try {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction([SHARED_FILES_STORE], "readwrite");
+      const store = transaction.objectStore(SHARED_FILES_STORE);
+      store.clear();
 
-    normalizedFiles.forEach((file) => {
-      store.add(file);
+      normalizedFiles.forEach((file) => {
+        store.add(file);
+      });
+
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
     });
-
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
+  } catch {
+    const memory = getMemoryStore();
+    memory.sharedFiles = normalizedFiles;
+  }
 }
 
 export async function consumeSharedFiles() {

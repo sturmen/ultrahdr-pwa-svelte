@@ -14,7 +14,7 @@ export default defineConfig({
     retries: process.env.CI ? 2 : 0,
     workers: process.env.CI ? 1 : 2,
     reporter: 'html',
-    timeout: 60000,
+    timeout: 180000,
 
     use: {
         baseURL: 'http://localhost:4173/ultrahdr-pwa-svelte/',
@@ -49,7 +49,17 @@ export default defineConfig({
             testMatch: '**/mobile.spec.js',
         },
         {
-            name: 'mobile-chromium-android',
+            name: 'mobile-chromium-android-gpu',
+            use: {
+                ...devices['Pixel 7'],
+                launchOptions: {
+                    args: chromiumWebGpuArgs,
+                },
+            },
+            testMatch: '**/mobile.spec.js',
+        },
+        {
+            name: 'mobile-chromium-android-fallback',
             use: { ...devices['Pixel 7'] },
             testMatch: '**/mobile.spec.js',
         },

@@ -14,46 +14,6 @@ function normalizeExecutionProvider(value) {
   return normalized || null;
 }
 
-function normalizeCapabilityHint(value, fallbackProvider = null) {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  const provider = normalizeExecutionProvider(value.provider)
-    || normalizeExecutionProvider(fallbackProvider);
-  const gainMapMaxLongEdge = Math.floor(Number(value.gainMapMaxLongEdge));
-  const outputMaxLongEdge = Math.floor(Number(value.outputMaxLongEdge));
-  if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
-    return null;
-  }
-  return {
-    provider,
-    gainMapMaxLongEdge,
-    outputMaxLongEdge: Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
-      ? outputMaxLongEdge
-      : gainMapMaxLongEdge * 2,
-    source: typeof value.source === 'string' && value.source.length > 0
-      ? value.source
-      : 'cache',
-    attempts: Array.isArray(value.attempts) ? value.attempts : [],
-  };
-}
-
-function normalizeCapabilityHintsByProvider(rawValue) {
-  if (!rawValue || typeof rawValue !== 'object') {
-    return null;
-  }
-  const normalized = {};
-  for (const [providerKey, providerCapability] of Object.entries(rawValue)) {
-    const provider = normalizeExecutionProvider(providerKey);
-    const capability = normalizeCapabilityHint(providerCapability, provider);
-    if (!provider || !capability) {
-      continue;
-    }
-    normalized[provider] = capability;
-  }
-  return Object.keys(normalized).length > 0 ? normalized : null;
-}
-
 function normalizeError(error) {
   if (error instanceof Error) {
     const normalized = {
@@ -132,11 +92,17 @@ function normalizeRuntimeInitializationOptions(rawOptions) {
     normalized.forceSmokeFailure = true;
   }
 
-  const gmnetCapabilityHintsByProvider = normalizeCapabilityHintsByProvider(
-    rawOptions.gmnetCapabilityHintsByProvider,
-  );
-  if (gmnetCapabilityHintsByProvider) {
-    normalized.gmnetCapabilityHintsByProvider = gmnetCapabilityHintsByProvider;
+  if (rawOptions.allowWasmOnly === false) {
+    normalized.allowWasmOnly = false;
+  }
+
+  if (Array.isArray(rawOptions.smokeBypassProviders) && rawOptions.smokeBypassProviders.length > 0) {
+    const smokeBypassProviders = rawOptions.smokeBypassProviders
+      .filter((provider) => typeof provider === 'string' && provider.trim().length > 0)
+      .map((provider) => provider.trim().toLowerCase());
+    if (smokeBypassProviders.length > 0) {
+      normalized.smokeBypassProviders = Array.from(new Set(smokeBypassProviders));
+    }
   }
 
   return normalized;
@@ -208,19 +174,8 @@ async function handleProcessMessage(message) {
     const runtime = await ensureRuntimeInitialized();
     const file = message.file;
     const options = message.options || {};
-    const runtimeCapabilityHint =
-      runtime && typeof runtime === 'object' && runtime.gmnetCapability && typeof runtime.gmnetCapability === 'object'
-        ? runtime.gmnetCapability
-        : null;
-    const processOptions =
-      options.gmnetCapabilityHint || !runtimeCapabilityHint
-        ? options
-        : {
-          ...options,
-          gmnetCapabilityHint: runtimeCapabilityHint,
-        };
     const blob = await processImageCore(file, {
-      ...processOptions,
+      ...options,
       abortSignal: controller.signal,
       onProgress: (event) => {
         self.postMessage({ type: 'progress', jobId, event });

@@ -125,4 +125,78 @@ describe('DropZone - touch-first UI and fallbacks', () => {
     expect(files).toHaveLength(1);
     expect(files[0].name).toBe('picked.jpg');
   });
+
+  it('uses getAsFileSystemHandle when available and avoids eager file materialization', async () => {
+    const received = vi.fn();
+    render(DropZoneHost, { props: { onFiles: received } });
+
+    const dropZone = screen.getByTestId('upload-drop-zone');
+    const file = new File(['ok'], 'photo.jpg', { type: 'image/jpeg' });
+    const arrayBufferSpy = vi.spyOn(file, 'arrayBuffer');
+
+    await fireEvent.drop(dropZone, {
+      dataTransfer: {
+        items: [
+          {
+            kind: 'file',
+            getAsFileSystemHandle: vi.fn(async () => ({
+              kind: 'file',
+              getFile: vi.fn(async () => file),
+            })),
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    const [[files]] = received.mock.calls;
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe('photo.jpg');
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
+  });
+
+  it('recursively reads directory handles from getAsFileSystemHandle and filters unsupported files', async () => {
+    const received = vi.fn();
+    render(DropZoneHost, { props: { onFiles: received } });
+
+    const dropZone = screen.getByTestId('upload-drop-zone');
+    const nestedImage = new File(['image'], 'nested.jpg', { type: 'image/jpeg' });
+    const nestedText = new File(['text'], 'note.txt', { type: 'text/plain' });
+
+    const directoryHandle = {
+      kind: 'directory',
+      async *values() {
+        yield {
+          kind: 'file',
+          getFile: async () => nestedImage,
+        };
+        yield {
+          kind: 'file',
+          getFile: async () => nestedText,
+        };
+      },
+    };
+
+    await fireEvent.drop(dropZone, {
+      dataTransfer: {
+        items: [
+          {
+            kind: 'file',
+            getAsFileSystemHandle: vi.fn(async () => directoryHandle),
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    const [[files]] = received.mock.calls;
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe('nested.jpg');
+  });
 });

@@ -127,7 +127,7 @@ describe('GMNet-only gain map generation', () => {
       0,
       expect.stringMatching(/starting inference/i),
       expect.objectContaining({
-        gmnetExecutionProvider: null,
+        gmnetExecutionProvider: 'webgpu',
       }),
     );
     expect(onStageProgress).toHaveBeenCalledWith(

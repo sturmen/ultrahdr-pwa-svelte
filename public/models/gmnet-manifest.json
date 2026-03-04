@@ -1,67 +1,381 @@
 {
-  "schema_version": 1,
-  "generated_at": "2026-02-19T13:16:47.724Z",
+  "schema_version": 3,
+  "generated_at": "2026-03-03T20:00:39.957654+00:00",
   "default_variant": "realworld",
   "opset": 18,
+  "base_opset": 18,
+  "webgl_opset": 13,
   "variants": {
     "realworld": {
       "checkpoint": "GMNet/checkpoints/G_realworld.pth",
       "checkpoint_sha256": "83bf27bcdbf6eacfdef37f0e24ed6d79152b7386620c012ae509a59a895c875f",
-      "model_filename": "gmnet-realworld.onnx",
-      "model_sha256": "45e4d6c427cc2096756e21056edf79b3d845dda047d57faa11b304c61aac9670",
-      "model_data_filename": "gmnet-realworld.onnx.data",
-      "model_data_sha256": "ca0a37dfa13b9ea13ae8b3488bcce76b2f4745182f96f79c961d5afbf1aa498c",
-      "input_names": [
-        "local_input",
-        "global_input"
-      ],
-      "output_names": [
-        "gain_map"
-      ],
-      "dynamic_axes": {
-        "local_input": {
-          "2": "height",
-          "3": "width"
+      "global": {
+        "model_filename": "gmnet-realworld-global.onnx",
+        "model_sha256": "fd617aac9146efc16e7cef77e96e9fa7a2f0003e76455f40db4ddebb99a6150b",
+        "model_data_filename": "gmnet-realworld-global.onnx.data",
+        "model_data_sha256": "21fe404449140fb1c2102ae2b1a204ca260be9532fddf0c33d24793696f02ccd",
+        "inline_model_filename": "gmnet-realworld-global-inline.onnx",
+        "inline_model_sha256": "59ef756c4b3e0a9abe0cb780e42b9b34ecdd3450c93e92420b2b11a4b096f139",
+        "input_names": [
+          "global_input"
+        ],
+        "output_names": [
+          "wker",
+          "wchn",
+          "qmax"
+        ],
+        "opset": 18,
+        "compat_profile": "dynamic_webgpu_wasm",
+        "operator_counts": {
+          "Conv": 25,
+          "Relu": 17,
+          "Add": 5,
+          "Transpose": 2,
+          "GatherND": 1,
+          "ReduceMean": 2
         },
-        "gain_map": {
-          "2": "height",
-          "3": "width"
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 0,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
+        }
+      },
+      "local": {
+        "model_filename": "gmnet-realworld-local.onnx",
+        "model_sha256": "ea4390c80677c4a1a9f90846ff75fd8e80622cf69f251433877e7fbefdfe0808",
+        "model_data_filename": "gmnet-realworld-local.onnx.data",
+        "model_data_sha256": "2ef19a24f29dee2a552933838be831e381bd0b60a021a13ec038b6a5811f7009",
+        "inline_model_filename": "gmnet-realworld-local-inline.onnx",
+        "inline_model_sha256": "c77948045b4c7221eb18c0a00284c7b2c9fd823ca638cbfbcb352f214a69b1be",
+        "webgl_model_filename": "gmnet-realworld-local-inline-webgl.onnx",
+        "webgl_model_sha256": "8deec3060866d3a2d9d1d768c811788ba11c6da16e1f3aa1d773d5a187306a20",
+        "input_names": [
+          "local_input",
+          "wker",
+          "wchn"
+        ],
+        "output_names": [
+          "ingm"
+        ],
+        "dynamic_axes": {
+          "local_input": {
+            "2": "height",
+            "3": "width"
+          },
+          "ingm": {
+            "2": "height",
+            "3": "width"
+          }
+        },
+        "opset": 18,
+        "compat_profile": "dynamic_webgpu_wasm_depth_to_space_rewritten",
+        "operator_counts": {
+          "Shape": 3,
+          "Squeeze": 2,
+          "Conv": 39,
+          "Add": 19,
+          "Div": 2,
+          "Relu": 21,
+          "Reshape": 7,
+          "Concat": 3,
+          "Sigmoid": 2,
+          "Mul": 4,
+          "Slice": 3,
+          "Transpose": 1
+        },
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 1,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
+        }
+      },
+      "global_inline": {
+        "model_filename": "gmnet-realworld-global-inline.onnx",
+        "model_sha256": "59ef756c4b3e0a9abe0cb780e42b9b34ecdd3450c93e92420b2b11a4b096f139",
+        "input_names": [
+          "global_input"
+        ],
+        "output_names": [
+          "wker",
+          "wchn",
+          "qmax"
+        ],
+        "opset": 13,
+        "compat_profile": "webgl_global_inline",
+        "operator_counts": {
+          "Conv": 25,
+          "Relu": 17,
+          "Add": 5,
+          "Transpose": 2,
+          "Reshape": 1,
+          "Gather": 1,
+          "ReduceMean": 2
+        },
+        "rewrite_counts": {
+          "gathernd": 1,
+          "depth_to_space": 0,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 2
+        }
+      },
+      "local_inline": {
+        "model_filename": "gmnet-realworld-local-inline.onnx",
+        "model_sha256": "c77948045b4c7221eb18c0a00284c7b2c9fd823ca638cbfbcb352f214a69b1be",
+        "input_names": [
+          "local_input",
+          "wker",
+          "wchn"
+        ],
+        "output_names": [
+          "ingm"
+        ],
+        "opset": 18,
+        "compat_profile": "inline_reference",
+        "operator_counts": {
+          "Conv": 39,
+          "Relu": 21,
+          "Add": 15,
+          "Reshape": 1,
+          "Sigmoid": 2,
+          "Mul": 2,
+          "DepthToSpace": 1
+        },
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 0,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
+        }
+      },
+      "local_webgl": {
+        "model_filename": "gmnet-realworld-local-inline-webgl.onnx",
+        "model_sha256": "8deec3060866d3a2d9d1d768c811788ba11c6da16e1f3aa1d773d5a187306a20",
+        "input_names": [
+          "local_input",
+          "wker",
+          "wchn"
+        ],
+        "output_names": [
+          "ingm"
+        ],
+        "opset": 13,
+        "compat_profile": "webgl_local_inline",
+        "operator_counts": {
+          "Conv": 39,
+          "Relu": 21,
+          "Add": 15,
+          "Reshape": 3,
+          "Sigmoid": 2,
+          "Mul": 4,
+          "Shape": 1,
+          "Slice": 3,
+          "Concat": 2,
+          "Transpose": 1
+        },
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 1,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
         }
       },
       "parity": {
         "enabled": false,
         "passed": false,
-        "reason": "Generated without Python parity run in this environment"
+        "reason": "Skipped by --skip-parity"
       }
     },
     "synthetic": {
       "checkpoint": "GMNet/checkpoints/G_synthetic.pth",
       "checkpoint_sha256": "887c940d492424cd44f029c6b09dd3bbe1bbec07126f15d41192828ff95e6880",
-      "model_filename": "gmnet-synthetic.onnx",
-      "model_sha256": "45e4d6c427cc2096756e21056edf79b3d845dda047d57faa11b304c61aac9670",
-      "model_data_filename": "gmnet-synthetic.onnx.data",
-      "model_data_sha256": "ca0a37dfa13b9ea13ae8b3488bcce76b2f4745182f96f79c961d5afbf1aa498c",
-      "input_names": [
-        "local_input",
-        "global_input"
-      ],
-      "output_names": [
-        "gain_map"
-      ],
-      "dynamic_axes": {
-        "local_input": {
-          "2": "height",
-          "3": "width"
+      "global": {
+        "model_filename": "gmnet-synthetic-global.onnx",
+        "model_sha256": "54a3371139b51d839c7b08f33123a6910e0df774b74cc4d5d54a605b826620e2",
+        "model_data_filename": "gmnet-synthetic-global.onnx.data",
+        "model_data_sha256": "06622c1cc15dec0056d765f5106d8918db15f111c5b1e60d6576825698d39753",
+        "inline_model_filename": "gmnet-synthetic-global-inline.onnx",
+        "inline_model_sha256": "a8e79ea350673c50c21b2a1a74637518942249b6e2c8997cecc89b9aca56c982",
+        "input_names": [
+          "global_input"
+        ],
+        "output_names": [
+          "wker",
+          "wchn",
+          "qmax"
+        ],
+        "opset": 18,
+        "compat_profile": "dynamic_webgpu_wasm",
+        "operator_counts": {
+          "Conv": 25,
+          "Relu": 17,
+          "Add": 5,
+          "Transpose": 2,
+          "GatherND": 1,
+          "ReduceMean": 2
         },
-        "gain_map": {
-          "2": "height",
-          "3": "width"
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 0,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
+        }
+      },
+      "local": {
+        "model_filename": "gmnet-synthetic-local.onnx",
+        "model_sha256": "ddf7afb6cc7f5eb739b40729a453f8ceffcebcc318b3f76dca8e7ebaf641c2a5",
+        "model_data_filename": "gmnet-synthetic-local.onnx.data",
+        "model_data_sha256": "f18f30f0ca798b6896a463c099ce20fc5940b53152895926051083ccf7c559b8",
+        "inline_model_filename": "gmnet-synthetic-local-inline.onnx",
+        "inline_model_sha256": "a1e6099168034a2de5941be2099e674bda2ee8fb7d7b2a8aa9147415fa4a11a7",
+        "webgl_model_filename": "gmnet-synthetic-local-inline-webgl.onnx",
+        "webgl_model_sha256": "68348be65ac4f2c4d885c0829564444733c74a84568590f519da07326434d4a6",
+        "input_names": [
+          "local_input",
+          "wker",
+          "wchn"
+        ],
+        "output_names": [
+          "ingm"
+        ],
+        "dynamic_axes": {
+          "local_input": {
+            "2": "height",
+            "3": "width"
+          },
+          "ingm": {
+            "2": "height",
+            "3": "width"
+          }
+        },
+        "opset": 18,
+        "compat_profile": "dynamic_webgpu_wasm_depth_to_space_rewritten",
+        "operator_counts": {
+          "Shape": 3,
+          "Squeeze": 2,
+          "Conv": 39,
+          "Add": 19,
+          "Div": 2,
+          "Relu": 21,
+          "Reshape": 7,
+          "Concat": 3,
+          "Sigmoid": 2,
+          "Mul": 4,
+          "Slice": 3,
+          "Transpose": 1
+        },
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 1,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
+        }
+      },
+      "global_inline": {
+        "model_filename": "gmnet-synthetic-global-inline.onnx",
+        "model_sha256": "a8e79ea350673c50c21b2a1a74637518942249b6e2c8997cecc89b9aca56c982",
+        "input_names": [
+          "global_input"
+        ],
+        "output_names": [
+          "wker",
+          "wchn",
+          "qmax"
+        ],
+        "opset": 13,
+        "compat_profile": "webgl_global_inline",
+        "operator_counts": {
+          "Conv": 25,
+          "Relu": 17,
+          "Add": 5,
+          "Transpose": 2,
+          "Reshape": 1,
+          "Gather": 1,
+          "ReduceMean": 2
+        },
+        "rewrite_counts": {
+          "gathernd": 1,
+          "depth_to_space": 0,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 2
+        }
+      },
+      "local_inline": {
+        "model_filename": "gmnet-synthetic-local-inline.onnx",
+        "model_sha256": "a1e6099168034a2de5941be2099e674bda2ee8fb7d7b2a8aa9147415fa4a11a7",
+        "input_names": [
+          "local_input",
+          "wker",
+          "wchn"
+        ],
+        "output_names": [
+          "ingm"
+        ],
+        "opset": 18,
+        "compat_profile": "inline_reference",
+        "operator_counts": {
+          "Conv": 39,
+          "Relu": 21,
+          "Add": 15,
+          "Reshape": 1,
+          "Sigmoid": 2,
+          "Mul": 2,
+          "DepthToSpace": 1
+        },
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 0,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
+        }
+      },
+      "local_webgl": {
+        "model_filename": "gmnet-synthetic-local-inline-webgl.onnx",
+        "model_sha256": "68348be65ac4f2c4d885c0829564444733c74a84568590f519da07326434d4a6",
+        "input_names": [
+          "local_input",
+          "wker",
+          "wchn"
+        ],
+        "output_names": [
+          "ingm"
+        ],
+        "opset": 13,
+        "compat_profile": "webgl_local_inline",
+        "operator_counts": {
+          "Conv": 39,
+          "Relu": 21,
+          "Add": 15,
+          "Reshape": 3,
+          "Sigmoid": 2,
+          "Mul": 4,
+          "Shape": 1,
+          "Slice": 3,
+          "Concat": 2,
+          "Transpose": 1
+        },
+        "rewrite_counts": {
+          "gathernd": 0,
+          "depth_to_space": 1,
+          "shape_squeeze_rewrites": 0,
+          "normalize_squeeze": 0,
+          "normalize_reduce": 0
         }
       },
       "parity": {
         "enabled": false,
         "passed": false,
-        "reason": "Generated without Python parity run in this environment"
+        "reason": "Skipped by --skip-parity"
       }
     }
   }

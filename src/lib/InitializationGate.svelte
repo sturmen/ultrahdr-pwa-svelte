@@ -22,29 +22,6 @@
     return "○";
   }
 
-  function attemptStatusSymbol(status) {
-    if (status === "passed") return "✅";
-    if (status === "failed") return "❎";
-    return "…";
-  }
-
-  function attemptStatusLabel(status) {
-    if (status === "passed") return "Passed";
-    if (status === "failed") return "Failed";
-    return "Running";
-  }
-
-  function attemptTestId(stepId, attempt) {
-    const provider = String(attempt?.provider || "unknown")
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]/g, "-");
-    const candidateLongEdge = Math.max(
-      1,
-      Math.floor(Number(attempt?.candidateLongEdge) || 0),
-    );
-    return `runtime-step-${stepId}-attempt-${provider}-${candidateLongEdge}`;
-  }
-
   function buildDiagnosticsPayload() {
     if (!failure) {
       return null;
@@ -128,30 +105,6 @@
         </div>
         {#if step.note}
           <p class="note">{step.note}</p>
-        {/if}
-        {#if Array.isArray(step.attempts) && step.attempts.length > 0}
-          <ul
-            class="probe-attempts"
-            data-testid={`runtime-step-${step.id}-attempts`}
-          >
-            {#each step.attempts as attempt (`${attempt?.provider || "unknown"}:${attempt?.candidateLongEdge || 0}`)}
-              <li
-                class={`probe-attempt ${attempt?.status || "running"}`}
-                data-testid={attemptTestId(step.id, attempt)}
-              >
-                <span class="probe-attempt-label"
-                  >{attempt?.candidateLongEdge}x{attempt?.probeHeight ||
-                    attempt?.candidateLongEdge}</span
-                >
-                <span class="probe-attempt-symbol" aria-hidden="true"
-                  >{attemptStatusSymbol(attempt?.status)}</span
-                >
-                <span class="probe-attempt-status"
-                  >{attemptStatusLabel(attempt?.status)}</span
-                >
-              </li>
-            {/each}
-          </ul>
         {/if}
       </li>
     {/each}
@@ -289,38 +242,6 @@
   .note {
     margin-top: 0.3rem;
     font-size: 0.9rem;
-  }
-
-  .probe-attempts {
-    margin: 0.45rem 0 0;
-    padding: 0.45rem 0 0 1rem;
-    list-style: none;
-    display: grid;
-    gap: 0.25rem;
-    border-top: 1px dashed
-      color-mix(in srgb, var(--border-subtle) 80%, transparent);
-  }
-
-  .probe-attempt {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    color: var(--text-secondary);
-    font-size: 0.82rem;
-  }
-
-  .probe-attempt-label {
-    font-family: monospace;
-    letter-spacing: 0.01em;
-  }
-
-  .probe-attempt-symbol {
-    width: 1rem;
-    text-align: center;
-  }
-
-  .probe-attempt-status {
-    color: var(--text-muted);
   }
 
   .failure {

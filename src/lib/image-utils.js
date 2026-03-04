@@ -25,14 +25,22 @@ export function createCanvasWithContext(width, height, errorMessage = 'Canvas no
 }
 
 export async function canvasToBlob(canvas, type = 'image/jpeg', quality = 0.95) {
-    if (typeof canvas.toBlob === 'function') {
-        return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
-    }
     if (typeof canvas.convertToBlob === 'function') {
         return canvas.convertToBlob({ type, quality });
     }
-    // Fallback for environments where toBlob is missing (unlikely in modern browsers/workers)
-    throw new Error('canvas.toBlob is not supported (and convertToBlob is missing)');
+    if (typeof canvas.toBlob === 'function') {
+        return new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    resolve(blob);
+                    return;
+                }
+                reject(new Error('Canvas failed to produce a Blob'));
+            }, type, quality);
+        });
+    }
+    // Fallback for environments where both APIs are missing.
+    throw new Error('canvas blob export is not available in this environment');
 }
 
 export async function decodeDrawableFromBlob(blob, config = {}) {

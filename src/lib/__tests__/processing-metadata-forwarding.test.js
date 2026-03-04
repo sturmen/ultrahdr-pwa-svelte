@@ -107,11 +107,16 @@ describe('processImage metadata forwarding', () => {
     vi.clearAllMocks();
     globalThis.Worker = undefined;
     globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async () => ({
-      width: 1,
-      height: 1,
-      close: vi.fn(),
-    }));
+    globalThis.createImageBitmap = vi.fn(async (input) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = input instanceof ImageData ? input.width : 1;
+      canvas.height = input instanceof ImageData ? input.height : 1;
+      if (input instanceof ImageData) {
+        const context = canvas.getContext('2d');
+        context?.putImageData(input, 0, 0);
+      }
+      return canvas;
+    });
   });
 
   it('uses generated gain-map metadata when encoding compressed gain map', async () => {

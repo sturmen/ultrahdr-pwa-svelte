@@ -1,4 +1,3 @@
-import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -49,11 +48,20 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+function setUserAgent(userAgent) {
+  Object.defineProperty(window.navigator, 'userAgent', {
+    configurable: true,
+    value: userAgent,
+  });
+}
+
 describe('ImageProcessor mobile-native UI behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.matchMedia = createMatchMedia(false);
     window.localStorage?.clear?.();
+    delete window.__ULTRAHDR_PROCESSING_PREFERENCES;
+    delete window.__ULTRAHDR_BACKEND_PREFERENCE;
     Object.defineProperty(window.navigator, 'setAppBadge', {
       configurable: true,
       value: vi.fn(async () => {}),
@@ -283,6 +291,49 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     progressGate.resolve();
   });
 
+  it('renders checkpoint memory mode telemetry when checkpointed progress metadata is emitted', async () => {
+    const progressGate = createDeferred();
+
+    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'generate-gain-map',
+        stageProgress: 60,
+        note: 'Running tile 3/10',
+        gmnetExecutionProvider: 'webgpu',
+        gmnetMemoryMode: 'checkpointed',
+        gmnetCheckpointTilesCompleted: 3,
+        gmnetCheckpointTilesTotal: 10,
+        gmnetCheckpointResumed: true,
+        elapsedMs: 100,
+        stageDurationsMs: {},
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        timestamp: Date.now(),
+      });
+      await progressGate.promise;
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('pipeline-memory-mode')).toHaveTextContent(
+      /memory mode:\s*checkpointed/i,
+    );
+    expect(screen.getByTestId('pipeline-checkpoint-progress')).toHaveTextContent(
+      /checkpoint progress:\s*3\/10/i,
+    );
+    expect(screen.getByTestId('pipeline-checkpoint-resumed')).toHaveTextContent(
+      /resumed from checkpoint/i,
+    );
+    progressGate.resolve();
+  });
+
   it('shows only "Processing complete" in progress box after queue completion', async () => {
     vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
       const baseEvent = {
@@ -323,14 +374,14 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByText(/stage \d+%/i)).not.toBeInTheDocument();
   });
 
-  it('renders capability restriction warning when browser runtime caps export resolution', async () => {
+  it('does not render capability restriction UI when legacy capability payloads are emitted', async () => {
     vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
       const now = Date.now();
       options.onProgress?.({
         phase: 'stage-progress',
-        stage: 'probe-gmnet-capability',
+        stage: 'generate-gain-map',
         stageProgress: 100,
-        note: 'GMNet capability resolved',
+        note: 'Running tile 1/4',
         timestamp: now,
         gmnetExecutionProvider: 'webgl',
         gmnetCapabilitySource: 'fixed-model',
@@ -360,42 +411,29 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
     await fireEvent.click(screen.getByTestId('tab-convert'));
-    await waitFor(() => {
-      expect(screen.getByTestId('capability-restriction-banner')).toBeInTheDocument();
-    });
-    expect(screen.getByTestId('capability-restriction-banner')).toHaveTextContent(/webgl/i);
-    expect(screen.getByTestId('capability-restriction-banner')).toHaveTextContent(/128/i);
-    expect(screen.getByTestId('capability-restriction-banner')).toHaveTextContent(/256/i);
+    expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('tab-results'));
     await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
-    expect(screen.getByTestId('export-capability-restriction')).toBeInTheDocument();
+    expect(screen.queryByTestId('export-capability-restriction')).not.toBeInTheDocument();
   });
 
-  it('shows current-file downscale notice when capability restriction is applied', async () => {
+  it('does not show wasm recommendation modal from legacy constrainedByCapability events', async () => {
     vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
       const now = Date.now();
       options.onProgress?.({
         phase: 'stage-progress',
-        stage: 'probe-gmnet-capability',
+        stage: 'generate-gain-map',
         stageProgress: 100,
-        note: 'GMNet capability resolved',
+        note: 'Running tile 1/4',
         timestamp: now,
-        gmnetExecutionProvider: 'webgl',
-        gmnetCapabilitySource: 'fixed-model',
-        gmnetCapability: {
-          provider: 'webgl',
-          gainMapMaxLongEdge: 128,
-          outputMaxLongEdge: 256,
-          source: 'fixed-model',
-          attempts: [],
-        },
+        gmnetExecutionProvider: 'webgpu',
       });
       options.onProgress?.({
         phase: 'stage-complete',
         stage: 'constrain-sdr-image',
         timestamp: now + 1,
-        constrainedByCapability: true,
+        constrainedByCapability: true, // legacy field should be ignored by UI
       });
       options.onProgress?.({
         phase: 'pipeline-complete',
@@ -414,50 +452,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await waitFor(() => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
-    await fireEvent.click(screen.getByTestId('tab-convert'));
-    await waitFor(() => {
-      expect(screen.getByTestId('capability-restriction-current-file')).toBeInTheDocument();
-    });
-    expect(screen.getByTestId('capability-restriction-current-file')).toHaveTextContent(/downscaled/i);
-  });
-
-  it('does not render capability warning when output cap is non-restrictive', async () => {
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
-      const now = Date.now();
-      options.onProgress?.({
-        phase: 'stage-progress',
-        stage: 'probe-gmnet-capability',
-        stageProgress: 100,
-        note: 'GMNet capability resolved',
-        timestamp: now,
-        gmnetExecutionProvider: 'webgpu',
-        gmnetCapabilitySource: 'probe',
-        gmnetCapability: {
-          provider: 'webgpu',
-          gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
-          outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
-          source: 'probe',
-          attempts: [],
-        },
-      });
-      options.onProgress?.({
-        phase: 'pipeline-complete',
-        stage: 'pipeline',
-        elapsedMs: 5,
-        stageDurationsMs: { pipeline: 5 },
-        fileIndex: 0,
-        totalFiles: 1,
-        timestamp: now + 1,
-      });
-      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-    });
-
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
-
-    await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
-    });
     expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('wasm-recommendation-modal')).not.toBeInTheDocument();
   });
 
   it('renders backend preference dropdown with all backend options in mobile settings', async () => {
@@ -509,98 +505,80 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     );
   });
 
-  it('shows WASM recommendation modal for generated path when capability downscale is applied', async () => {
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
-      const now = Date.now();
-      options.onProgress?.({
-        phase: 'stage-progress',
-        stage: 'probe-gmnet-capability',
-        stageProgress: 100,
-        note: 'GMNet capability resolved',
-        timestamp: now,
-        processingPath: 'generated',
-        gmnetExecutionProvider: 'webgl',
-        gmnetCapability: {
-          provider: 'webgl',
-          gainMapMaxLongEdge: 128,
-          outputMaxLongEdge: 256,
-          source: 'fixed-model',
-          attempts: [],
-        },
-      });
-      options.onProgress?.({
-        phase: 'stage-complete',
-        stage: 'constrain-sdr-image',
-        timestamp: now + 1,
-        processingPath: 'generated',
-        constrainedByCapability: true,
-      });
-      options.onProgress?.({
-        phase: 'pipeline-complete',
-        stage: 'pipeline',
-        elapsedMs: 5,
-        stageDurationsMs: { pipeline: 5 },
-        fileIndex: 0,
-        totalFiles: 1,
-        timestamp: now + 2,
-        processingPath: 'generated',
-      });
-      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-    });
-
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
-
-    await waitFor(() => {
-      expect(screen.getByTestId('wasm-recommendation-modal')).toBeInTheDocument();
-    });
-  });
-
-  it('suppresses WASM recommendation and capability warning UI for preserved path files', async () => {
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
-      const now = Date.now();
-      options.onProgress?.({
-        phase: 'stage-progress',
-        stage: 'probe-gmnet-capability',
-        stageProgress: 100,
-        note: 'GMNet capability resolved',
-        timestamp: now,
-        processingPath: 'preserved',
-        gmnetExecutionProvider: 'webgl',
-        gmnetCapability: {
-          provider: 'webgl',
-          gainMapMaxLongEdge: 128,
-          outputMaxLongEdge: 256,
-          source: 'fixed-model',
-          attempts: [],
-        },
-      });
-      options.onProgress?.({
-        phase: 'stage-complete',
-        stage: 'constrain-sdr-image',
-        timestamp: now + 1,
-        processingPath: 'preserved',
-        constrainedByCapability: true,
-      });
-      options.onProgress?.({
-        phase: 'pipeline-complete',
-        stage: 'pipeline',
-        elapsedMs: 5,
-        stageDurationsMs: { pipeline: 5 },
-        fileIndex: 0,
-        totalFiles: 1,
-        timestamp: now + 2,
-        processingPath: 'preserved',
-      });
-      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-    });
+  it('uses persisted homepage backend + checkpoint settings on the first processing job', async () => {
+    const { saveProcessingPreferences } = await import('../processing-preferences.js');
+    saveProcessingPreferences(
+      {
+        backendPreference: 'webgl',
+        gmnetCheckpointingPreference: 'force',
+      },
+      window,
+    );
 
     render(ImageProcessor, { props: { files: makeFiles(1) } });
 
     await waitFor(() => {
       expect(processImage).toHaveBeenCalledTimes(1);
     });
-    expect(screen.queryByTestId('wasm-recommendation-modal')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
+
+    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        forceExecutionProviders: ['webgl'],
+        gmnetCheckpointing: 'force',
+      }),
+    );
+  });
+
+  it('resolves gmnet checkpoint auto mode to force on Safari/WebKit for first run', async () => {
+    setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
+    );
+    const { saveProcessingPreferences } = await import('../processing-preferences.js');
+    saveProcessingPreferences(
+      {
+        backendPreference: 'auto',
+        gmnetCheckpointingPreference: 'auto',
+      },
+      window,
+    );
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        gmnetCheckpointing: 'force',
+      }),
+    );
+  });
+
+  it('resolves gmnet checkpoint auto mode to off on non-Safari browsers for first run', async () => {
+    setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    );
+    const { saveProcessingPreferences } = await import('../processing-preferences.js');
+    saveProcessingPreferences(
+      {
+        backendPreference: 'auto',
+        gmnetCheckpointingPreference: 'auto',
+      },
+      window,
+    );
+
+    render(ImageProcessor, { props: { files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(processImage).toHaveBeenCalledTimes(1);
+    });
+
+    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        gmnetCheckpointing: 'off',
+      }),
+    );
   });
 
   it('pauses after the current file and resumes queued work only when resumed', async () => {

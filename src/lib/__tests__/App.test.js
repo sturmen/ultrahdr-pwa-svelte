@@ -1,19 +1,31 @@
-import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte';
 import App from '../../App.svelte';
-import { consumeSharedFilesFromLaunch } from '../share-target-launch.js';
+import { consumeSharedFilesFromLaunch, registerLaunchQueueConsumer } from '../share-target-launch.js';
 import { initializeRuntime } from '../processing.js';
 
 vi.mock('../share-target-launch.js', () => ({
   consumeSharedFilesFromLaunch: vi.fn(),
+  registerLaunchQueueConsumer: vi.fn(),
 }));
 
 vi.mock('../processing.js', () => ({
   initializeRuntime: vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' })),
+  processImage: vi.fn(async (_file, options = {}) => {
+    options.onProgress?.({
+      phase: 'pipeline-complete',
+      stage: 'encode',
+      elapsedMs: 5,
+      stageDurationsMs: { encode: 5 },
+      timestamp: Date.now(),
+      fileIndex: 0,
+      totalFiles: 1,
+    });
+    return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+  }),
   RUNTIME_INIT_STEP_ORDER: [
     'onnx-load',
     'webgpu-check',
@@ -27,7 +39,7 @@ vi.mock('../processing.js', () => ({
     'webgpu-check': 'Check WebGPU availability',
     'gmnet-session-init': 'Initialize GMNet session',
     'gmnet-provider-verify': 'Verify GMNet execution provider',
-    'gmnet-smoke-run': 'Run GMNet smoke and capability checks',
+    'gmnet-smoke-run': 'Run GMNet smoke test',
     'startup-ready': 'Finalize startup readiness',
   },
 }));
@@ -58,9 +70,20 @@ function createInitFailure(overrides = {}) {
 describe('App shell and startup gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage?.clear?.();
+    delete window.__ULTRAHDR_PROCESSING_PREFERENCES;
+    delete window.__ULTRAHDR_BACKEND_PREFERENCE;
     consumeSharedFilesFromLaunch.mockResolvedValue([]);
+    registerLaunchQueueConsumer.mockReturnValue(true);
     vi.mocked(initializeRuntime).mockResolvedValue({ ready: true, resolvedExecutionProvider: 'webgpu' });
     window.history.replaceState({}, '', '/');
+  });
+
+  it('registers launchQueue consumer on mount for PWA file handoff compatibility', async () => {
+    render(App);
+
+    await screen.findByTestId('upload-drop-zone');
+    expect(registerLaunchQueueConsumer).toHaveBeenCalledTimes(1);
   });
 
   it('renders initialization checklist while runtime is still initializing', async () => {
@@ -140,6 +163,23 @@ describe('App shell and startup gate', () => {
     });
   });
 
+  it('surfaces compatibility-mode messaging when runtime initializes in degraded main-thread wasm mode', async () => {
+    vi.mocked(initializeRuntime).mockResolvedValueOnce({
+      ready: true,
+      resolvedExecutionProvider: 'wasm',
+      runtimeMode: 'main-thread-wasm',
+      runtimeDegraded: true,
+    });
+
+    render(App);
+
+    await screen.findByTestId('upload-drop-zone');
+    expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/wasm/i);
+    expect(screen.getByTestId('runtime-init-degraded')).toHaveTextContent(
+      /compatibility mode/i,
+    );
+  });
+
   it('auto-triggers file picker for launch shortcut action=pick after init success', async () => {
     window.history.replaceState({}, '', '/?action=pick');
     const inputClickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
@@ -152,13 +192,13 @@ describe('App shell and startup gate', () => {
     });
   });
 
-  it('renders probe attempts from runtime init progress updates and hydrates snapshots', async () => {
+  it('ignores legacy probe attempt fields in runtime init progress updates', async () => {
     const initGate = deferred();
     vi.mocked(initializeRuntime).mockImplementationOnce(async ({ onProgress } = {}) => {
       onProgress?.({
         stepId: 'gmnet-smoke-run',
         status: 'running',
-        note: 'Testing 2048x2048 capability (webgpu)...',
+        note: 'Running GMNet smoke test (webgpu)...',
         probeAttempt: {
           provider: 'webgpu',
           candidateLongEdge: 2048,
@@ -168,7 +208,7 @@ describe('App shell and startup gate', () => {
       onProgress?.({
         stepId: 'gmnet-smoke-run',
         status: 'running',
-        note: 'Passed 2048x2048 capability (webgpu).',
+        note: 'GMNet smoke test passed (webgpu).',
         probeAttempt: {
           provider: 'webgpu',
           candidateLongEdge: 2048,
@@ -178,7 +218,7 @@ describe('App shell and startup gate', () => {
       onProgress?.({
         stepId: 'gmnet-smoke-run',
         status: 'running',
-        note: 'Testing 4096x4096 capability (webgpu)...',
+        note: 'GMNet smoke test passed (webgpu).',
         probeAttempts: [
           {
             provider: 'webgpu',
@@ -187,7 +227,7 @@ describe('App shell and startup gate', () => {
           },
           {
             provider: 'webgpu',
-            candidateLongEdge: GMNET_MAX_LONG_EDGE,
+            candidateLongEdge: 4094,
             status: 'failed',
           },
         ],
@@ -199,18 +239,63 @@ describe('App shell and startup gate', () => {
     render(App);
 
     await waitFor(() => {
-      expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toBeInTheDocument();
+      expect(screen.getByTestId('runtime-step-gmnet-smoke-run')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('runtime-step-gmnet-smoke-run-attempt-webgpu-2048')).toHaveTextContent(
-      /passed/i,
-    );
-    expect(screen.getByTestId(`runtime-step-gmnet-smoke-run-attempt-webgpu-${GMNET_MAX_LONG_EDGE}`)).toHaveTextContent(
-      /failed/i,
-    );
+    expect(screen.queryByTestId('runtime-step-gmnet-smoke-run-attempts')).not.toBeInTheDocument();
 
     initGate.resolve({ ready: true, resolvedExecutionProvider: 'webgpu' });
     await waitFor(() => {
       expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
     });
+  });
+
+  it('renders homepage pre-processing settings alongside drop zone when no files are queued', async () => {
+    render(App);
+
+    await screen.findByTestId('upload-drop-zone');
+    const settings = screen.getByTestId('home-processing-settings');
+    expect(settings).toBeInTheDocument();
+    expect(within(settings).getByTestId('home-backend-preference-select')).toBeInTheDocument();
+    expect(within(settings).getByTestId('home-gmnet-memory-mode-select')).toBeInTheDocument();
+    expect(
+      within(settings).queryByTestId('home-settings-advanced-content'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('expands homepage advanced settings and persists values across remount', async () => {
+    const firstRender = render(App);
+    await screen.findByTestId('home-processing-settings');
+
+    await fireEvent.change(screen.getByTestId('home-backend-preference-select'), {
+      target: { value: 'webgl' },
+    });
+    await fireEvent.change(screen.getByTestId('home-gmnet-memory-mode-select'), {
+      target: { value: 'force' },
+    });
+    expect(screen.getByTestId('home-gmnet-memory-mode-select')).toHaveValue('force');
+    await fireEvent.click(screen.getByTestId('home-settings-expand-toggle'));
+    expect(screen.getByTestId('home-settings-advanced-content')).toBeInTheDocument();
+    expect(screen.getByTestId('home-max-content-boost')).toBeInTheDocument();
+    expect(screen.getByTestId('home-quality-select')).toBeInTheDocument();
+
+    firstRender.unmount();
+
+    render(App);
+    await screen.findByTestId('home-processing-settings');
+    expect(screen.getByTestId('home-backend-preference-select')).toHaveValue('webgl');
+    expect(screen.getByTestId('home-gmnet-memory-mode-select')).toHaveValue('force');
+  });
+
+  it('bypasses homepage settings and opens processor directly for share-target files', async () => {
+    consumeSharedFilesFromLaunch.mockResolvedValue([
+      new File(['shared'], 'shared.jpg', { type: 'image/jpeg' }),
+    ]);
+
+    render(App);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('home-processing-settings')).not.toBeInTheDocument();
   });
 });

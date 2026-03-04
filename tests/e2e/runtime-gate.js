@@ -1,46 +1,11 @@
 const failedProjects = new Map();
-const E2E_STARTUP_PROBE_HINTS_BY_PROVIDER = Object.freeze({
-  webgpu: Object.freeze({
-    provider: 'webgpu',
-    gainMapMaxLongEdge: 4096,
-    outputMaxLongEdge: 8192,
-    source: 'e2e-startup-hint',
-    attempts: [],
-  }),
-  webgl: Object.freeze({
-    provider: 'webgl',
-    gainMapMaxLongEdge: 128,
-    outputMaxLongEdge: 256,
-    source: 'e2e-startup-hint',
-    attempts: [],
-  }),
-});
-
-function cloneProbeHintsByProvider(value) {
-  const next = {};
-  for (const [provider, capability] of Object.entries(value || {})) {
-    if (!capability || typeof capability !== 'object') {
-      continue;
-    }
-    next[provider] = {
-      ...capability,
-      attempts: Array.isArray(capability.attempts)
-        ? capability.attempts.map((attempt) => (attempt && typeof attempt === 'object' ? { ...attempt } : attempt))
-        : [],
-    };
-  }
-  return next;
-}
-
-function shouldBypassStartupProbe() {
-  return process.env.ULTRAHDR_E2E_FORCE_STARTUP_PROBE !== '1';
-}
 
 async function installProjectRuntimeOverrides(page, projectName = '') {
   const normalizedProjectName = String(projectName || '').trim().toLowerCase();
   const shouldDisableNavigatorGpu =
     normalizedProjectName.includes('firefox')
-    || normalizedProjectName.includes('webkit');
+    || normalizedProjectName.includes('webkit')
+    || normalizedProjectName.includes('fallback');
   if (!shouldDisableNavigatorGpu) {
     return;
   }
@@ -64,32 +29,27 @@ export function getRuntimeGateFailure(projectName) {
   return failedProjects.get(projectName) || null;
 }
 
-export async function installStartupProbeBypass(page, options = {}) {
+export async function installStartupRuntimeOverride(page, options = {}) {
   await installProjectRuntimeOverrides(page, options.projectName);
-  if (options.skipProbeBypass === true) {
-    return;
-  }
-  if (!shouldBypassStartupProbe()) {
-    return;
-  }
-  const configuredHints = options.gmnetCapabilityHintsByProvider;
-  const hintsByProvider = cloneProbeHintsByProvider(
-    configuredHints && typeof configuredHints === 'object'
-      ? configuredHints
-      : E2E_STARTUP_PROBE_HINTS_BY_PROVIDER,
-  );
-  if (Object.keys(hintsByProvider).length === 0) {
+
+  const runtimeInitOptions = options.runtimeInitOptions;
+  if (!runtimeInitOptions || typeof runtimeInitOptions !== 'object') {
     return;
   }
 
-  await page.addInitScript((hintsPayload) => {
+  await page.addInitScript((runtimeInitOptionsPayload) => {
     const existing = window.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS;
     const existingOptions = existing && typeof existing === 'object' ? existing : {};
     window.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS = {
       ...existingOptions,
-      gmnetCapabilityHintsByProvider: hintsPayload,
+      ...runtimeInitOptionsPayload,
     };
-  }, hintsByProvider);
+  }, runtimeInitOptions);
+}
+
+// Backward-compatible alias for older e2e helper naming.
+export async function installStartupProbeBypass(page, options = {}) {
+  await installStartupRuntimeOverride(page, options);
 }
 
 async function readReadyProvider(page) {
@@ -107,6 +67,16 @@ export async function ensureRuntimeGateReady(page, testInfo, options = {}) {
   const expectedProvider = typeof options.expectedProvider === 'string'
     ? options.expectedProvider.trim().toLowerCase()
     : null;
+  const expectedProviders = Array.isArray(options.expectedProviders)
+    ? options.expectedProviders
+      .filter((provider) => typeof provider === 'string' && provider.trim().length > 0)
+      .map((provider) => provider.trim().toLowerCase())
+    : [];
+  const forbiddenProviders = Array.isArray(options.forbiddenProviders)
+    ? options.forbiddenProviders
+      .filter((provider) => typeof provider === 'string' && provider.trim().length > 0)
+      .map((provider) => provider.trim().toLowerCase())
+    : [];
   const projectName = testInfo?.project?.name || 'unknown-project';
   const readyLocator = page.getByTestId('runtime-init-ready');
   const failureLocator = page.getByTestId('runtime-init-failure');
@@ -146,6 +116,18 @@ export async function ensureRuntimeGateReady(page, testInfo, options = {}) {
 
   if (expectedProvider && resolvedExecutionProvider !== expectedProvider) {
     const reason = `Runtime startup gate provider mismatch for project "${projectName}": expected ${expectedProvider}, got ${resolvedExecutionProvider || 'unknown'}.`;
+    failedProjects.set(projectName, reason);
+    throw new Error(reason);
+  }
+
+  if (expectedProviders.length > 0 && !expectedProviders.includes(resolvedExecutionProvider || '')) {
+    const reason = `Runtime startup gate provider mismatch for project "${projectName}": expected one of [${expectedProviders.join(', ')}], got ${resolvedExecutionProvider || 'unknown'}.`;
+    failedProjects.set(projectName, reason);
+    throw new Error(reason);
+  }
+
+  if (forbiddenProviders.length > 0 && forbiddenProviders.includes(resolvedExecutionProvider || '')) {
+    const reason = `Runtime startup gate resolved a forbidden provider for project "${projectName}": ${resolvedExecutionProvider}.`;
     failedProjects.set(projectName, reason);
     throw new Error(reason);
   }

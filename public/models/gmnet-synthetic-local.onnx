@@ -1,0 +1,2976 @@
+
+pytorch2.10.0:πã
+
+õ
+local_inputval_0node_Shape_0"Shape*
+
+end†*
+start†JÑ
+	namespacew_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/sym_size_int_82: aten.sym_size.intJd
+pkg.torch.onnx.class_hierarchyB['_empty_nn_module_stack_from_metadata_hook', 'aten.sym_size.int']Jì
+pkg.torch.onnx.fx_nodey%sym_size_int_82 : [num_users=3] = call_function[target=torch.ops.aten.sym_size.int](args = (%local_img, 2), kwargs = {})J^
+pkg.torch.onnx.name_scopes@['_empty_nn_module_stack_from_metadata_hook', 'sym_size_int_82']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+è
+val_0sym_size_int_82node_sym_size_int_82"SqueezeJÑ
+	namespacew_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/sym_size_int_82: aten.sym_size.intJd
+pkg.torch.onnx.class_hierarchyB['_empty_nn_module_stack_from_metadata_hook', 'aten.sym_size.int']Jì
+pkg.torch.onnx.fx_nodey%sym_size_int_82 : [num_users=3] = call_function[target=torch.ops.aten.sym_size.int](args = (%local_img, 2), kwargs = {})J^
+pkg.torch.onnx.name_scopes@['_empty_nn_module_stack_from_metadata_hook', 'sym_size_int_82']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+õ
+local_inputval_1node_Shape_1"Shape*
+
+end†*
+start†JÑ
+	namespacew_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/sym_size_int_83: aten.sym_size.intJd
+pkg.torch.onnx.class_hierarchyB['_empty_nn_module_stack_from_metadata_hook', 'aten.sym_size.int']Jì
+pkg.torch.onnx.fx_nodey%sym_size_int_83 : [num_users=2] = call_function[target=torch.ops.aten.sym_size.int](args = (%local_img, 3), kwargs = {})J^
+pkg.torch.onnx.name_scopes@['_empty_nn_module_stack_from_metadata_hook', 'sym_size_int_83']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+è
+val_1sym_size_int_83node_sym_size_int_83"SqueezeJÑ
+	namespacew_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/sym_size_int_83: aten.sym_size.intJd
+pkg.torch.onnx.class_hierarchyB['_empty_nn_module_stack_from_metadata_hook', 'aten.sym_size.int']Jì
+pkg.torch.onnx.fx_nodey%sym_size_int_83 : [num_users=2] = call_function[target=torch.ops.aten.sym_size.int](args = (%local_img, 3), kwargs = {})J^
+pkg.torch.onnx.name_scopes@['_empty_nn_module_stack_from_metadata_hook', 'sym_size_int_83']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+¬
+local_input
+model.down_x.conv.0.weight
+model.down_x.conv.0.biasconv2dnode_conv2d"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†Jﬂ
+	namespace—: __main__.LocalBranchWrapper/model.down_x: models.modules.GMNet.Down_conv/model.down_x.conv: torch.nn.modules.container.Sequential/model.down_x.conv.0: torch.nn.modules.conv.Conv2d/conv2d: aten.conv2d.defaultJƒ
+pkg.torch.onnx.class_hierarchy°['__main__.LocalBranchWrapper', 'models.modules.GMNet.Down_conv', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J÷
+pkg.torch.onnx.fx_nodeª%conv2d : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%local_img, %p_model_down_x_conv_0_weight, %p_model_down_x_conv_0_bias, [2, 2], [1, 1]), kwargs = {})Jh
+pkg.torch.onnx.name_scopesJ['', 'model.down_x', 'model.down_x.conv', 'model.down_x.conv.0', 'conv2d']Jó
+pkg.torch.onnx.stack_trace¯File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 146, in forward
+    x = self.model.down_x(local_img)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 24, in forward
+    return self.conv(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+¯
+val_4
+sym_size_int_83add_414node_add_414"AddJÇ
+	namespaceu_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/add_414: <built-in function add>Jj
+pkg.torch.onnx.class_hierarchyH['_empty_nn_module_stack_from_metadata_hook', '<built-in function add>']JÉ
+pkg.torch.onnx.fx_nodei%add_414 : [num_users=1] = call_function[target=operator.add](args = (-1, %sym_size_int_83), kwargs = {})JV
+pkg.torch.onnx.name_scopes8['_empty_nn_module_stack_from_metadata_hook', 'add_414']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+Ö
+add_414
+val_5
+floordiv_2node_floordiv_2"DivJä
+	namespace}_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/floordiv_2: <built-in function floordiv>Jo
+pkg.torch.onnx.class_hierarchyM['_empty_nn_module_stack_from_metadata_hook', '<built-in function floordiv>']JÇ
+pkg.torch.onnx.fx_nodeh%floordiv_2 : [num_users=4] = call_function[target=operator.floordiv](args = (%add_414, 2), kwargs = {})JY
+pkg.torch.onnx.name_scopes;['_empty_nn_module_stack_from_metadata_hook', 'floordiv_2']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+Ì
+val_6
+
+floordiv_2add_415node_add_415"AddJÇ
+	namespaceu_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/add_415: <built-in function add>Jj
+pkg.torch.onnx.class_hierarchyH['_empty_nn_module_stack_from_metadata_hook', '<built-in function add>']J~
+pkg.torch.onnx.fx_noded%add_415 : [num_users=10] = call_function[target=operator.add](args = (1, %floordiv_2), kwargs = {})JV
+pkg.torch.onnx.name_scopes8['_empty_nn_module_stack_from_metadata_hook', 'add_415']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+¯
+val_4
+sym_size_int_82add_416node_add_416"AddJÇ
+	namespaceu_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/add_416: <built-in function add>Jj
+pkg.torch.onnx.class_hierarchyH['_empty_nn_module_stack_from_metadata_hook', '<built-in function add>']JÉ
+pkg.torch.onnx.fx_nodei%add_416 : [num_users=1] = call_function[target=operator.add](args = (-1, %sym_size_int_82), kwargs = {})JV
+pkg.torch.onnx.name_scopes8['_empty_nn_module_stack_from_metadata_hook', 'add_416']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+Ö
+add_416
+val_5
+floordiv_3node_floordiv_3"DivJä
+	namespace}_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/floordiv_3: <built-in function floordiv>Jo
+pkg.torch.onnx.class_hierarchyM['_empty_nn_module_stack_from_metadata_hook', '<built-in function floordiv>']JÇ
+pkg.torch.onnx.fx_nodeh%floordiv_3 : [num_users=6] = call_function[target=operator.floordiv](args = (%add_416, 2), kwargs = {})JY
+pkg.torch.onnx.name_scopes;['_empty_nn_module_stack_from_metadata_hook', 'floordiv_3']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+Ï
+val_6
+
+floordiv_3add_418node_add_418"AddJÇ
+	namespaceu_empty_nn_module_stack_from_metadata_hook: _empty_nn_module_stack_from_metadata_hook/add_418: <built-in function add>Jj
+pkg.torch.onnx.class_hierarchyH['_empty_nn_module_stack_from_metadata_hook', '<built-in function add>']J}
+pkg.torch.onnx.fx_nodec%add_418 : [num_users=6] = call_function[target=operator.add](args = (1, %floordiv_3), kwargs = {})JV
+pkg.torch.onnx.name_scopes8['_empty_nn_module_stack_from_metadata_hook', 'add_418']Js
+pkg.torch.onnx.stack_traceUFile "torch/fx/passes/runtime_assert.py", line 24, in insert_deferred_runtime_asserts
+ 
+
+conv2drelu	node_relu"ReluJﬂ
+	namespace—: __main__.LocalBranchWrapper/model.down_x: models.modules.GMNet.Down_conv/model.down_x.conv: torch.nn.modules.container.Sequential/model.down_x.conv.1: torch.nn.modules.activation.ReLU/relu: aten.relu.defaultJ∆
+pkg.torch.onnx.class_hierarchy£['__main__.LocalBranchWrapper', 'models.modules.GMNet.Down_conv', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']JÉ
+pkg.torch.onnx.fx_nodei%relu : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d,), kwargs = {})Jf
+pkg.torch.onnx.name_scopesH['', 'model.down_x', 'model.down_x.conv', 'model.down_x.conv.1', 'relu']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 146, in forward
+    x = self.model.down_x(local_img)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 24, in forward
+    return self.conv(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+¿
+relu
+model.down_x.conv.2.weight
+model.down_x.conv.2.biasconv2d_1node_conv2d_1"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J·
+	namespace”: __main__.LocalBranchWrapper/model.down_x: models.modules.GMNet.Down_conv/model.down_x.conv: torch.nn.modules.container.Sequential/model.down_x.conv.2: torch.nn.modules.conv.Conv2d/conv2d_1: aten.conv2d.defaultJƒ
+pkg.torch.onnx.class_hierarchy°['__main__.LocalBranchWrapper', 'models.modules.GMNet.Down_conv', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_1 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu, %p_model_down_x_conv_2_weight, %p_model_down_x_conv_2_bias, [1, 1], [1, 1]), kwargs = {})Jj
+pkg.torch.onnx.name_scopesL['', 'model.down_x', 'model.down_x.conv', 'model.down_x.conv.2', 'conv2d_1']Jó
+pkg.torch.onnx.stack_trace¯File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 146, in forward
+    x = self.model.down_x(local_img)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 24, in forward
+    return self.conv(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ÿ
+
+conv2d_1relu_1node_relu_1"ReluJ·
+	namespace”: __main__.LocalBranchWrapper/model.down_x: models.modules.GMNet.Down_conv/model.down_x.conv: torch.nn.modules.container.Sequential/model.down_x.conv.3: torch.nn.modules.activation.ReLU/relu_1: aten.relu.defaultJ∆
+pkg.torch.onnx.class_hierarchy£['__main__.LocalBranchWrapper', 'models.modules.GMNet.Down_conv', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Já
+pkg.torch.onnx.fx_nodem%relu_1 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_1,), kwargs = {})Jh
+pkg.torch.onnx.name_scopesJ['', 'model.down_x', 'model.down_x.conv', 'model.down_x.conv.3', 'relu_1']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 146, in forward
+    x = self.model.down_x(local_img)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 24, in forward
+    return self.conv(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+ƒ
+relu_1
+model.down_x.conv.4.weight
+model.down_x.conv.4.biasconv2d_2node_conv2d_2"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J·
+	namespace”: __main__.LocalBranchWrapper/model.down_x: models.modules.GMNet.Down_conv/model.down_x.conv: torch.nn.modules.container.Sequential/model.down_x.conv.4: torch.nn.modules.conv.Conv2d/conv2d_2: aten.conv2d.defaultJƒ
+pkg.torch.onnx.class_hierarchy°['__main__.LocalBranchWrapper', 'models.modules.GMNet.Down_conv', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_2 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_1, %p_model_down_x_conv_4_weight, %p_model_down_x_conv_4_bias, [1, 1], [1, 1]), kwargs = {})Jj
+pkg.torch.onnx.name_scopesL['', 'model.down_x', 'model.down_x.conv', 'model.down_x.conv.4', 'conv2d_2']Jó
+pkg.torch.onnx.stack_trace¯File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 146, in forward
+    x = self.model.down_x(local_img)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 24, in forward
+    return self.conv(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ÿ
+
+conv2d_2relu_2node_relu_2"ReluJ·
+	namespace”: __main__.LocalBranchWrapper/model.down_x: models.modules.GMNet.Down_conv/model.down_x.conv: torch.nn.modules.container.Sequential/model.down_x.conv.5: torch.nn.modules.activation.ReLU/relu_2: aten.relu.defaultJ∆
+pkg.torch.onnx.class_hierarchy£['__main__.LocalBranchWrapper', 'models.modules.GMNet.Down_conv', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Já
+pkg.torch.onnx.fx_nodem%relu_2 : [num_users=2] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_2,), kwargs = {})Jh
+pkg.torch.onnx.name_scopesJ['', 'model.down_x', 'model.down_x.conv', 'model.down_x.conv.5', 'relu_2']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 146, in forward
+    x = self.model.down_x(local_img)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 24, in forward
+    return self.conv(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+Œ
+relu_2
+model.res1.0.conv1.weight
+model.res1.0.conv1.biasconv2d_3node_conv2d_3"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.0: models.modules.GMNet.ResidualBlock_noBN/model.res1.0.conv1: torch.nn.modules.conv.Conv2d/conv2d_3: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_3 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_2, %p_model_res1_0_conv1_weight, %p_model_res1_0_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.0', 'model.res1.0.conv1', 'conv2d_3']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ø
+conv2d_3relu_3node_relu_3"ReluJ≠
+	namespaceü: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.0: models.modules.GMNet.ResidualBlock_noBN/relu_3: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Já
+pkg.torch.onnx.fx_nodem%relu_3 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_3,), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.0', 'relu_3']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+∫
+relu_3
+model.res1.0.conv2.weight
+model.res1.0.conv2.biasconv2d_4node_conv2d_4"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.0: models.modules.GMNet.ResidualBlock_noBN/model.res1.0.conv2: torch.nn.modules.conv.Conv2d/conv2d_4: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_4 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_3, %p_model_res1_0_conv2_weight, %p_model_res1_0_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.0', 'model.res1.0.conv2', 'conv2d_4']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+¥
+relu_2
+conv2d_4add_50node_add_50"AddJ´
+	namespaceù: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.0: models.modules.GMNet.ResidualBlock_noBN/add_50: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jç
+pkg.torch.onnx.fx_nodes%add_50 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%relu_2, %conv2d_4), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.0', 'add_50']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+Œ
+add_50
+model.res1.1.conv1.weight
+model.res1.1.conv1.biasconv2d_5node_conv2d_5"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.1: models.modules.GMNet.ResidualBlock_noBN/model.res1.1.conv1: torch.nn.modules.conv.Conv2d/conv2d_5: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_5 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_50, %p_model_res1_1_conv1_weight, %p_model_res1_1_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.1', 'model.res1.1.conv1', 'conv2d_5']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ø
+conv2d_5relu_4node_relu_4"ReluJ≠
+	namespaceü: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.1: models.modules.GMNet.ResidualBlock_noBN/relu_4: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Já
+pkg.torch.onnx.fx_nodem%relu_4 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_5,), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.1', 'relu_4']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+∫
+relu_4
+model.res1.1.conv2.weight
+model.res1.1.conv2.biasconv2d_6node_conv2d_6"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.1: models.modules.GMNet.ResidualBlock_noBN/model.res1.1.conv2: torch.nn.modules.conv.Conv2d/conv2d_6: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_6 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_4, %p_model_res1_1_conv2_weight, %p_model_res1_1_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.1', 'model.res1.1.conv2', 'conv2d_6']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+¥
+add_50
+conv2d_6add_71node_add_71"AddJ´
+	namespaceù: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.1: models.modules.GMNet.ResidualBlock_noBN/add_71: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jç
+pkg.torch.onnx.fx_nodes%add_71 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_50, %conv2d_6), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.1', 'add_71']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+Œ
+add_71
+model.res1.2.conv1.weight
+model.res1.2.conv1.biasconv2d_7node_conv2d_7"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.2: models.modules.GMNet.ResidualBlock_noBN/model.res1.2.conv1: torch.nn.modules.conv.Conv2d/conv2d_7: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_7 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_71, %p_model_res1_2_conv1_weight, %p_model_res1_2_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.2', 'model.res1.2.conv1', 'conv2d_7']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ø
+conv2d_7relu_5node_relu_5"ReluJ≠
+	namespaceü: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.2: models.modules.GMNet.ResidualBlock_noBN/relu_5: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Já
+pkg.torch.onnx.fx_nodem%relu_5 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_7,), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.2', 'relu_5']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+∫
+relu_5
+model.res1.2.conv2.weight
+model.res1.2.conv2.biasconv2d_8node_conv2d_8"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.2: models.modules.GMNet.ResidualBlock_noBN/model.res1.2.conv2: torch.nn.modules.conv.Conv2d/conv2d_8: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_8 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_5, %p_model_res1_2_conv2_weight, %p_model_res1_2_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.2', 'model.res1.2.conv2', 'conv2d_8']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+¥
+add_71
+conv2d_8add_92node_add_92"AddJ´
+	namespaceù: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.2: models.modules.GMNet.ResidualBlock_noBN/add_92: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jç
+pkg.torch.onnx.fx_nodes%add_92 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_71, %conv2d_8), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.2', 'add_92']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+Œ
+add_92
+model.res1.3.conv1.weight
+model.res1.3.conv1.biasconv2d_9node_conv2d_9"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J‚
+	namespace‘: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.3: models.modules.GMNet.ResidualBlock_noBN/model.res1.3.conv1: torch.nn.modules.conv.Conv2d/conv2d_9: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J”
+pkg.torch.onnx.fx_node∏%conv2d_9 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_92, %p_model_res1_3_conv1_weight, %p_model_res1_3_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jb
+pkg.torch.onnx.name_scopesD['', 'model.res1', 'model.res1.3', 'model.res1.3.conv1', 'conv2d_9']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ø
+conv2d_9relu_6node_relu_6"ReluJ≠
+	namespaceü: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.3: models.modules.GMNet.ResidualBlock_noBN/relu_6: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Já
+pkg.torch.onnx.fx_nodem%relu_6 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_9,), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.3', 'relu_6']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+ø
+relu_6
+model.res1.3.conv2.weight
+model.res1.3.conv2.bias	conv2d_10node_conv2d_10"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.3: models.modules.GMNet.ResidualBlock_noBN/model.res1.3.conv2: torch.nn.modules.conv.Conv2d/conv2d_10: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J‘
+pkg.torch.onnx.fx_nodeπ%conv2d_10 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_6, %p_model_res1_3_conv2_weight, %p_model_res1_3_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res1', 'model.res1.3', 'model.res1.3.conv2', 'conv2d_10']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+ª
+add_92
+	conv2d_10add_113node_add_113"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.3: models.modules.GMNet.ResidualBlock_noBN/add_113: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jè
+pkg.torch.onnx.fx_nodeu%add_113 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_92, %conv2d_10), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res1', 'model.res1.3', 'add_113']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_113
+model.res1.4.conv1.weight
+model.res1.4.conv1.bias	conv2d_11node_conv2d_11"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.4: models.modules.GMNet.ResidualBlock_noBN/model.res1.4.conv1: torch.nn.modules.conv.Conv2d/conv2d_11: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_11 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_113, %p_model_res1_4_conv1_weight, %p_model_res1_4_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res1', 'model.res1.4', 'model.res1.4.conv1', 'conv2d_11']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+¡
+	conv2d_11relu_7node_relu_7"ReluJ≠
+	namespaceü: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.4: models.modules.GMNet.ResidualBlock_noBN/relu_7: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jà
+pkg.torch.onnx.fx_noden%relu_7 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_11,), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res1', 'model.res1.4', 'relu_7']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+ø
+relu_7
+model.res1.4.conv2.weight
+model.res1.4.conv2.bias	conv2d_12node_conv2d_12"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.4: models.modules.GMNet.ResidualBlock_noBN/model.res1.4.conv2: torch.nn.modules.conv.Conv2d/conv2d_12: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J‘
+pkg.torch.onnx.fx_nodeπ%conv2d_12 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_7, %p_model_res1_4_conv2_weight, %p_model_res1_4_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res1', 'model.res1.4', 'model.res1.4.conv2', 'conv2d_12']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_113
+	conv2d_12add_134node_add_134"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res1: torch.nn.modules.container.Sequential/model.res1.4: models.modules.GMNet.ResidualBlock_noBN/add_134: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_134 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_113, %conv2d_12), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res1', 'model.res1.4', 'add_134']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 149, in forward
+    x = self.model.res1(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+Í
+add_418
+val_14val_17node_Reshape_17"Reshape*
+	allowzero †JB
+	namespace5: __main__.LocalBranchWrapper/view: aten.view.defaultJV
+pkg.torch.onnx.class_hierarchy4['__main__.LocalBranchWrapper', 'aten.view.default']J°
+pkg.torch.onnx.fx_nodeÜ%view : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%add_134, [1, 64, %add_418, %add_415]), kwargs = {})J*
+pkg.torch.onnx.name_scopes['', 'view']J∂
+pkg.torch.onnx.stack_traceóFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 151, in forward
+    x.view(1, batch * channel, height, width),
+Í
+add_415
+val_14val_18node_Reshape_18"Reshape*
+	allowzero †JB
+	namespace5: __main__.LocalBranchWrapper/view: aten.view.defaultJV
+pkg.torch.onnx.class_hierarchy4['__main__.LocalBranchWrapper', 'aten.view.default']J°
+pkg.torch.onnx.fx_nodeÜ%view : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%add_134, [1, 64, %add_418, %add_415]), kwargs = {})J*
+pkg.torch.onnx.name_scopes['', 'view']J∂
+pkg.torch.onnx.stack_traceóFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 151, in forward
+    x.view(1, batch * channel, height, width),
+Ú
+val_15
+val_16
+val_17
+val_18val_19node_Concat_19"Concat*
+axis †JB
+	namespace5: __main__.LocalBranchWrapper/view: aten.view.defaultJV
+pkg.torch.onnx.class_hierarchy4['__main__.LocalBranchWrapper', 'aten.view.default']J°
+pkg.torch.onnx.fx_nodeÜ%view : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%add_134, [1, 64, %add_418, %add_415]), kwargs = {})J*
+pkg.torch.onnx.name_scopes['', 'view']J∂
+pkg.torch.onnx.stack_traceóFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 151, in forward
+    x.view(1, batch * channel, height, width),
+‚
+add_134
+val_19view	node_view"Reshape*
+	allowzero†JB
+	namespace5: __main__.LocalBranchWrapper/view: aten.view.defaultJV
+pkg.torch.onnx.class_hierarchy4['__main__.LocalBranchWrapper', 'aten.view.default']J°
+pkg.torch.onnx.fx_nodeÜ%view : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%add_134, [1, 64, %add_418, %add_415]), kwargs = {})J*
+pkg.torch.onnx.name_scopes['', 'view']J∂
+pkg.torch.onnx.stack_traceóFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 151, in forward
+    x.view(1, batch * channel, height, width),
+—
+wker
+val_25view_1node_view_1"Reshape*
+	allowzero†JD
+	namespace7: __main__.LocalBranchWrapper/view_1: aten.view.defaultJV
+pkg.torch.onnx.class_hierarchy4['__main__.LocalBranchWrapper', 'aten.view.default']Jë
+pkg.torch.onnx.fx_nodew%view_1 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%wker, [64, 1, 3, 3]), kwargs = {})J,
+pkg.torch.onnx.name_scopes['', 'view_1']J∞
+pkg.torch.onnx.stack_traceëFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 152, in forward
+    wker.view(batch * channel, 1, 3, 3),
+ˆ
+view
+view_1	conv2d_13node_Conv_41"Conv*
+group@†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†JI
+	namespace<: __main__.LocalBranchWrapper/conv2d_13: aten.conv2d.defaultJ?
+!pkg.onnxscript.rewriter.rule_nameRemoveOptionalBiasFromConvJX
+pkg.torch.onnx.class_hierarchy6['__main__.LocalBranchWrapper', 'aten.conv2d.default']J≥
+pkg.torch.onnx.fx_nodeò%conv2d_13 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%view, %view_1, None, [1, 1], [1, 1], [1, 1], 64), kwargs = {})J/
+pkg.torch.onnx.name_scopes['', 'conv2d_13']Jõ
+pkg.torch.onnx.stack_trace}File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 150, in forward
+    mask = F.conv2d(
+Î
+	conv2d_13
+val_19view_2node_view_2"Reshape*
+	allowzero†JD
+	namespace7: __main__.LocalBranchWrapper/view_2: aten.view.defaultJV
+pkg.torch.onnx.class_hierarchy4['__main__.LocalBranchWrapper', 'aten.view.default']J•
+pkg.torch.onnx.fx_nodeä%view_2 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%conv2d_13, [1, 64, %add_418, %add_415]), kwargs = {})J,
+pkg.torch.onnx.name_scopes['', 'view_2']J±
+pkg.torch.onnx.stack_traceíFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 157, in forward
+    ).view(batch, channel, height, width)
+»
+
+view_2
+model.mask_est.0.weight
+model.mask_est.0.bias	conv2d_14node_conv2d_14"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†JØ
+	namespace°: __main__.LocalBranchWrapper/model.mask_est: torch.nn.modules.container.Sequential/model.mask_est.0: torch.nn.modules.conv.Conv2d/conv2d_14: aten.conv2d.defaultJ°
+pkg.torch.onnx.class_hierarchy['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J–
+pkg.torch.onnx.fx_nodeµ%conv2d_14 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%view_2, %p_model_mask_est_0_weight, %p_model_mask_est_0_bias, [1, 1], [1, 1]), kwargs = {})JU
+pkg.torch.onnx.name_scopes7['', 'model.mask_est', 'model.mask_est.0', 'conv2d_14']Jé
+pkg.torch.onnx.stack_traceÔFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 158, in forward
+    mask = self.model.mask_est(mask)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ê
+	conv2d_14relu_8node_relu_8"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.mask_est: torch.nn.modules.container.Sequential/model.mask_est.1: torch.nn.modules.activation.ReLU/relu_8: aten.relu.defaultJ§
+pkg.torch.onnx.class_hierarchyÅ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Jà
+pkg.torch.onnx.fx_noden%relu_8 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_14,), kwargs = {})JR
+pkg.torch.onnx.name_scopes4['', 'model.mask_est', 'model.mask_est.1', 'relu_8']JÜ
+pkg.torch.onnx.stack_traceÁFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 158, in forward
+    mask = self.model.mask_est(mask)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+»
+
+relu_8
+model.mask_est.2.weight
+model.mask_est.2.bias	conv2d_15node_conv2d_15"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†JØ
+	namespace°: __main__.LocalBranchWrapper/model.mask_est: torch.nn.modules.container.Sequential/model.mask_est.2: torch.nn.modules.conv.Conv2d/conv2d_15: aten.conv2d.defaultJ°
+pkg.torch.onnx.class_hierarchy['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J–
+pkg.torch.onnx.fx_nodeµ%conv2d_15 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_8, %p_model_mask_est_2_weight, %p_model_mask_est_2_bias, [1, 1], [1, 1]), kwargs = {})JU
+pkg.torch.onnx.name_scopes7['', 'model.mask_est', 'model.mask_est.2', 'conv2d_15']Jé
+pkg.torch.onnx.stack_traceÔFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 158, in forward
+    mask = self.model.mask_est(mask)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ó
+	conv2d_15sigmoidnode_sigmoid"SigmoidJµ
+	namespaceß: __main__.LocalBranchWrapper/model.mask_est: torch.nn.modules.container.Sequential/model.mask_est.3: torch.nn.modules.activation.Sigmoid/sigmoid: aten.sigmoid.defaultJ™
+pkg.torch.onnx.class_hierarchyá['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.Sigmoid', 'aten.sigmoid.default']Jå
+pkg.torch.onnx.fx_noder%sigmoid : [num_users=1] = call_function[target=torch.ops.aten.sigmoid.default](args = (%conv2d_15,), kwargs = {})JS
+pkg.torch.onnx.name_scopes5['', 'model.mask_est', 'model.mask_est.3', 'sigmoid']J˜
+pkg.torch.onnx.stack_traceÿFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 158, in forward
+    mask = self.model.mask_est(mask)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 358, in forward
+    return torch.sigmoid(input)
+£
+add_134
+sigmoidmul_164node_mul_164"MulJC
+	namespace6: __main__.LocalBranchWrapper/mul_164: aten.mul.TensorJT
+pkg.torch.onnx.class_hierarchy2['__main__.LocalBranchWrapper', 'aten.mul.Tensor']Jé
+pkg.torch.onnx.fx_nodet%mul_164 : [num_users=2] = call_function[target=torch.ops.aten.mul.Tensor](args = (%add_134, %sigmoid), kwargs = {})J-
+pkg.torch.onnx.name_scopes['', 'mul_164']Jó
+pkg.torch.onnx.stack_traceyFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 159, in forward
+    x = x * mask
+’
+mul_164
+model.res2.0.conv1.weight
+model.res2.0.conv1.bias	conv2d_16node_conv2d_16"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.0: models.modules.GMNet.ResidualBlock_noBN/model.res2.0.conv1: torch.nn.modules.conv.Conv2d/conv2d_16: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_16 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%mul_164, %p_model_res2_0_conv1_weight, %p_model_res2_0_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.0', 'model.res2.0.conv1', 'conv2d_16']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+¡
+	conv2d_16relu_9node_relu_9"ReluJ≠
+	namespaceü: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.0: models.modules.GMNet.ResidualBlock_noBN/relu_9: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jà
+pkg.torch.onnx.fx_noden%relu_9 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_16,), kwargs = {})JJ
+pkg.torch.onnx.name_scopes,['', 'model.res2', 'model.res2.0', 'relu_9']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+ø
+relu_9
+model.res2.0.conv2.weight
+model.res2.0.conv2.bias	conv2d_17node_conv2d_17"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.0: models.modules.GMNet.ResidualBlock_noBN/model.res2.0.conv2: torch.nn.modules.conv.Conv2d/conv2d_17: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J‘
+pkg.torch.onnx.fx_nodeπ%conv2d_17 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_9, %p_model_res2_0_conv2_weight, %p_model_res2_0_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.0', 'model.res2.0.conv2', 'conv2d_17']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+mul_164
+	conv2d_17add_185node_add_185"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.0: models.modules.GMNet.ResidualBlock_noBN/add_185: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_185 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%mul_164, %conv2d_17), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.0', 'add_185']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_185
+model.res2.1.conv1.weight
+model.res2.1.conv1.bias	conv2d_18node_conv2d_18"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.1: models.modules.GMNet.ResidualBlock_noBN/model.res2.1.conv1: torch.nn.modules.conv.Conv2d/conv2d_18: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_18 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_185, %p_model_res2_1_conv1_weight, %p_model_res2_1_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.1', 'model.res2.1.conv1', 'conv2d_18']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_18relu_10node_relu_10"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.1: models.modules.GMNet.ResidualBlock_noBN/relu_10: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_10 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_18,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.1', 'relu_10']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_10
+model.res2.1.conv2.weight
+model.res2.1.conv2.bias	conv2d_19node_conv2d_19"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.1: models.modules.GMNet.ResidualBlock_noBN/model.res2.1.conv2: torch.nn.modules.conv.Conv2d/conv2d_19: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_19 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_10, %p_model_res2_1_conv2_weight, %p_model_res2_1_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.1', 'model.res2.1.conv2', 'conv2d_19']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_185
+	conv2d_19add_206node_add_206"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.1: models.modules.GMNet.ResidualBlock_noBN/add_206: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_206 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_185, %conv2d_19), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.1', 'add_206']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_206
+model.res2.2.conv1.weight
+model.res2.2.conv1.bias	conv2d_20node_conv2d_20"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.2: models.modules.GMNet.ResidualBlock_noBN/model.res2.2.conv1: torch.nn.modules.conv.Conv2d/conv2d_20: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_20 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_206, %p_model_res2_2_conv1_weight, %p_model_res2_2_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.2', 'model.res2.2.conv1', 'conv2d_20']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_20relu_11node_relu_11"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.2: models.modules.GMNet.ResidualBlock_noBN/relu_11: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_11 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_20,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.2', 'relu_11']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_11
+model.res2.2.conv2.weight
+model.res2.2.conv2.bias	conv2d_21node_conv2d_21"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.2: models.modules.GMNet.ResidualBlock_noBN/model.res2.2.conv2: torch.nn.modules.conv.Conv2d/conv2d_21: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_21 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_11, %p_model_res2_2_conv2_weight, %p_model_res2_2_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.2', 'model.res2.2.conv2', 'conv2d_21']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_206
+	conv2d_21add_227node_add_227"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.2: models.modules.GMNet.ResidualBlock_noBN/add_227: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_227 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_206, %conv2d_21), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.2', 'add_227']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_227
+model.res2.3.conv1.weight
+model.res2.3.conv1.bias	conv2d_22node_conv2d_22"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.3: models.modules.GMNet.ResidualBlock_noBN/model.res2.3.conv1: torch.nn.modules.conv.Conv2d/conv2d_22: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_22 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_227, %p_model_res2_3_conv1_weight, %p_model_res2_3_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.3', 'model.res2.3.conv1', 'conv2d_22']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_22relu_12node_relu_12"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.3: models.modules.GMNet.ResidualBlock_noBN/relu_12: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_12 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_22,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.3', 'relu_12']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_12
+model.res2.3.conv2.weight
+model.res2.3.conv2.bias	conv2d_23node_conv2d_23"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.3: models.modules.GMNet.ResidualBlock_noBN/model.res2.3.conv2: torch.nn.modules.conv.Conv2d/conv2d_23: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_23 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_12, %p_model_res2_3_conv2_weight, %p_model_res2_3_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.3', 'model.res2.3.conv2', 'conv2d_23']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_227
+	conv2d_23add_248node_add_248"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.3: models.modules.GMNet.ResidualBlock_noBN/add_248: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_248 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_227, %conv2d_23), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.3', 'add_248']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_248
+model.res2.4.conv1.weight
+model.res2.4.conv1.bias	conv2d_24node_conv2d_24"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.4: models.modules.GMNet.ResidualBlock_noBN/model.res2.4.conv1: torch.nn.modules.conv.Conv2d/conv2d_24: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_24 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_248, %p_model_res2_4_conv1_weight, %p_model_res2_4_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.4', 'model.res2.4.conv1', 'conv2d_24']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_24relu_13node_relu_13"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.4: models.modules.GMNet.ResidualBlock_noBN/relu_13: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_13 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_24,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.4', 'relu_13']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_13
+model.res2.4.conv2.weight
+model.res2.4.conv2.bias	conv2d_25node_conv2d_25"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.4: models.modules.GMNet.ResidualBlock_noBN/model.res2.4.conv2: torch.nn.modules.conv.Conv2d/conv2d_25: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_25 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_13, %p_model_res2_4_conv2_weight, %p_model_res2_4_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res2', 'model.res2.4', 'model.res2.4.conv2', 'conv2d_25']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_248
+	conv2d_25add_269node_add_269"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res2: torch.nn.modules.container.Sequential/model.res2.4: models.modules.GMNet.ResidualBlock_noBN/add_269: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_269 : [num_users=1] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_248, %conv2d_25), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res2', 'model.res2.4', 'add_269']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 161, in forward
+    x = self.model.res2(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+“
+wchn	sigmoid_1node_sigmoid_1"SigmoidJ}
+	namespacep: __main__.LocalBranchWrapper/model.att_est: torch.nn.modules.activation.Sigmoid/sigmoid_1: aten.sigmoid.defaultJÄ
+pkg.torch.onnx.class_hierarchy^['__main__.LocalBranchWrapper', 'torch.nn.modules.activation.Sigmoid', 'aten.sigmoid.default']Jâ
+pkg.torch.onnx.fx_nodeo%sigmoid_1 : [num_users=1] = call_function[target=torch.ops.aten.sigmoid.default](args = (%wchn,), kwargs = {})J@
+pkg.torch.onnx.name_scopes"['', 'model.att_est', 'sigmoid_1']J’
+pkg.torch.onnx.stack_trace∂File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 162, in forward
+    x = x * self.model.att_est(wchn)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 358, in forward
+    return torch.sigmoid(input)
+º
+add_269
+	sigmoid_1mul_269node_mul_269"MulJC
+	namespace6: __main__.LocalBranchWrapper/mul_269: aten.mul.TensorJT
+pkg.torch.onnx.class_hierarchy2['__main__.LocalBranchWrapper', 'aten.mul.Tensor']Jê
+pkg.torch.onnx.fx_nodev%mul_269 : [num_users=2] = call_function[target=torch.ops.aten.mul.Tensor](args = (%add_269, %sigmoid_1), kwargs = {})J-
+pkg.torch.onnx.name_scopes['', 'mul_269']J¨
+pkg.torch.onnx.stack_traceçFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 162, in forward
+    x = x * self.model.att_est(wchn)
+’
+mul_269
+model.res3.0.conv1.weight
+model.res3.0.conv1.bias	conv2d_26node_conv2d_26"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.0: models.modules.GMNet.ResidualBlock_noBN/model.res3.0.conv1: torch.nn.modules.conv.Conv2d/conv2d_26: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_26 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%mul_269, %p_model_res3_0_conv1_weight, %p_model_res3_0_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.0', 'model.res3.0.conv1', 'conv2d_26']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_26relu_14node_relu_14"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.0: models.modules.GMNet.ResidualBlock_noBN/relu_14: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_14 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_26,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.0', 'relu_14']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_14
+model.res3.0.conv2.weight
+model.res3.0.conv2.bias	conv2d_27node_conv2d_27"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.0: models.modules.GMNet.ResidualBlock_noBN/model.res3.0.conv2: torch.nn.modules.conv.Conv2d/conv2d_27: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_27 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_14, %p_model_res3_0_conv2_weight, %p_model_res3_0_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.0', 'model.res3.0.conv2', 'conv2d_27']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+mul_269
+	conv2d_27add_294node_add_294"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.0: models.modules.GMNet.ResidualBlock_noBN/add_294: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_294 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%mul_269, %conv2d_27), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.0', 'add_294']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_294
+model.res3.1.conv1.weight
+model.res3.1.conv1.bias	conv2d_28node_conv2d_28"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.1: models.modules.GMNet.ResidualBlock_noBN/model.res3.1.conv1: torch.nn.modules.conv.Conv2d/conv2d_28: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_28 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_294, %p_model_res3_1_conv1_weight, %p_model_res3_1_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.1', 'model.res3.1.conv1', 'conv2d_28']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_28relu_15node_relu_15"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.1: models.modules.GMNet.ResidualBlock_noBN/relu_15: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_15 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_28,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.1', 'relu_15']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_15
+model.res3.1.conv2.weight
+model.res3.1.conv2.bias	conv2d_29node_conv2d_29"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.1: models.modules.GMNet.ResidualBlock_noBN/model.res3.1.conv2: torch.nn.modules.conv.Conv2d/conv2d_29: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_29 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_15, %p_model_res3_1_conv2_weight, %p_model_res3_1_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.1', 'model.res3.1.conv2', 'conv2d_29']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_294
+	conv2d_29add_315node_add_315"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.1: models.modules.GMNet.ResidualBlock_noBN/add_315: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_315 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_294, %conv2d_29), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.1', 'add_315']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_315
+model.res3.2.conv1.weight
+model.res3.2.conv1.bias	conv2d_30node_conv2d_30"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.2: models.modules.GMNet.ResidualBlock_noBN/model.res3.2.conv1: torch.nn.modules.conv.Conv2d/conv2d_30: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_30 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_315, %p_model_res3_2_conv1_weight, %p_model_res3_2_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.2', 'model.res3.2.conv1', 'conv2d_30']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_30relu_16node_relu_16"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.2: models.modules.GMNet.ResidualBlock_noBN/relu_16: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_16 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_30,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.2', 'relu_16']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_16
+model.res3.2.conv2.weight
+model.res3.2.conv2.bias	conv2d_31node_conv2d_31"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.2: models.modules.GMNet.ResidualBlock_noBN/model.res3.2.conv2: torch.nn.modules.conv.Conv2d/conv2d_31: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_31 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_16, %p_model_res3_2_conv2_weight, %p_model_res3_2_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.2', 'model.res3.2.conv2', 'conv2d_31']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_315
+	conv2d_31add_336node_add_336"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.2: models.modules.GMNet.ResidualBlock_noBN/add_336: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_336 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_315, %conv2d_31), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.2', 'add_336']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_336
+model.res3.3.conv1.weight
+model.res3.3.conv1.bias	conv2d_32node_conv2d_32"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.3: models.modules.GMNet.ResidualBlock_noBN/model.res3.3.conv1: torch.nn.modules.conv.Conv2d/conv2d_32: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_32 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_336, %p_model_res3_3_conv1_weight, %p_model_res3_3_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.3', 'model.res3.3.conv1', 'conv2d_32']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_32relu_17node_relu_17"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.3: models.modules.GMNet.ResidualBlock_noBN/relu_17: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_17 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_32,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.3', 'relu_17']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_17
+model.res3.3.conv2.weight
+model.res3.3.conv2.bias	conv2d_33node_conv2d_33"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.3: models.modules.GMNet.ResidualBlock_noBN/model.res3.3.conv2: torch.nn.modules.conv.Conv2d/conv2d_33: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_33 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_17, %p_model_res3_3_conv2_weight, %p_model_res3_3_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.3', 'model.res3.3.conv2', 'conv2d_33']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_336
+	conv2d_33add_357node_add_357"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.3: models.modules.GMNet.ResidualBlock_noBN/add_357: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_357 : [num_users=2] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_336, %conv2d_33), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.3', 'add_357']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+’
+add_357
+model.res3.4.conv1.weight
+model.res3.4.conv1.bias	conv2d_34node_conv2d_34"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.4: models.modules.GMNet.ResidualBlock_noBN/model.res3.4.conv1: torch.nn.modules.conv.Conv2d/conv2d_34: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_34 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_357, %p_model_res3_4_conv1_weight, %p_model_res3_4_conv1_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.4', 'model.res3.4.conv1', 'conv2d_34']J£
+pkg.torch.onnx.stack_traceÑFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+∆
+	conv2d_34relu_18node_relu_18"ReluJÆ
+	namespace†: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.4: models.modules.GMNet.ResidualBlock_noBN/relu_18: aten.relu.defaultJ´
+pkg.torch.onnx.class_hierarchyà['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_18 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_34,), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.4', 'relu_18']J„
+pkg.torch.onnx.stack_traceƒFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 38, in forward
+    out = F.relu(self.conv1(x), inplace=True)
+¡
+relu_18
+model.res3.4.conv2.weight
+model.res3.4.conv2.bias	conv2d_35node_conv2d_35"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†J„
+	namespace’: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.4: models.modules.GMNet.ResidualBlock_noBN/model.res3.4.conv2: torch.nn.modules.conv.Conv2d/conv2d_35: aten.conv2d.defaultJÕ
+pkg.torch.onnx.class_hierarchy™['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J’
+pkg.torch.onnx.fx_node∫%conv2d_35 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_18, %p_model_res3_4_conv2_weight, %p_model_res3_4_conv2_bias, [1, 1], [1, 1]), kwargs = {})Jc
+pkg.torch.onnx.name_scopesE['', 'model.res3', 'model.res3.4', 'model.res3.4.conv2', 'conv2d_35']Jè
+pkg.torch.onnx.stack_traceFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 39, in forward
+    out = self.conv2(out)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ω
+add_357
+	conv2d_35add_378node_add_378"AddJ¨
+	namespaceû: __main__.LocalBranchWrapper/model.res3: torch.nn.modules.container.Sequential/model.res3.4: models.modules.GMNet.ResidualBlock_noBN/add_378: aten.add.TensorJ©
+pkg.torch.onnx.class_hierarchyÜ['__main__.LocalBranchWrapper', 'torch.nn.modules.container.Sequential', 'models.modules.GMNet.ResidualBlock_noBN', 'aten.add.Tensor']Jê
+pkg.torch.onnx.fx_nodev%add_378 : [num_users=1] = call_function[target=torch.ops.aten.add.Tensor](args = (%add_357, %conv2d_35), kwargs = {})JK
+pkg.torch.onnx.name_scopes-['', 'model.res3', 'model.res3.4', 'add_378']Jœ
+pkg.torch.onnx.stack_trace∞File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 163, in forward
+    x = self.model.res3(x)
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/container.py", line 253, in forward
+    input = module(input)
+  File "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/GMNet/codes/models/modules/GMNet.py", line 40, in forward
+    return identity + out
+º
+add_378
+model.upconv.weight
+model.upconv.bias	conv2d_36node_conv2d_36"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†Jt
+	namespaceg: __main__.LocalBranchWrapper/model.upconv: torch.nn.modules.conv.Conv2d/conv2d_36: aten.conv2d.defaultJx
+pkg.torch.onnx.class_hierarchyV['__main__.LocalBranchWrapper', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J…
+pkg.torch.onnx.fx_nodeÆ%conv2d_36 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%add_378, %p_model_upconv_weight, %p_model_upconv_bias, [1, 1], [1, 1]), kwargs = {})J?
+pkg.torch.onnx.name_scopes!['', 'model.upconv', 'conv2d_36']Jå
+pkg.torch.onnx.stack_traceÌFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 164, in forward
+    out = self.model.act(self.model.upsampler(self.model.upconv(x)))
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+K
+	conv2d_36node_pixel_shuffle_shapenode_pixel_shuffle_shape_node"Shape
+£
+node_pixel_shuffle_shape
+node_pixel_shuffle_starts0
+node_pixel_shuffle_ends1
+node_pixel_shuffle_axes0node_pixel_shuffle_nnode_pixel_shuffle_slice_n"Slice
+£
+node_pixel_shuffle_shape
+node_pixel_shuffle_starts2
+node_pixel_shuffle_ends3
+node_pixel_shuffle_axes0node_pixel_shuffle_hnode_pixel_shuffle_slice_h"Slice
+£
+node_pixel_shuffle_shape
+node_pixel_shuffle_starts3
+node_pixel_shuffle_ends4
+node_pixel_shuffle_axes0node_pixel_shuffle_wnode_pixel_shuffle_slice_w"Slice
+Ì
+node_pixel_shuffle_n
+node_pixel_shuffle_channels
+node_pixel_shuffle_block
+node_pixel_shuffle_block
+node_pixel_shuffle_h
+node_pixel_shuffle_w!node_pixel_shuffle_reshape1_shape node_pixel_shuffle_concat_shape1"Concat*
+axis †
+r
+	conv2d_36
+!node_pixel_shuffle_reshape1_shapenode_pixel_shuffle_reshaped1node_pixel_shuffle_reshape1"Reshape
+}
+node_pixel_shuffle_reshaped1node_pixel_shuffle_transposednode_pixel_shuffle_transpose"	Transpose*
+perm@ @@@@@†
+f
+node_pixel_shuffle_h
+node_pixel_shuffle_blocknode_pixel_shuffle_h2node_pixel_shuffle_mul_h"Mul
+f
+node_pixel_shuffle_w
+node_pixel_shuffle_blocknode_pixel_shuffle_w2node_pixel_shuffle_mul_w"Mul
+ª
+node_pixel_shuffle_n
+node_pixel_shuffle_channels
+node_pixel_shuffle_h2
+node_pixel_shuffle_w2!node_pixel_shuffle_reshape2_shape node_pixel_shuffle_concat_shape2"Concat*
+axis †
+w
+node_pixel_shuffle_transposed
+!node_pixel_shuffle_reshape2_shapepixel_shufflenode_pixel_shuffle_reshape2"Reshape
+Ó
+pixel_shufflerelu_19node_relu_19"ReluJq
+	namespaced: __main__.LocalBranchWrapper/model.act: torch.nn.modules.activation.ReLU/relu_19: aten.relu.defaultJz
+pkg.torch.onnx.class_hierarchyX['__main__.LocalBranchWrapper', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Jç
+pkg.torch.onnx.fx_nodes%relu_19 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%pixel_shuffle,), kwargs = {})J:
+pkg.torch.onnx.name_scopes['', 'model.act', 'relu_19']JÑ
+pkg.torch.onnx.stack_traceÂFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 164, in forward
+    out = self.model.act(self.model.upsampler(self.model.upconv(x)))
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+æ
+relu_19
+model.HRconv.weight
+model.HRconv.bias	conv2d_37node_conv2d_37"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†Jt
+	namespaceg: __main__.LocalBranchWrapper/model.HRconv: torch.nn.modules.conv.Conv2d/conv2d_37: aten.conv2d.defaultJx
+pkg.torch.onnx.class_hierarchyV['__main__.LocalBranchWrapper', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J…
+pkg.torch.onnx.fx_nodeÆ%conv2d_37 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_19, %p_model_hrconv_weight, %p_model_hrconv_bias, [1, 1], [1, 1]), kwargs = {})J?
+pkg.torch.onnx.name_scopes!['', 'model.HRconv', 'conv2d_37']Jé
+pkg.torch.onnx.stack_traceÔFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 165, in forward
+    out = self.model.conv_last(self.model.act(self.model.HRconv(out)))
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+Ë
+	conv2d_37relu_20node_relu_20"ReluJq
+	namespaced: __main__.LocalBranchWrapper/model.act: torch.nn.modules.activation.ReLU/relu_20: aten.relu.defaultJz
+pkg.torch.onnx.class_hierarchyX['__main__.LocalBranchWrapper', 'torch.nn.modules.activation.ReLU', 'aten.relu.default']Jâ
+pkg.torch.onnx.fx_nodeo%relu_20 : [num_users=1] = call_function[target=torch.ops.aten.relu.default](args = (%conv2d_37,), kwargs = {})J:
+pkg.torch.onnx.name_scopes['', 'model.act', 'relu_20']JÜ
+pkg.torch.onnx.stack_traceÁFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 165, in forward
+    out = self.model.conv_last(self.model.act(self.model.HRconv(out)))
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/activation.py", line 143, in forward
+    return F.relu(input, inplace=self.inplace)
+À
+relu_20
+model.conv_last.weight
+model.conv_last.biasingmnode_conv2d_38"Conv*
+group†*
+pads@@@@†*
+strides@@†*
+auto_pad"NOTSET†*
+	dilations@@†Jw
+	namespacej: __main__.LocalBranchWrapper/model.conv_last: torch.nn.modules.conv.Conv2d/conv2d_38: aten.conv2d.defaultJx
+pkg.torch.onnx.class_hierarchyV['__main__.LocalBranchWrapper', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']Jœ
+pkg.torch.onnx.fx_node¥%conv2d_38 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%relu_20, %p_model_conv_last_weight, %p_model_conv_last_bias, [1, 1], [1, 1]), kwargs = {})JB
+pkg.torch.onnx.name_scopes$['', 'model.conv_last', 'conv2d_38']Jé
+pkg.torch.onnx.stack_traceÔFile "/Users/nicholastinsley/git/ultrahdr-pwa-svelte/scripts/export_gmnet_onnx.py", line 165, in forward
+    out = self.model.conv_last(self.model.act(self.model.HRconv(out)))
+  File "/Users/nicholastinsley/.pyenv/versions/3.14.2/lib/python3.14/site-packages/torch/nn/modules/conv.py", line 553, in forward
+    return self._conv_forward(input, self.weight, self.bias)
+main_graph*u@@Bmodel.mask_est.0.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset12544j
+length147456p*û@Bmodel.mask_est.0.biasJÄ…xâ;vA¶;ßóG;«òç;a–S<'É;À¥;’∞w<Uv˙;ãä<Á4ã;g;¿ªºöiø∫–êñ9·T∫πSª	tî;€Õ€;‹C/;D≥˚∫ºı¯∫E>Ç8¥>ªi{é<Z9<-Ò:µ√F:f$¶;ΩsÅª[8ÿªùBª?\ö;£ø¶;Ÿ -<¨ãº´_†;4˚≠;ß¶: ·ƒ:·º
+<`r};i ®;ÂNà;Iñ_;äÛ¶;Ftó:°e5;V·[<"M<ë<i;Û}◊ªê–t;iÆî;#¸`;'(ã<Hq°∫∆O<!ÅâªòÛª8•;AsÉ;∑A9fVÉ<*r@Bmodel.mask_est.2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1024j
+length2304p*!Bmodel.mask_est.2.biasJ+Å<*u@Bmodel.down_x.conv.0.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset5632j
+length6912p*°@Bmodel.down_x.conv.0.biasJÄõ»Ñ:»Ö}∫8yÈ;Oó˛ªË«—ª‰çÌªU Éª9~ºæ¯(9kÓß∫]6®;ñÇ∏;4'’ªjœ º†Ì∫≤smª‰ÀÌª´£º‰˛º{ï“πbë·ªVç ;?ÿã<¿∂f∫Á€°ªgYº<¨π.2[ª∂äŒª0éÙªoq!ºÒZ•;_ààªäÏ˘:Áì<<XQºd$‰ªö´¶∫›≤•∫”ﬁº—∫#)èªE&º)£π;˝‚ºI(w;ÓÊª£`»ª"t$º¡„ÊªFŒ*º?ÒÑª¡0ºáhºtáπ∫9Lªﬂ•ªqt <w˙ªÏ®ÚªVÊºŸºâXº4hº*y@@Bmodel.down_x.conv.2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset160000j
+length147456p*°@Bmodel.down_x.conv.2.biasJÄóŒÑª$Y–ªÖ6º=ÂÇªM¢ºìˇª)Gªƒº¡0–ª¨N∂ªÊº≠√ù:-Sªè≈ºç”ºnñÏªìëlπ∏ı	º∂….ª1˚€∫Â¸«;íÛeªWÄMª@w$ºáYªöXËª§MªIªã`Ú;Çqúª‚CO∫˘’Œªq¬ª9[ºó€ ªkUªj#Nª=ø◊ªwªÉ<¬πª±;;;®IºÆ&º/Î÷ªÑ|<¨í*<iÛ‰ªˇTë;Wù;WlGª¶ø
+º}|<úÿ;9Ëª√Nªi…ªPwºú⁄
+ºL[ªÂSºı∫cª mÊ;BÓæª*y@@Bmodel.down_x.conv.4.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset307456j
+length147456p*°@Bmodel.down_x.conv.4.biasJÄØÚ≤ª.Z;ı&™ªªÉ®;Ì)Ï∫	é:ETÊ;8`À;7<2 ⁄;∞õ;ûìX<~æ±ªú5ªÕÿ ª#D<õf-;Ìs$;K¥<(π≈;]©ªΩòó∫¬Ñ∑ªIbπ;πª%0æªøèÿ;gπn∫gƒª7«©ªEC÷∫â.ﬂ:°¶J9G“;q-n∫’ÿ™;ÀÂ∏Ub*;’Æª.˛æª•ΩóªÃ˜ûª:Op<J&∫u≥ªóPe<T§ŸªBºª•*»ª°GN<|wﬂª¡6ﬂª/O”∫íÉ';vIç;óÚ√ªh(Âªıº&∏ª>µµª∏8∂ªdªSÆ;8∂•;*x@@Bmodel.res1.0.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset454912j
+length147456p*†@Bmodel.res1.0.conv1.biasJÄ•˛‹ªt]ú;«éº†≠„ªÌ‡ÓªÛºØª˙ß°;·Ø∞ªÓnA:(è›ª∫eΩ;–º∂|˘ª∞à;f“ºîXªn¸ª«ºRªmoŒªÚ\;SjºÄo≠;è5U;·∆¢∫∏∞∫)U‰ªº
+‡ª^ùπT<ƒíº=4<}Õ7ª∆ŸªyVz;‡‹∫+Ì‡ªA•;ÁÁªŸW°∫£»ª˛ø«;&¨≈ªpIª÷ÿªò-ÏªSPœªÏª ﬂ§∫íªn$º¬u¬ª7 øª’˙ª‹1˜;z1∫ªaZøªTŸZ8[&∫Fÿ¸ª˘oªò/ÖªS˜Ìªä√ÿª√≈ª*x@@Bmodel.res1.0.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset602368j
+length147456p*†@Bmodel.res1.0.conv2.biasJÄÃp÷ª∫§
+ºòEÕªPêßπRÅ†∫5TYªr≥˜:ï
+úª§\™ª¿í4ª·b7ª˙Èÿ;J˙√ªŒ«ª[q‘ªÙ£JªÕœ;ª‚Kª˙†º¨µª€d“ªp=¥ªóq:HÕ;&˝”ª©ˆ‘ª´/ª©ofªx-‘ªv+ ª˘ÚP;ì+!ªXÕª¿;˛/`ª]ÀºXµæª·Uªø1ƒªß——ªPG«ª+Ú»ª—Zª¸¬√ª≈…Ÿª&oVªzV÷ªÖ•€ªw6€ªFÉu;t∂“ªøvŸªN±rª˛dIª£[°;‘Oƒªµ≠€ª'—1ª'∂»ªœ ª]ØÕªe√+ª¥ñª´°;*x@@Bmodel.res1.1.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset749824j
+length147456p*†@Bmodel.res1.1.conv1.biasJÄV≈ıªt—≥ª
+t˚ªnD∫å^ﬂ:Öu	ºJz˛∫`~ªB™Ïª„)¸ª	ﬁòªƒ¶Hªò¨∫eÆÏªBœ	ª˙›∫DºY(‡;:Æπªﬂ"âªòòM;ß‡ˆªÿË·ªGü∏Ûr;ΩT<Ø «ª„ü;ºf‚ª”a˛;DAÎªı¡Óª®a›ªnù¿ª”„ª∆mÌªÌ*‡ªZ«Ùª-5˘:fàŒ9ËÄ	</˚ª≥
+º M√ª¢C¡ª6ÈªÍ%¡;·ÓÚªÃ†;Zm”ª*%ªª(≠;™ºeÅù∫¨òÌ;mQ˙;ÿ79ºzµ∂ªx∆˙ª∂(ª«mºˇË<•-ªÜ™;*x@@Bmodel.res1.1.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset897280j
+length147456p*†@Bmodel.res1.1.conv2.biasJÄ ı√ªﬂØèª@ªª-˛;˜,∏¯u_ª-áà:E’ ªä(8∫Å≈Ê∫XáªÌ{Ï;ô÷±ª≠[—ª0≈ªÄQ<:se;~ßåªÌùÏ∫7Õª.h¡ª˘üªÒ"ZπWÈ;E∑ªE√ªÃ¥∞∫§ljªoÿ≈ª%l∑ªê•Ü:L,»∑Ô„∞ª=´≈9GÏñ∫˘1ıªØªy}àª≥ªˇÙæª˙"≤ª?§µª´£Ñ:¬&º2 ¿ªrR»∫u˜√ªÙF»ª∑∂ ª|ùb;øﬁ≥ªï§æªæ{∫∏‘«ªëM≤;f\´ªéçƒª$®ª¥*∂ªT∂ªZ7ªª@@v8Çe-ºÄ‹¥:*y@@Bmodel.res1.2.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1044736j
+length147456p*†@Bmodel.res1.2.conv1.biasJÄ·’ª3Oˇª®d;≤ˇÔ;âÕª.¢º√◊€ªVƒ(ºv–·ª6ÆW;≠kº˛∆ºπºd∂<#{·;¯Z)π`∫ºg#s;Ï(˙ª“pd;Áçıªà)l;∆„8;R|‘ªWÅtπïﬂ◊ªÕ&ºÍ1’ª´0‡ªKÔ<Œ)Ø:<c¯ªB“ª;¿#º™`—ªèœªTÎ;ùk“ªÙzºo∂Îª7‚ªhˆ ªÎäï;ÖOªã1ªÔ ªG|9<fDç;≈∂÷ªÿ;:(?Ÿªß€ªzX;F°€ªﬂ&F;<Üº]^ŒªD™;ùù”ª®ÕªÏî‘ª8Ú‹∫LlºíÉú;*y@@Bmodel.res1.2.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1192192j
+length147456p*†@Bmodel.res1.2.conv2.biasJÄ;±¢ªQ√Uª]`¶ªÏr:«0∫¡5¨∫êÿW:ÿôyª◊≈∫Ω£;òÁ#ªã™<ñOîªÙ‘œª‚´ª/8:áX0;u•ªƒµ∫A	§ª¡B§ªXÕâª-‡h∏oË;ˆ∂úª∂ßªåd):ËÀπ™Ç¢ª~MöªAB∫=µH∫<söª'ÎW:8∫I’ç∫¥êúª{<ª≤ßªPûª¨âêªCKóªé7â:âdÔªËõ§ªe¨∫_{ßª%Æ®ªûZ©ªïÉ;fSöª¸†ªÙ%;˝œ∏∫-∆;óãªOÓ®ª≈≠:‹Îïªm.ùª§¸ûªöÌÉπÿ)Åªc9*y@@Bmodel.res1.3.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1339648j
+length147456p*†@Bmodel.res1.3.conv1.biasJÄº?Ã¥ª'¿û;êÊ∑ª•AÎªÓ"º∆ºB—ª◊tçªKΩ;f"y∫`Nñ;*03ºÆåºªråπª¬¶Ω;QM;Æ»%;vZËªtxªê ¢;N≤8ªÚPÛ8€⁄±ª-ì;Œc;$Æw∫¢¿˝ª∏éπå©<	bπª≤e=;x8ºªnâº*FﬁªYXÆª«Ø;ns6;¯ÛªÓÄ∑ªmí†;⁄"ºB´º)º¢„ºà}¶ªN2º+ç≤ªx\®ªv≤†ªö⁄·ªûÅº∏…—:˚¸ª\•°ªéÌªö∞¢ªIﬁ<⁄ùıªC<∆”ºªì¡;iÆ™ª‰é<*y@@Bmodel.res1.3.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1487104j
+length147456p*†@Bmodel.res1.3.conv2.biasJÄcÃÇªÚ{õ9€Aîªœ¥z∫£’ª∫‰™Oπ!+u:~?Ï:tNè:˘sG:1D'ªÉòM<$GJª#˘&ªA∫Üª…:P|W;_ ò:¿V;zB:Ö®Éªµk\ªÒHÑ∫k[∑;?pcª;æxª°É‡:Wa∫ùCiªµtª¯â›π”¶:¿ÌÉªÿù?;«TπÚkç9ÏlªGØæ9E∫çªÒeª+ÔFª€Æ^ª¯˝;ƒàäªÌÉª≈È9Càªı]|ªÔäª*Ây;VZÖª+%{ªä>á:-9yˆ;„˚fªéAÖª$ie;öHª¯uªFsiªˇ‹›9|LπK∞¸∫*y@@Bmodel.res1.4.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1634560j
+length147456p*†@Bmodel.res1.4.conv1.biasJÄe3˘ªGÖ;≥I≈ªÉáÖ;≠ºVŒ|;Öµª”hì;HQ<+eóªMJ;;˚6V∫ÅãªËpª4	ë;.Zû;vï;B∞ïª,º
+Dãª‹:Äªÿ⁄»ªjˆX;πB<˚∑äª†[áªeﬁ!º;ÎƒªøÁ<{¢;¸˙O<©∞€:^læ;ºªˆˆà;≠¬ª}7∫F/[9ÖìåªMPZª˛≠-<√âÅªzç∆ªz∏ªª?ÄªÌhÜ;`K<—Fâª ;ä; ˛∫&}_ªêvÉ;√…ªπ4O;¢ëªBrôª>OäªΩwû;;á©ª$ÏµªßLÜª(ÆL;-É;C«Nº*y@@Bmodel.res1.4.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1782016j
+length147456p*†@Bmodel.res1.4.conv2.biasJÄcBIª∑®:Ãvª”áªKÜπ£%Ñ8a†;(C?ª¡y‡9«:¨·úªƒ∆Ñ<äîÃ∫∂ß§ππ—Fªb£b8.Hn;‹XΩ∫ôçÜ;k“ ª£EªZ¶ª·Ù_∫/Ó3∫|K1ªA2ªN÷∑:€°P∫zƒ6ªëñ&ª”c;∑‘Ë:_{Wª•tô:(∆ª)+ò∫Wó*ªk{Sª›µQª/ ª¬ÔÚ∫®(ª”2#;⁄˙ªp\+ªŸ2Q:¶@ªG4ªÇt\ªs!;◊FIªM.Mª£bÆπ¯¯Á∫qÁ;é&9ªMIªru;R≠ªcí-ªÜ!ª¨Bò:;ÔC:ütG;*y@@Bmodel.res2.0.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset1929472j
+length147456p*†@Bmodel.res2.0.conv1.biasJÄÛ	(ªˇ≤;9˜ºª%˝˚:]≠ûª∑áªC:˙∆Ë;!Éªá9ªjbªÊi;x••ªÉ;FKª]uGª	ãå;Í·‚∫â}];ûS©;äfª˘æáª–?+;ò
+ª¡æl;œ¸˝;«Ê•ªO≠O;£æÚªB6ª¶∂zª%ÙVª‰jjª{‘Î:kÅH;08;yïªé∏ˆª–˚WªŒ±;∞ZâªB® ª—R;√…f;≈ƒ∞∫TL·ªd±ªeàê∫?ÕÆ;À5+ªÖÜ*ª⁄a∂;∞Bª~ñD;];Œª3∫;ñ‘Ñ<ÆÌJª·®.ªÿÓbªç≤¯ªÈXZªÚ·UªNâgª*y@@Bmodel.res2.0.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2076928j
+length147456p*†@Bmodel.res2.0.conv2.biasJÄàô∫[ª|ÅÒ∫Ucª
+◊Çª´ª ¸'∫?˝Iªchÿ∫s˚`∫ÖÕjªö¡<∂1â:Ü4ï∫®ã∫´œπ P⁄∂Tº)ªÇiç;?ˇ
+ªc5ñ∫¯<∫<·∫€ã;.›*∫Â£∫'∂ªItéª3∫û^@∫0yÚ:flÑ∫®’∫¯KF:óÊ‡∫7ùª¸“∂∫!•Vªçùt∫¿˛
+9…7ı9© ôπœUπ∫ΩÒ∂∫n±πzª'X5∫ê¡V∫Lw∫∫nÉ ∫\P©∫Àmõ∫9Í∫cíªB®;–PùπÀ“Ã∫&I;8¬.:ë◊˙πn»59√|E9laaπFæî:*y@@Bmodel.res2.1.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2224384j
+length147456p*†@Bmodel.res2.1.conv1.biasJÄXÜ∫ª¡Ãtªm@ªﬂ÷ê∏˝äW;I⁄ªC@}ªé≥yªI2ªoÊª:,§üª®:f#¸∫´r<ÈaÄ;‰¢GªÌì";Új9ªo	:ª√1ª:|\ü∫Æ˝?ªê;™ª:÷”πÖ‚d;†$sª°)â;ÆÖaª&Û∫´Måªƒ˛ ;|eK;∞Ï£ª8£ªãge∫cül∫Ãª£õ};ê`.ªOtä;†6;â˛ªi≈∫5ª/VªÑÀ.;∆ÜªlóÚ∫K©;æL∆ª„’â;Tl;≥à2;~s;CŒûª–V∏∫∑uπ;CB;`éﬂ∫‰&ª¸Ñ˚ª°⁄D;Hõ∫k’ï∫*y@@Bmodel.res2.1.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2371840j
+length147456p*†@Bmodel.res2.1.conv2.biasJÄmπÄÃ˝∫}Uò∫9Æªy_•ª‡G≤∫∏‘ˆ∫˛ iªÁüLªåÄ=∫£Æªp¸;ñN7;≈¿é:¸!9”0(∫õ¿ ∏ı˛hªF—é;
+∑P∫ò¡\π¸’>9\∫t";?4':>3:\q
+ªÕÈ%ªgV¬8cùø9∞î;JAô∫›]∫ãÓÓ9’Pª·‡tª≠çéπ„:ïªà®ππóê:ÈÅ¡:vπF:Åï∫DÜÒ∫‰!¥:EÁ:v¡: E®9ˆ·”π∞"ã∫ÏÍπﬂCˇπxóì∏=R∏ª≈∂ö;)Äx:»™öπﬁ.¨:E;˝N:’j:Ú3•:◊H∫0î;*y@@Bmodel.res2.2.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2519296j
+length147456p*†@Bmodel.res2.2.conv1.biasJÄ!¯=ªóO|∫ZAöπÁªÔ‡ø;f/ªV·;‡Z∫t˘Î:sA»9—†ªlÀ:ÚÔ∫óìE;ﬂ≥”∫ ;∫òò;‚:=;ˇB∑;cù’∫H0ªÍø9;ÒZ&º«BT∫∆∫T≠:Z3·;Êõªéä&;(Zf;Û÷;¶ç≤ªÔ’‘∫w&…ª“º≈∫Höó∫Aq‡:m/;#y˙:Ä—;ßÜ5ªi ªπÇ;O∞;=ã•;›Ï:8F;pæŸ:ˇ)‡;˝ˇ˙∫Ü8:Ã¸¡∫dîÑ∫ËÏ;©®kªM¢);¨$5;ê∞X;}ˇØ;qœ<B©ª#ãªO$ª,ús∫*y@@Bmodel.res2.2.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2666752j
+length147456p*†@Bmodel.res2.2.conv2.biasJÄÈDd:‡˛-∫¡ÓÒπVâ[ª!∂ªu]S∫WÇœª∏⁄]ªªRjªò6∫¸ìª•„;Y3¶;31∏ŒOá:gªv¸˘:˜Ωd∫‚õÓ:G¶πsπ#:⁄Q^:_Àcπ5#5;Aïª:oãﬂ::Q∂∫ I[ª?:qgÚ:ÊÅG;∑9Îßªπ_Ù˜:ˇº∫ÌzãªaA(πÑ≤™ªÊ˛;∫ïÄ;†á;ø≥ÿ:ƒŒ∑ﬁ∑∫xˇ	;è\œ∫è‚;∫£:·N:Œ:À:ÿ9úv99π©∫´»ªÌû;3ˆ
+;|ç~:»⁄:jÃG;@LÔ:¥;¢ªI:¸y…∫nB;*y@@Bmodel.res2.3.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2814208j
+length147456p*†@Bmodel.res2.3.conv1.biasJÄy›:úfc;}Ö9∫?’ <lY;´=∫Öàöªv];ƒië;‰;ltª“‡ò;çÍ=ª˛u™9∆zªY∂Ø;ô‹π¬Kê;√	Îª2ˇ√∫Ω‰;v5º9"-Ñ:‡™πtiﬁ;hA∫PE<≤<=Ä<y^÷¥ÛÙ∫;ﬂ<õe„ªéb≈;ÎoÀ:Ñ ªt˝ù;T.G;ù":D˙b;2º˚ª~‘,ª(ÃS∫¯Õ;0Ô"ªR àª(≈,ª!ÔÁ;Uˆâ∫‰:úª©›∫ºN®∫¥«È8Ü∏;_˛\;Ó◊ª])g;9«∫:’…I∫’I;∫M∫ùªàc‘∫Hö;á_};*y@@Bmodel.res2.3.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset2961664j
+length147456p*†@Bmodel.res2.3.conv2.biasJÄvê÷:¶ÈK∑'Hπâí	ªudøªjÁ’∫,„ÒªA&ª„@ìª˚Ÿ∫œﬁ‹ªæQ‹;•Sÿ;	Oø∫\˜:∂}Wª√ÿˆ:MΩo∫.Pê;˝Y-ªâÀΩ:˚ïú:≥O¿:s:;hù	;Çﬂ!;=n≠∫61Ñª[¬ü:ßá);rΩl;°M˚∫èºµ9QòÓ:Ÿˆ∫:äªtFÀ8yß‘ª'u–9HÉ[;D˜V; ;∫ÊπQmª„°Q;)}ª˘ŒK;õÁ;%l‚:-≤≠:Iø§:»/@:kÇ:ÀÂ—ª
+ñ;P@;MW”:[;π6à;	∆:;Wif;ç4∫Éwÿ∫Sﬁ4;*y@@Bmodel.res2.4.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3109120j
+length147456p*†@Bmodel.res2.4.conv1.biasJÄ$cÆ;l6áπ»
+D∫ÒÂ<è£ªPŸ;¥P…;Eû;û´ﬂ:hPÁ∫Oı<û:Óí›;™ã;€;πÑp<E!ﬂ;¶<|øâ9MÉπˇﬁÉ<Çc<Ç´î;≈òæ∫Œ„∫€œ¯πP˝∫’?<^~ : º”∫>ÀI:¢û;6™‹;oÿj:‚
+ªYÇª£1b<úD;’˚‡πŸáæªŒ∂–;|Ñ»;…
+≤;Z› π∆…†:≥ß;s
+f<≈›Ó;,ò:·äm< k¨;dOªJ$É;€≠∂<áıJ9S>¯∫Â¿ ªö√πë)Ì:)WI;À„ﬁ;î¯q∏6Ë”;Õ>À;*y@@Bmodel.res2.4.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3256576j
+length147456p*†@Bmodel.res2.4.conv2.biasJÄÿÜ,;ñ.:#Y≥∏Œª¸ÿÂª‰(.ªØüÏª`∑n∫ÛøπªHÂªﬂ+ºQ¸Ó;DÃ<Ä/%∫/|;æÇ|ªÁ'›:c´:…¨BªâzªPè;ã≥:¢&;we&;';ˇù];Ó≤·8Àî∫∑x√:◊_S;≥ßF;ç^ù∫tB:Ñ›Æ:qˆ¶∫V'Rª‘È.∫≥ ª∂K$∫~˚ê;µ~á;.‹F;Fî´∫íåç∫≥ç;.ª‡]å;q¡$;Y(;ÛP;ry∑: l:õ◊e9ÌCÌªΩºñ;]y;ÚÍπ:ée€::Ïü;˚Ãp;ø»î;f,:(,9ªUW-;*y@@Bmodel.res3.0.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3404032j
+length147456p*†@Bmodel.res3.0.conv1.biasJÄq39ù–;ºÈ;–∂¬9C˛:∆?<;]<⁄/<—wx∫ò&:á©<‘◊l∫ñöÃ∫µˇ;JŸ€;„á™;}Ëã;ëwQ9(ôO:8À	;
+«∏∑Ø::z„—ª©Å
+;c<2¬;
+ŸV∫bs:ü'∏·ø;vÅ:§˙y9J∫∑?ª}2x;ãÖﬁ∏πmºªh˘â;í9‹;oµó;í$º;N'æ;ñtπ‰ı:L≈º∑®π-{ªN∆ˇ∫¢≈»∫˙;çW<gàX9º;Çéa;}H":5fG∫ìS6:aÏ°:πl6ªÇûª)bn;∏˘Bª|ŒH;Ôî#ª*y@@Bmodel.res3.0.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3551488j
+length147456p*†@Bmodel.res3.0.conv2.biasJÄn%;ê{∫¨˝: π›Ë2ªœ›∫± ıªOª:Dulª[–›∫êîC:Ä?;k”2;ø‘∫P&;mÙ»∫¸Ì†∫ÜøÉπ≤iº‚±Á∫∆ä;∂%;’˙æ9›\K;<M;µ
+;›˚é:
+úäª$Z;qó;ôΩ†;.ó_∫©—p;[‘+;ÆÏ ªt ∫ú^úπ(…Ø∫¸-Ä;—/;<íY;Ç›;JïΩ∫¢ú;#∂!;‡j»ªyŸ;‘Bˇ:ÛÔﬁ:bÆ∫ÖY;\Í;ïæªF_ª‚ı:\P;ÿΩ:Ïç€:A[;q≠#;°î1;UÂ>ªŸ◊ªﬂµπ*y@@Bmodel.res3.1.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3698944j
+length147456p*†@Bmodel.res3.1.conv1.biasJÄy/À;y	<Gpπfn;Æ”Õ;±cÓ9«”)∫òÒ¸;…∏i;67B:ŸøG;äYU;·G¸9πß∫Ybã;$hÑ;sÉx8ä;!Ù6:w;Á¥:;k<y8¶„V:i7;	C%;¡∑n;—MØ:mﬂÿ9ãèœ:ÎÀe∫zÀ;ïS;ﬂÇ;5>1;˝ﬂ;©K?96∆¸∏dá?;j˘¥;∞≤Ω:∂ 6Pùª®ßR;ŸÛ·;DÔ<ìÑ;˘ﬂ¢:–∫9–§;3O∫mg¡;ŸQ˙; Dí;B‹¿;1gñ;€¬ƒ:4æ∞:∏qg8	}≠;s¬Ã:ﬁ*∫;“V4:¢'ù9*y@@Bmodel.res3.1.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3846400j
+length147456p*†@Bmodel.res3.1.conv2.biasJÄ∞ÜY;„º»∫Ë;6¨ç:ênª÷
+ª<Ây∫	^';˚°~ª=®ª„•`∫â);√°r;¶-Hªı U;ib,ª†ô∫ƒ√Ã∫24º„tπï∑f;hìV;Â6D;&V?;ƒ/w;√Z;ªh:ﬁ∆ª.ÛB;<@[;=ˇ©;Twπã$å;ßé;≥=ªŸ§∫µ\ƒ∫yõÔπˇˇŒ:ø¯g;÷#É;ÕC>;QªËº;)˝Z;˙óvª¥ÃS;°†B;
+≤(;&˙8πq^;));Ûi
+ª4Dáª:ÚÔ:ycW;OVM:&?W∏FÃâ;˚éT;’td;Jj∫ôœ`ªÆGóπ*y@@Bmodel.res3.2.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3993856j
+length147456p*†@Bmodel.res3.2.conv1.biasJÄ'∏…:t8Ö9~&∫íî;$‰π9ﬂÅ9≥8†95≤;öJØ;à—ªÉZ;?/Ô:ØÑœ:Æ∏ã:D¥Á;q.N;Öt»;!	á:øöô∫ƒ<CÀé;˝	;`⁄@;¿,;µÛï;âs:6ç◊:¶≈<<¢[l:÷€M:ÄC;+ı!<%6r:¸Ô<∫¶<¨
+0;çÄ;Qlí∫Âã:©¯ZπË¿Z;≤M;óØ;ÕwÏ9/î :È¸Î;¥Pã:˝9*<À4»;Îi<)£;cƒ∫hêø8~LÖ;s@Ï9oŸ;ó<m÷à;Ô™—;Ÿ?<›œ:Æs;Ç¶°ª*y@@Bmodel.res3.2.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset4141312j
+length147456p*†@Bmodel.res3.2.conv2.biasJÄÑÉ;ÃÖªÁ¥A;€$‹∫$=êª_<ªKbﬁ:h@˙∫ åìª(]KªZ¶Å∫r ;⁄?ê;R˚Çª‡∫Ç;ˆCÄª÷ã∫m?ªPÎ\ºÇm-ª ßé;tTÇ;µèo;ö÷X;d∞á;H˛W;J„˜9ÊÁ¡∫ˆi;ª,};‘ß»;»ÿªOBì;++;ÿ/}ªØD°∫J7T9Ÿ©∫Û:ÁÖÜ;rû;4Ωh;îäªÆE;Xìà;wtªd/e;˛˘r;∑[B;pãà∫?˜t;$J;›)Ñ:âAöª®V˚:6Ωs;(∂9:Q>:S1¢;lã;¶à;”`ºp·èªZ∞∫*y@@Bmodel.res3.3.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset4288768j
+length147456p*†@Bmodel.res3.3.conv1.biasJÄZä‰;&ªúÏ<©ı;KD¡;◊ˆ;<WÅ;–™™;©Vﬂ;∑
+<â¨ö;¥°l9dÒ*:™è:†oi;aò:]û.;è&Ò;)ﬁe∫Ôin∫õ∑÷9V◊>ª96;!Ï;èÚ<˙±Ü;©Æ:íÀN9G
+<ÕÆ∫ZÃÑ:∂Lk9¸˜“;ß¢#<ü';¬nI;TãÃ:≥X+∫@h∫^¡:Oãß;!kd;ÇD;∆j√9ââQ;◊Ä›;=∏Õ;#p·;Ôàeπƒ•:;¸Û§∫êâª94B;WP1;-ß:ø∫¢:≈]≈;Åd€;·;è˘º;€ˆò∫øÿåπaŸ:*y@@Bmodel.res3.3.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset4436224j
+length147456p*†@Bmodel.res3.3.conv2.biasJÄTÏó;ªy}ª…ÿ@;U[ªµgôªNqª·ó§:?∫ÑªPÔßª¯tª-Kª§V(;€˚å;ƒ≤ªÛÚä;√=ûª7Ÿ·∫*Ötªeî˛ªÁfgªw˜ù;ºjã;ﬂ©ß;£T;‚—ê;vÖo;âë∫€íîªº~;éóä;∂≠8;]_äª◊¸í;§L≠;Hºúª‘%∫πm9;l¨ªv∑ÿ:ıŒë;t\®;]≥p;Y-£ª≥0;Îgê;çÉª·ïä;D£Ä;¢p;µUÔ∫µ?í;EYK;¬Å ∂äÌ°ª‚·î:vuä;ÉÈ⁄:#S;7è´;Ü®ò;™üô;ñd$ºkóª%Ì∫*y@@Bmodel.res3.4.conv1.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset4583680j
+length147456p*†@Bmodel.res3.4.conv1.biasJÄB˛<ÖæÖ;qt◊π§«ª∞;©èÈ;PŒÀ;—1Û:âJì;'K“;¸&∫µˆñ;:À(<oz;™ˆ};HnÜ;´+;≠Ø:Í˘âª#u∫¢ﬁ∆;1§+9Rgì;eLã;À,∫ÉS<6F,<*¢ê∫4‰*<Q.‘;∞L";z2;ÇC<E¢∏ÿl<·ë<ã-,<Õ%Õ;>†*<&„“∫q®1∫Ô≈.;Fåπ≠3â7lì πÔ®∏;LÆ÷;§Uö;:1ç;Íˇê;U¢∫;„¡;o] ;lÄ<C†:tHΩ:eRí∫Ÿjä9·ª’<Mk?;˙t∂∫∑N<wµ;*y@@Bmodel.res3.4.conv2.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset4731136j
+length147456p*†@Bmodel.res3.4.conv2.biasJÄH∞;U˚ôª+'c;¢ﬁ_ªwF∞ªûûªÉ(øª©ˇ√ªÃ“ªúù≠ª?èΩª§√:ÒÔù;H—ªb›∞;ídÃª{¥:ªÂ°ª⁄ º:xÅª¬˜∫;ÉÚè;Õ9·;!Ù¶πÅ{ì;˘™;Kkõª∞6•ª^ç;å«–;'¥;$ﬁ´ª€‹æ;åy¬∫#à”ª40ªI™;˚∑ª∫ßb;{›†;jVµ;ßﬂÖ;Ç∏ª∂åU;æ5¢;5t”ª†;∏pÜ;ëUç;⁄ªÑ,õ;tπh;Œd ªë‡ƒª
+2áªcíß;åK;æ_;öÌÿ;d•À;¢p¥;ZîÁª8a≥ªŸEª*tÄ@Bmodel.upconv.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset5026048j
+length589824p*dÄBmodel.upconv.biasj+
+locationgmnet-synthetic-local.onnx.dataj
+offset0j
+length1024p*s@@Bmodel.HRconv.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset4878592j
+length147456p*ö@Bmodel.HRconv.biasJÄËí<SƒÈ;&BØ;∞¶d;Å'E;-‚ïªüÎ;∑≥;ëÆ;»Ü¢;⁄iÏ;åh;ü%˛ªª;Å-–;ÄÆi;ı¬@;õØ;ë€};ûüó;fΩí;Ñ3ñ;∆¸√;≤iµ;%≤¬;Ì˙£;…ß»;∏m;‡à;ı‰;_Çª©xZ;ñ^
+<ƒà;2‘î;™o;∏ï±;ù4Œ:ªï2ªóZ‰;¶Î:;J†;`ı‡;UÎ;D¢º;ÿeÂ;òÒ¸;^P«:{<’;´Lw;H$¥;Z—€;ˇ≈v;Cto;3(“;ƒ∑;Ú:ˆ;≈±@;ø‹6;3∆;pø;!yÇ;ÜA¡;¨Ïú;*q@Bmodel.conv_last.weightj+
+locationgmnet-synthetic-local.onnx.dataj
+offset3328j
+length2304p* Bmodel.conv_last.biasJ
+≈µ;*.Bval_25J @                            *Bval_4Jˇˇˇˇˇˇˇˇ*Bval_5J       *Bval_6J       *Bval_14Jˇˇˇˇˇˇˇˇ*Bval_15J       *Bval_16J@       **Bnode_pixel_shuffle_starts0J        **Bnode_pixel_shuffle_starts1J       **Bnode_pixel_shuffle_starts2J       **Bnode_pixel_shuffle_starts3J       *(Bnode_pixel_shuffle_ends1J       *(Bnode_pixel_shuffle_ends2J       *(Bnode_pixel_shuffle_ends3J       *(Bnode_pixel_shuffle_ends4J       *(Bnode_pixel_shuffle_axes0J        *(Bnode_pixel_shuffle_blockJ       *+Bnode_pixel_shuffle_channelsJ@       Zﬁ
+local_input!
+
+
+
+height
+width"=
+/pkg.torch.export.graph_signature.InputSpec.kind
+USER_INPUT"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone".
+!pkg.torch.onnx.original_node_name	local_imgZ«
+wker
+
+
+@
+
+"=
+/pkg.torch.export.graph_signature.InputSpec.kind
+USER_INPUT"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone")
+!pkg.torch.onnx.original_node_namewkerZ«
+wchn
+
+
+@
+
+"=
+/pkg.torch.export.graph_signature.InputSpec.kind
+USER_INPUT"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone")
+!pkg.torch.onnx.original_node_namewchnb¿
+ingmG
+EA
+
+
+2*(((height - 1)//2)) + 2
+2*(((width - 1)//2)) + 2"?
+0pkg.torch.export.graph_signature.OutputSpec.kindUSER_OUTPUT".
+!pkg.torch.onnx.original_node_name	conv2d_38jÓ
+model.mask_est.0.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_mask_est_0_weightjﬁ
+model.mask_est.0.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"<
+!pkg.torch.onnx.original_node_namep_model_mask_est_0_biasjÓ
+model.mask_est.2.weight
+
+
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_mask_est_2_weightjﬁ
+model.mask_est.2.bias
+
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"<
+!pkg.torch.onnx.original_node_namep_model_mask_est_2_biasjÙ
+model.down_x.conv.0.weight
+
+@
+
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"A
+!pkg.torch.onnx.original_node_namep_model_down_x_conv_0_weightj‰
+model.down_x.conv.0.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"?
+!pkg.torch.onnx.original_node_namep_model_down_x_conv_0_biasjÙ
+model.down_x.conv.2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"A
+!pkg.torch.onnx.original_node_namep_model_down_x_conv_2_weightj‰
+model.down_x.conv.2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"?
+!pkg.torch.onnx.original_node_namep_model_down_x_conv_2_biasjÙ
+model.down_x.conv.4.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"A
+!pkg.torch.onnx.original_node_namep_model_down_x_conv_4_weightj‰
+model.down_x.conv.4.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"?
+!pkg.torch.onnx.original_node_namep_model_down_x_conv_4_biasjÚ
+model.res1.0.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_0_conv1_weightj‚
+model.res1.0.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_0_conv1_biasjÚ
+model.res1.0.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_0_conv2_weightj‚
+model.res1.0.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_0_conv2_biasjÚ
+model.res1.1.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_1_conv1_weightj‚
+model.res1.1.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_1_conv1_biasjÚ
+model.res1.1.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_1_conv2_weightj‚
+model.res1.1.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_1_conv2_biasjÚ
+model.res1.2.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_2_conv1_weightj‚
+model.res1.2.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_2_conv1_biasjÚ
+model.res1.2.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_2_conv2_weightj‚
+model.res1.2.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_2_conv2_biasjÚ
+model.res1.3.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_3_conv1_weightj‚
+model.res1.3.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_3_conv1_biasjÚ
+model.res1.3.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_3_conv2_weightj‚
+model.res1.3.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_3_conv2_biasjÚ
+model.res1.4.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_4_conv1_weightj‚
+model.res1.4.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_4_conv1_biasjÚ
+model.res1.4.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res1_4_conv2_weightj‚
+model.res1.4.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res1_4_conv2_biasjÚ
+model.res2.0.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_0_conv1_weightj‚
+model.res2.0.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_0_conv1_biasjÚ
+model.res2.0.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_0_conv2_weightj‚
+model.res2.0.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_0_conv2_biasjÚ
+model.res2.1.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_1_conv1_weightj‚
+model.res2.1.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_1_conv1_biasjÚ
+model.res2.1.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_1_conv2_weightj‚
+model.res2.1.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_1_conv2_biasjÚ
+model.res2.2.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_2_conv1_weightj‚
+model.res2.2.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_2_conv1_biasjÚ
+model.res2.2.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_2_conv2_weightj‚
+model.res2.2.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_2_conv2_biasjÚ
+model.res2.3.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_3_conv1_weightj‚
+model.res2.3.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_3_conv1_biasjÚ
+model.res2.3.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_3_conv2_weightj‚
+model.res2.3.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_3_conv2_biasjÚ
+model.res2.4.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_4_conv1_weightj‚
+model.res2.4.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_4_conv1_biasjÚ
+model.res2.4.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res2_4_conv2_weightj‚
+model.res2.4.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res2_4_conv2_biasjÚ
+model.res3.0.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_0_conv1_weightj‚
+model.res3.0.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_0_conv1_biasjÚ
+model.res3.0.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_0_conv2_weightj‚
+model.res3.0.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_0_conv2_biasjÚ
+model.res3.1.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_1_conv1_weightj‚
+model.res3.1.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_1_conv1_biasjÚ
+model.res3.1.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_1_conv2_weightj‚
+model.res3.1.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_1_conv2_biasjÚ
+model.res3.2.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_2_conv1_weightj‚
+model.res3.2.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_2_conv1_biasjÚ
+model.res3.2.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_2_conv2_weightj‚
+model.res3.2.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_2_conv2_biasjÚ
+model.res3.3.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_3_conv1_weightj‚
+model.res3.3.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_3_conv1_biasjÚ
+model.res3.3.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_3_conv2_weightj‚
+model.res3.3.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_3_conv2_biasjÚ
+model.res3.4.conv1.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_4_conv1_weightj‚
+model.res3.4.conv1.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_4_conv1_biasjÚ
+model.res3.4.conv2.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"@
+!pkg.torch.onnx.original_node_namep_model_res3_4_conv2_weightj‚
+model.res3.4.conv2.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone">
+!pkg.torch.onnx.original_node_namep_model_res3_4_conv2_biasjÁ
+model.upconv.weight
+
+Ä
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone":
+!pkg.torch.onnx.original_node_namep_model_upconv_weightj◊
+model.upconv.bias
+	
+Ä"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"8
+!pkg.torch.onnx.original_node_namep_model_upconv_biasjÊ
+model.HRconv.weight
+
+@
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone":
+!pkg.torch.onnx.original_node_namep_model_hrconv_weightj÷
+model.HRconv.bias
+
+
+@"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"8
+!pkg.torch.onnx.original_node_namep_model_hrconv_biasjÏ
+model.conv_last.weight
+
+
+@
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone"=
+!pkg.torch.onnx.original_node_namep_model_conv_last_weightj‹
+model.conv_last.bias
+
+
+"<
+/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
+5pkg.torch.export.graph_signature.InputSpec.persistentNone";
+!pkg.torch.onnx.original_node_namep_model_conv_last_biasjf
+val_25
+
+
+"P
+$pkg.onnxscript.optimizer.folded_from(['val_21', 'val_22', 'val_23', 'val_24']j
+val_4
+ j
+val_5
+ j
+val_6
+ j
+val_14
+
+
+j
+val_15
+
+
+j
+val_16
+
+
+j
+val_0
+
+
+j
+sym_size_int_82
+ j
+val_1
+
+
+j
+sym_size_int_83
+ jM
+conv2dC
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1j
+add_414
+ j
+
+floordiv_2
+ j
+add_415
+ j
+add_416
+ j
+
+floordiv_3
+ j
+add_418
+ jK
+reluC
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_1C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_1C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_2C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_2C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_3C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_3C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_4C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+add_50C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_5C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_4C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_6C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+add_71C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_7C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_5C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_8C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+add_92C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jO
+conv2d_9C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_6C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_10C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_113C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_11C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_7C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_12C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_134C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1j
+val_17
+
+
+j
+val_18
+
+
+j
+val_19
+
+
+jK
+viewC
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1j 
+view_1
+
+@
+
+
+jP
+	conv2d_13C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+view_2C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_14C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_8C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_15C
+A=
+
+
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+sigmoidC
+A=
+
+
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+mul_164C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_16C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jM
+relu_9C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_17C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_185C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_18C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_10C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_19C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_206C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_20C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_11C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_21C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_227C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_22C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_12C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_23C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_248C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_24C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_13C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_25C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_269C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1j#
+	sigmoid_1
+
+
+@
+
+jN
+mul_269C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_26C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_14C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_27C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_294C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_28C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_15C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_29C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_315C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_30C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_16C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_31C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_336C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_32C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_17C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_33C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_357C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_34C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+relu_18C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jP
+	conv2d_35C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jN
+add_378C
+A=
+
+@
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jQ
+	conv2d_36D
+B>
+
+Ä
+(((height - 1)//2)) + 1
+(((width - 1)//2)) + 1jX
+pixel_shuffleG
+EA
+
+@
+2*(((height - 1)//2)) + 2
+2*(((width - 1)//2)) + 2jR
+relu_19G
+EA
+
+@
+2*(((height - 1)//2)) + 2
+2*(((width - 1)//2)) + 2jT
+	conv2d_37G
+EA
+
+@
+2*(((height - 1)//2)) + 2
+2*(((width - 1)//2)) + 2jR
+relu_20G
+EA
+
+@
+2*(((height - 1)//2)) + 2
+2*(((width - 1)//2)) + 2Ç°H
+0pkg.torch.export.ExportedProgram.graph_signatureÏG
+# inputs
+p_model_down1_conv_0_weight: PARAMETER target='model.down1.conv.0.weight'
+p_model_down1_conv_0_bias: PARAMETER target='model.down1.conv.0.bias'
+p_model_down1_conv_2_weight: PARAMETER target='model.down1.conv.2.weight'
+p_model_down1_conv_2_bias: PARAMETER target='model.down1.conv.2.bias'
+p_model_down1_conv_4_weight: PARAMETER target='model.down1.conv.4.weight'
+p_model_down1_conv_4_bias: PARAMETER target='model.down1.conv.4.bias'
+p_model_down2_conv_0_weight: PARAMETER target='model.down2.conv.0.weight'
+p_model_down2_conv_0_bias: PARAMETER target='model.down2.conv.0.bias'
+p_model_down2_conv_2_weight: PARAMETER target='model.down2.conv.2.weight'
+p_model_down2_conv_2_bias: PARAMETER target='model.down2.conv.2.bias'
+p_model_down2_conv_4_weight: PARAMETER target='model.down2.conv.4.weight'
+p_model_down2_conv_4_bias: PARAMETER target='model.down2.conv.4.bias'
+p_model_res_y_0_conv1_weight: PARAMETER target='model.res_y.0.conv1.weight'
+p_model_res_y_0_conv1_bias: PARAMETER target='model.res_y.0.conv1.bias'
+p_model_res_y_0_conv2_weight: PARAMETER target='model.res_y.0.conv2.weight'
+p_model_res_y_0_conv2_bias: PARAMETER target='model.res_y.0.conv2.bias'
+p_model_res_y_1_conv1_weight: PARAMETER target='model.res_y.1.conv1.weight'
+p_model_res_y_1_conv1_bias: PARAMETER target='model.res_y.1.conv1.bias'
+p_model_res_y_1_conv2_weight: PARAMETER target='model.res_y.1.conv2.weight'
+p_model_res_y_1_conv2_bias: PARAMETER target='model.res_y.1.conv2.bias'
+p_model_res_y_2_conv1_weight: PARAMETER target='model.res_y.2.conv1.weight'
+p_model_res_y_2_conv1_bias: PARAMETER target='model.res_y.2.conv1.bias'
+p_model_res_y_2_conv2_weight: PARAMETER target='model.res_y.2.conv2.weight'
+p_model_res_y_2_conv2_bias: PARAMETER target='model.res_y.2.conv2.bias'
+p_model_res_y_3_conv1_weight: PARAMETER target='model.res_y.3.conv1.weight'
+p_model_res_y_3_conv1_bias: PARAMETER target='model.res_y.3.conv1.bias'
+p_model_res_y_3_conv2_weight: PARAMETER target='model.res_y.3.conv2.weight'
+p_model_res_y_3_conv2_bias: PARAMETER target='model.res_y.3.conv2.bias'
+p_model_res_y_4_conv1_weight: PARAMETER target='model.res_y.4.conv1.weight'
+p_model_res_y_4_conv1_bias: PARAMETER target='model.res_y.4.conv1.bias'
+p_model_res_y_4_conv2_weight: PARAMETER target='model.res_y.4.conv2.weight'
+p_model_res_y_4_conv2_bias: PARAMETER target='model.res_y.4.conv2.bias'
+p_model_sq_ker_conv_0_weight: PARAMETER target='model.sq_ker.conv.0.weight'
+p_model_sq_ker_conv_0_bias: PARAMETER target='model.sq_ker.conv.0.bias'
+p_model_sq_ker_conv_2_weight: PARAMETER target='model.sq_ker.conv.2.weight'
+p_model_sq_ker_conv_2_bias: PARAMETER target='model.sq_ker.conv.2.bias'
+p_model_sq_ker_conv_4_weight: PARAMETER target='model.sq_ker.conv.4.weight'
+p_model_sq_ker_conv_4_bias: PARAMETER target='model.sq_ker.conv.4.bias'
+p_model_sq_chn_conv_0_weight: PARAMETER target='model.sq_chn.conv.0.weight'
+p_model_sq_chn_conv_0_bias: PARAMETER target='model.sq_chn.conv.0.bias'
+p_model_sq_chn_conv_2_weight: PARAMETER target='model.sq_chn.conv.2.weight'
+p_model_sq_chn_conv_2_bias: PARAMETER target='model.sq_chn.conv.2.bias'
+p_model_sq_chn_conv_4_weight: PARAMETER target='model.sq_chn.conv.4.weight'
+p_model_sq_chn_conv_4_bias: PARAMETER target='model.sq_chn.conv.4.bias'
+p_model_sq_qmax_conv_0_weight: PARAMETER target='model.sq_qmax.conv.0.weight'
+p_model_sq_qmax_conv_0_bias: PARAMETER target='model.sq_qmax.conv.0.bias'
+p_model_sq_qmax_conv_2_weight: PARAMETER target='model.sq_qmax.conv.2.weight'
+p_model_sq_qmax_conv_2_bias: PARAMETER target='model.sq_qmax.conv.2.bias'
+p_model_sq_qmax_conv_4_weight: PARAMETER target='model.sq_qmax.conv.4.weight'
+p_model_sq_qmax_conv_4_bias: PARAMETER target='model.sq_qmax.conv.4.bias'
+p_model_mask_est_0_weight: PARAMETER target='model.mask_est.0.weight'
+p_model_mask_est_0_bias: PARAMETER target='model.mask_est.0.bias'
+p_model_mask_est_2_weight: PARAMETER target='model.mask_est.2.weight'
+p_model_mask_est_2_bias: PARAMETER target='model.mask_est.2.bias'
+p_model_down_x_conv_0_weight: PARAMETER target='model.down_x.conv.0.weight'
+p_model_down_x_conv_0_bias: PARAMETER target='model.down_x.conv.0.bias'
+p_model_down_x_conv_2_weight: PARAMETER target='model.down_x.conv.2.weight'
+p_model_down_x_conv_2_bias: PARAMETER target='model.down_x.conv.2.bias'
+p_model_down_x_conv_4_weight: PARAMETER target='model.down_x.conv.4.weight'
+p_model_down_x_conv_4_bias: PARAMETER target='model.down_x.conv.4.bias'
+p_model_res1_0_conv1_weight: PARAMETER target='model.res1.0.conv1.weight'
+p_model_res1_0_conv1_bias: PARAMETER target='model.res1.0.conv1.bias'
+p_model_res1_0_conv2_weight: PARAMETER target='model.res1.0.conv2.weight'
+p_model_res1_0_conv2_bias: PARAMETER target='model.res1.0.conv2.bias'
+p_model_res1_1_conv1_weight: PARAMETER target='model.res1.1.conv1.weight'
+p_model_res1_1_conv1_bias: PARAMETER target='model.res1.1.conv1.bias'
+p_model_res1_1_conv2_weight: PARAMETER target='model.res1.1.conv2.weight'
+p_model_res1_1_conv2_bias: PARAMETER target='model.res1.1.conv2.bias'
+p_model_res1_2_conv1_weight: PARAMETER target='model.res1.2.conv1.weight'
+p_model_res1_2_conv1_bias: PARAMETER target='model.res1.2.conv1.bias'
+p_model_res1_2_conv2_weight: PARAMETER target='model.res1.2.conv2.weight'
+p_model_res1_2_conv2_bias: PARAMETER target='model.res1.2.conv2.bias'
+p_model_res1_3_conv1_weight: PARAMETER target='model.res1.3.conv1.weight'
+p_model_res1_3_conv1_bias: PARAMETER target='model.res1.3.conv1.bias'
+p_model_res1_3_conv2_weight: PARAMETER target='model.res1.3.conv2.weight'
+p_model_res1_3_conv2_bias: PARAMETER target='model.res1.3.conv2.bias'
+p_model_res1_4_conv1_weight: PARAMETER target='model.res1.4.conv1.weight'
+p_model_res1_4_conv1_bias: PARAMETER target='model.res1.4.conv1.bias'
+p_model_res1_4_conv2_weight: PARAMETER target='model.res1.4.conv2.weight'
+p_model_res1_4_conv2_bias: PARAMETER target='model.res1.4.conv2.bias'
+p_model_res2_0_conv1_weight: PARAMETER target='model.res2.0.conv1.weight'
+p_model_res2_0_conv1_bias: PARAMETER target='model.res2.0.conv1.bias'
+p_model_res2_0_conv2_weight: PARAMETER target='model.res2.0.conv2.weight'
+p_model_res2_0_conv2_bias: PARAMETER target='model.res2.0.conv2.bias'
+p_model_res2_1_conv1_weight: PARAMETER target='model.res2.1.conv1.weight'
+p_model_res2_1_conv1_bias: PARAMETER target='model.res2.1.conv1.bias'
+p_model_res2_1_conv2_weight: PARAMETER target='model.res2.1.conv2.weight'
+p_model_res2_1_conv2_bias: PARAMETER target='model.res2.1.conv2.bias'
+p_model_res2_2_conv1_weight: PARAMETER target='model.res2.2.conv1.weight'
+p_model_res2_2_conv1_bias: PARAMETER target='model.res2.2.conv1.bias'
+p_model_res2_2_conv2_weight: PARAMETER target='model.res2.2.conv2.weight'
+p_model_res2_2_conv2_bias: PARAMETER target='model.res2.2.conv2.bias'
+p_model_res2_3_conv1_weight: PARAMETER target='model.res2.3.conv1.weight'
+p_model_res2_3_conv1_bias: PARAMETER target='model.res2.3.conv1.bias'
+p_model_res2_3_conv2_weight: PARAMETER target='model.res2.3.conv2.weight'
+p_model_res2_3_conv2_bias: PARAMETER target='model.res2.3.conv2.bias'
+p_model_res2_4_conv1_weight: PARAMETER target='model.res2.4.conv1.weight'
+p_model_res2_4_conv1_bias: PARAMETER target='model.res2.4.conv1.bias'
+p_model_res2_4_conv2_weight: PARAMETER target='model.res2.4.conv2.weight'
+p_model_res2_4_conv2_bias: PARAMETER target='model.res2.4.conv2.bias'
+p_model_res3_0_conv1_weight: PARAMETER target='model.res3.0.conv1.weight'
+p_model_res3_0_conv1_bias: PARAMETER target='model.res3.0.conv1.bias'
+p_model_res3_0_conv2_weight: PARAMETER target='model.res3.0.conv2.weight'
+p_model_res3_0_conv2_bias: PARAMETER target='model.res3.0.conv2.bias'
+p_model_res3_1_conv1_weight: PARAMETER target='model.res3.1.conv1.weight'
+p_model_res3_1_conv1_bias: PARAMETER target='model.res3.1.conv1.bias'
+p_model_res3_1_conv2_weight: PARAMETER target='model.res3.1.conv2.weight'
+p_model_res3_1_conv2_bias: PARAMETER target='model.res3.1.conv2.bias'
+p_model_res3_2_conv1_weight: PARAMETER target='model.res3.2.conv1.weight'
+p_model_res3_2_conv1_bias: PARAMETER target='model.res3.2.conv1.bias'
+p_model_res3_2_conv2_weight: PARAMETER target='model.res3.2.conv2.weight'
+p_model_res3_2_conv2_bias: PARAMETER target='model.res3.2.conv2.bias'
+p_model_res3_3_conv1_weight: PARAMETER target='model.res3.3.conv1.weight'
+p_model_res3_3_conv1_bias: PARAMETER target='model.res3.3.conv1.bias'
+p_model_res3_3_conv2_weight: PARAMETER target='model.res3.3.conv2.weight'
+p_model_res3_3_conv2_bias: PARAMETER target='model.res3.3.conv2.bias'
+p_model_res3_4_conv1_weight: PARAMETER target='model.res3.4.conv1.weight'
+p_model_res3_4_conv1_bias: PARAMETER target='model.res3.4.conv1.bias'
+p_model_res3_4_conv2_weight: PARAMETER target='model.res3.4.conv2.weight'
+p_model_res3_4_conv2_bias: PARAMETER target='model.res3.4.conv2.bias'
+p_model_upconv_weight: PARAMETER target='model.upconv.weight'
+p_model_upconv_bias: PARAMETER target='model.upconv.bias'
+p_model_hrconv_weight: PARAMETER target='model.HRconv.weight'
+p_model_hrconv_bias: PARAMETER target='model.HRconv.bias'
+p_model_conv_last_weight: PARAMETER target='model.conv_last.weight'
+p_model_conv_last_bias: PARAMETER target='model.conv_last.bias'
+local_img: USER_INPUT
+wker: USER_INPUT
+wchn: USER_INPUT
+
+# outputs
+conv2d_38: USER_OUTPUT
+Ç^
+2pkg.torch.export.ExportedProgram.range_constraints({s80: VR[0, int_oo], s89: VR[0, int_oo]}B
+ 

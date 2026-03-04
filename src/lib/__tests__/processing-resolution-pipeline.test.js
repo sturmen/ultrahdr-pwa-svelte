@@ -1,4 +1,4 @@
-import { IMAGE_MAX_LONG_EDGE, GMNET_MAX_LONG_EDGE } from '../constants.js';
+import { IMAGE_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
@@ -26,32 +26,6 @@ const {
 
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
-    async resolveCapability(options = {}) {
-      const forcedProvider = Array.isArray(options?.forceExecutionProviders)
-        && options.forceExecutionProviders.length === 1
-        ? String(options.forceExecutionProviders[0]).trim().toLowerCase()
-        : null;
-      if (forcedProvider === 'wasm') {
-        return {
-          provider: 'wasm',
-          gainMapMaxLongEdge: 16384,
-          outputMaxLongEdge: 32768,
-          source: 'wasm-unlimited',
-          attempts: [],
-        };
-      }
-      if (options?.capabilityHint) {
-        return options.capabilityHint;
-      }
-      return {
-        provider: 'webgpu',
-        gainMapMaxLongEdge: GMNET_MAX_LONG_EDGE,
-        outputMaxLongEdge: IMAGE_MAX_LONG_EDGE,
-        source: 'probe',
-        attempts: [{ candidateLongEdge: GMNET_MAX_LONG_EDGE, status: 'passed' }],
-      };
-    }
-
     async generate(imageData) {
       gmnetCalls.push({ width: imageData.width, height: imageData.height });
       const size = imageData.width * imageData.height * 4;
@@ -151,22 +125,21 @@ describe('processing fixed-resolution generated pipeline', () => {
     globalThis.Worker = undefined;
     globalThis.OffscreenCanvas = MockOffscreenCanvas;
     globalThis.createImageBitmap = vi.fn(async (input) => {
+      const canvas = document.createElement('canvas');
       if (input instanceof ImageData) {
-        return {
-          width: input.width,
-          height: input.height,
-          close: vi.fn(),
-        };
+        canvas.width = input.width;
+        canvas.height = input.height;
+        const context = canvas.getContext('2d');
+        context?.putImageData(input, 0, 0);
+        return canvas;
       }
-      return {
-        width: decodeDimensions.width,
-        height: decodeDimensions.height,
-        close: vi.fn(),
-      };
+      canvas.width = decodeDimensions.width;
+      canvas.height = decodeDimensions.height;
+      return canvas;
     });
   });
 
-  it('clamps, rotates up front, and feeds half-resolution image to GMNet', async () => {
+  it('clamps, rotates up front, and feeds full-resolution image to GMNet', async () => {
     const { processImage } = await import('../processing-core.js');
     const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
     const stages = [];
@@ -182,14 +155,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     });
 
     expect(gmnetCalls).toHaveLength(1);
-    expect(gmnetCalls[0]).toEqual({ width: 3072, height: GMNET_MAX_LONG_EDGE });
-
-    expect(jpegEncodeCanvasSizes).toEqual(
-      expect.arrayContaining([
-        { width: 6144, height: IMAGE_MAX_LONG_EDGE },
-        { width: 3072, height: GMNET_MAX_LONG_EDGE },
-      ]),
-    );
+    expect(gmnetCalls[0]).toEqual({ width: 9000, height: 12000 });
 
     expect(stages).not.toContain('rotate-sdr-image');
     expect(stages).not.toContain('rotate-gain-map-image');
@@ -198,7 +164,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     );
   });
 
-  it('uses exact half-resolution GMNet input when source is below IMAGE_MAX_LONG_EDGE', async () => {
+  it('uses full-resolution GMNet input when source is below IMAGE_MAX_LONG_EDGE', async () => {
     decodeDimensions.width = 6000;
     decodeDimensions.height = 4000;
 
@@ -212,10 +178,10 @@ describe('processing fixed-resolution generated pipeline', () => {
     });
 
     expect(gmnetCalls).toHaveLength(1);
-    expect(gmnetCalls[0]).toEqual({ width: 3000, height: 2000 });
+    expect(gmnetCalls[0]).toEqual({ width: 6000, height: 4000 });
   });
 
-  it('applies capability-driven output clamp using 2x long-edge rule', async () => {
+  it('ignores legacy outputMaxLongEdge capability hints for split-tiled GMNet', async () => {
     decodeDimensions.width = 6000;
     decodeDimensions.height = 4000;
 
@@ -236,16 +202,10 @@ describe('processing fixed-resolution generated pipeline', () => {
     });
 
     expect(gmnetCalls).toHaveLength(1);
-    expect(gmnetCalls[0]).toEqual({ width: 1000, height: 666 });
-    expect(jpegEncodeCanvasSizes).toEqual(
-      expect.arrayContaining([
-        { width: 2000, height: 1333 },
-        { width: 1000, height: 666 },
-      ]),
-    );
+    expect(gmnetCalls[0]).toEqual({ width: 6000, height: 4000 });
   });
 
-  it('emits probe-gmnet-capability stage before constrain-sdr-image', async () => {
+  it('does not emit probe-gmnet-capability stage and still prepares gmnet input', async () => {
     decodeDimensions.width = 6000;
     decodeDimensions.height = 4000;
     const onProgress = vi.fn();
@@ -256,13 +216,6 @@ describe('processing fixed-resolution generated pipeline', () => {
       rotation: 0,
       stripExif: true,
       discardGainMap: true,
-      gmnetCapabilityHint: {
-        provider: 'webgpu',
-        gainMapMaxLongEdge: 1000,
-        outputMaxLongEdge: 2000,
-        source: 'cache',
-        attempts: [],
-      },
       onProgress,
     });
 
@@ -270,11 +223,8 @@ describe('processing fixed-resolution generated pipeline', () => {
       .map(([event]) => event)
       .filter((event) => event?.phase === 'stage-start')
       .map((event) => event.stage);
-    const probeIndex = stageEvents.indexOf('probe-gmnet-capability');
-    const constrainIndex = stageEvents.indexOf('constrain-sdr-image');
-    expect(probeIndex).toBeGreaterThanOrEqual(0);
-    expect(constrainIndex).toBeGreaterThanOrEqual(0);
-    expect(probeIndex).toBeLessThan(constrainIndex);
+    expect(stageEvents).not.toContain('probe-gmnet-capability');
+    expect(stageEvents).toContain('prepare-gmnet-input');
   });
 
   it('does not apply GPU capability clamp when wasm backend is explicitly forced', async () => {
@@ -289,23 +239,44 @@ describe('processing fixed-resolution generated pipeline', () => {
       stripExif: true,
       discardGainMap: true,
       forceExecutionProviders: ['wasm'],
-      gmnetCapabilityHint: {
-        provider: 'webgpu',
-        gainMapMaxLongEdge: 1000,
-        outputMaxLongEdge: 2000,
-        source: 'cache',
-        attempts: [],
-      },
     });
 
     expect(gmnetCalls).toHaveLength(1);
-    expect(gmnetCalls[0]).toEqual({ width: 3000, height: 2000 });
-    expect(jpegEncodeCanvasSizes).toEqual(
-      expect.arrayContaining([
-        { width: 6000, height: 4000 },
-        { width: 3000, height: 2000 },
-      ]),
-    );
+    expect(gmnetCalls[0]).toEqual({ width: 6000, height: 4000 });
+  });
+
+  it('does not clamp generated path to 8192 for 12000x9000 inputs', async () => {
+    decodeDimensions.width = 12000;
+    decodeDimensions.height = 9000;
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+    });
+
+    expect(gmnetCalls).toHaveLength(1);
+    expect(gmnetCalls[0]).toEqual({ width: 12000, height: 9000 });
+  });
+
+  it('preserves dimensions when long edge is exactly 16384 and short edge is above 8192', async () => {
+    decodeDimensions.width = 16384;
+    decodeDimensions.height = 8193;
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3])], 'boundary.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+    });
+
+    expect(gmnetCalls).toHaveLength(1);
+    expect(gmnetCalls[0]).toEqual({ width: 16384, height: 8193 });
   });
 
   it('emits processingPath=generated for GMNet-generated pipeline events', async () => {

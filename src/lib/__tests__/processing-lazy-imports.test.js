@@ -91,11 +91,16 @@ describe('processing-core lazy imports', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async (input) => ({
-      width: input instanceof ImageData ? input.width : 4,
-      height: input instanceof ImageData ? input.height : 4,
-      close: vi.fn(),
-    }));
+    globalThis.createImageBitmap = vi.fn(async (input) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = input instanceof ImageData ? input.width : 4;
+      canvas.height = input instanceof ImageData ? input.height : 4;
+      if (input instanceof ImageData) {
+        const context = canvas.getContext('2d');
+        context?.putImageData(input, 0, 0);
+      }
+      return canvas;
+    });
   });
 
   it('processes JPEG inputs without importing HEIC module', async () => {
@@ -111,4 +116,3 @@ describe('processing-core lazy imports', () => {
     expect(encoderSpies.encode).toHaveBeenCalledTimes(1);
   });
 });
-

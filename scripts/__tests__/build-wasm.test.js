@@ -76,3 +76,13 @@ describe('build-wasm version metadata', () => {
     expect(typeof parsed.generatedAt).toBe('string');
   });
 });
+
+describe('ultrahdr wasm dimension guard', () => {
+  it('enforces UHDR_MAX_DIMENSION=16384 in CMake configuration', () => {
+    const cmakePath = path.resolve(process.cwd(), 'ultrahdr-wasm/CMakeLists.txt');
+    const cmakeContent = fs.readFileSync(cmakePath, 'utf8');
+    expect(cmakeContent).toMatch(
+      /set\(UHDR_MAX_DIMENSION\s+16384\s+CACHE\s+STRING\s+"Maximum image dimension"\s+FORCE\)/,
+    );
+  });
+});

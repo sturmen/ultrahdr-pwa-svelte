@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Patch GMNet inline ONNX models for broader WebGL/WebGPU compatibility.
+"""Patch GMNet ONNX models for broader WebGL/WebGPU compatibility.
 
 Transforms:
 1) GatherND with constant 2D indices -> Reshape + Gather(linearized indices)
 2) DepthToSpace (CRD/DCR) -> Shape/Slice/Reshape/Transpose/Reshape
-3) Inline models: pin local_input shape to [1, 3, 128, 128]
+3) Local-inline models: pin local_input shape to [1, 3, 128, 128]
 4) Squeeze (opset 13+) without axes input -> add axes initializer input
 5) Shape(start/end single dim) + Squeeze -> Shape + Gather(scalar index)
 6) Reduce* with axes input -> legacy axes attribute form for WebGL compatibility
@@ -20,6 +20,37 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
+
+DEFAULT_PATCH_PROFILE = "webgl_local_inline"
+PATCH_PROFILES = {
+    "webgl_local_inline": {
+        "replace_gathernd": True,
+        "replace_depth_to_space": True,
+        "pin_local_input_shape": True,
+        "rewrite_shape_squeeze": True,
+        "normalize_squeeze": True,
+        "normalize_reduce_legacy": True,
+        "normalize_reshape_allowzero": True,
+    },
+    "webgl_global_inline": {
+        "replace_gathernd": True,
+        "replace_depth_to_space": False,
+        "pin_local_input_shape": False,
+        "rewrite_shape_squeeze": False,
+        "normalize_squeeze": False,
+        "normalize_reduce_legacy": True,
+        "normalize_reshape_allowzero": True,
+    },
+    "webgpu_dynamic_local": {
+        "replace_gathernd": False,
+        "replace_depth_to_space": True,
+        "pin_local_input_shape": False,
+        "rewrite_shape_squeeze": False,
+        "normalize_squeeze": False,
+        "normalize_reduce_legacy": False,
+        "normalize_reshape_allowzero": False,
+    },
+}
 
 
 @dataclass
@@ -512,16 +543,61 @@ def _normalize_reduce_nodes_for_webgl_compat(model: onnx.ModelProto) -> int:
     return normalized_count
 
 
-def patch_model(path: Path, *, legacy_reduce: bool = False) -> Tuple[int, int, bool, int, int, int]:
+def _normalize_reshape_allowzero_attrs(model: onnx.ModelProto) -> int:
+    normalized_count = 0
+    for node in model.graph.node:
+        if node.op_type != "Reshape":
+            continue
+        retained = []
+        removed = False
+        for attr in node.attribute:
+            if attr.name == "allowzero":
+                removed = True
+                continue
+            retained.append(attr)
+        if removed:
+            del node.attribute[:]
+            node.attribute.extend(retained)
+            normalized_count += 1
+    return normalized_count
+
+
+def patch_model(
+    path: Path,
+    *,
+    profile: str = DEFAULT_PATCH_PROFILE,
+    legacy_reduce: Optional[bool] = None,
+) -> Dict[str, object]:
+    if profile not in PATCH_PROFILES:
+        raise ValueError(
+            f"Unsupported patch profile '{profile}'. Supported profiles: {', '.join(sorted(PATCH_PROFILES.keys()))}"
+        )
+    profile_config = dict(PATCH_PROFILES[profile])
+    if legacy_reduce is not None:
+        profile_config["normalize_reduce_legacy"] = bool(legacy_reduce)
+
     model = onnx.load(path, load_external_data=False)
-    gather_count = _replace_gathernd_nodes(model)
-    d2s_count = _replace_depth_to_space_nodes(model)
+    gather_count = _replace_gathernd_nodes(model) if profile_config["replace_gathernd"] else 0
+    d2s_count = _replace_depth_to_space_nodes(model) if profile_config["replace_depth_to_space"] else 0
     pinned_local_shape = False
-    if "inline" in path.stem:
+    if profile_config["pin_local_input_shape"]:
         pinned_local_shape = _set_fixed_local_input_shape(model, size=128)
-    shape_rewrite_count = _replace_shape_squeeze_single_dim_with_gather(model)
-    squeeze_count = _normalize_squeeze_nodes_for_opset13_plus(model)
-    reduce_count = _normalize_reduce_nodes_for_webgl_compat(model) if legacy_reduce else 0
+    shape_rewrite_count = (
+        _replace_shape_squeeze_single_dim_with_gather(model)
+        if profile_config["rewrite_shape_squeeze"]
+        else 0
+    )
+    squeeze_count = _normalize_squeeze_nodes_for_opset13_plus(model) if profile_config["normalize_squeeze"] else 0
+    reduce_count = (
+        _normalize_reduce_nodes_for_webgl_compat(model)
+        if profile_config["normalize_reduce_legacy"]
+        else 0
+    )
+    reshape_allowzero_count = (
+        _normalize_reshape_allowzero_attrs(model)
+        if profile_config["normalize_reshape_allowzero"]
+        else 0
+    )
     try:
         onnx.checker.check_model(model)
     except Exception as error:
@@ -531,11 +607,15 @@ def patch_model(path: Path, *, legacy_reduce: bool = False) -> Tuple[int, int, b
         # fail in local patching contexts where that external path is absent.
         if "gmnet.onnx.data" in error_message:
             pass
+        # Dynamic models may point to variant-specific external tensor data files that
+        # are not materialized during in-place graph patching checks.
+        elif "should be stored in" in error_message and "doesn't exist or is not accessible" in error_message:
+            pass
         # WebGL compatibility rewrites intentionally use legacy Reduce* axes attributes
         # that are not valid under the original opset import. Browser WebGL path accepts
         # this form, and these models are only consumed by that path.
         elif (
-            legacy_reduce
+            profile_config["normalize_reduce_legacy"]
             and "inline" in path.stem
             and "Unrecognized attribute: axes for operator Reduce" in error_message
         ):
@@ -543,17 +623,26 @@ def patch_model(path: Path, *, legacy_reduce: bool = False) -> Tuple[int, int, b
         else:
             raise
     onnx.save(model, path)
-    return gather_count, d2s_count, pinned_local_shape, squeeze_count, shape_rewrite_count, reduce_count
+    return {
+        "profile": profile,
+        "gather_count": gather_count,
+        "depth_to_space_count": d2s_count,
+        "pinned_local_shape": pinned_local_shape,
+        "squeeze_count": squeeze_count,
+        "shape_rewrite_count": shape_rewrite_count,
+        "reduce_count": reduce_count,
+        "reshape_allowzero_count": reshape_allowzero_count,
+    }
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Patch inline GMNet ONNX models for WebGL compatibility.")
+    parser = argparse.ArgumentParser(description="Patch GMNet ONNX models for WebGL/WebGPU compatibility.")
     parser.add_argument(
         "--models",
         nargs="+",
         default=[
-            "public/models/gmnet-realworld-inline.onnx",
-            "public/models/gmnet-synthetic-inline.onnx",
+            "public/models/gmnet-realworld-local-inline-webgl.onnx",
+            "public/models/gmnet-synthetic-local-inline-webgl.onnx",
         ],
         help="Model paths to patch in-place.",
     )
@@ -561,6 +650,12 @@ def parse_args() -> argparse.Namespace:
         "--legacy-reduce",
         action="store_true",
         help="Rewrite Reduce* axes-input nodes to legacy axes-attribute form for older WebGL runtimes.",
+    )
+    parser.add_argument(
+        "--profile",
+        default=DEFAULT_PATCH_PROFILE,
+        choices=sorted(PATCH_PROFILES.keys()),
+        help=f"Patch profile to apply (default: {DEFAULT_PATCH_PROFILE}).",
     )
     return parser.parse_args()
 
@@ -570,21 +665,21 @@ def main() -> int:
     for model_path in [Path(raw_path) for raw_path in args.models]:
         if not model_path.exists():
             raise FileNotFoundError(f"Model file not found: {model_path}")
-        (
-            gather_count,
-            d2s_count,
-            pinned_local_shape,
-            squeeze_count,
-            shape_rewrite_count,
-            reduce_count,
-        ) = patch_model(model_path, legacy_reduce=bool(args.legacy_reduce))
+        patch_result = patch_model(
+            model_path,
+            profile=args.profile,
+            legacy_reduce=bool(args.legacy_reduce) if args.legacy_reduce else None,
+        )
         print(
             f"[Patch] {model_path}: "
-            f"GatherND={gather_count}, DepthToSpace={d2s_count}, "
-            f"ShapeGatherRewrites={shape_rewrite_count}, "
-            f"FixedLocalInputShape={pinned_local_shape}, "
-            f"NormalizedSqueezeOps={squeeze_count}, "
-            f"NormalizedReduceOps={reduce_count}"
+            f"Profile={patch_result['profile']}, "
+            f"GatherND={patch_result['gather_count']}, "
+            f"DepthToSpace={patch_result['depth_to_space_count']}, "
+            f"ShapeGatherRewrites={patch_result['shape_rewrite_count']}, "
+            f"FixedLocalInputShape={patch_result['pinned_local_shape']}, "
+            f"NormalizedSqueezeOps={patch_result['squeeze_count']}, "
+            f"NormalizedReduceOps={patch_result['reduce_count']}, "
+            f"NormalizedReshapeAllowzero={patch_result['reshape_allowzero_count']}"
         )
     return 0
 

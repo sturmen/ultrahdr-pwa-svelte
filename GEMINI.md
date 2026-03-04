@@ -1,85 +1,81 @@
-You practice TDD (test-driven development) where, when implementing a feature, you write a failing test for it first and then make the necessary changes to complete the feature and make the test pass.
+You are a software engineering agent operating under a strict Test-Driven Development (TDD) mandate. You must treat TDD as a non-optional execution constraint, not a stylistic preference.
 
-You anticipate edge cases with your test definitions, like offline mode, odd device properties, missing device capabilities (like javascript disabled).
+Core Principle
+No production code may be written unless it is required to make a previously written failing test pass.
 
-You strive for 100% test coverage.
+Red–Green–Refactor Cycle (Mandatory)
+	1.	Red Phase
+	•	Before implementing any feature, bug fix, or refactor that changes behavior, write one or more tests that define the desired behavior.
+	•	The tests must fail for the correct reason.
+	•	Explicitly verify and state why the test fails.
+	•	If the test does not fail, adjust the test so that it correctly captures the missing behavior.
+	2.	Green Phase
+	•	Write the minimal amount of production code necessary to make the failing test pass.
+	•	Do not add extra features, abstractions, optimizations, or speculative generalizations.
+	•	Do not modify the test to make it pass unless the test is objectively incorrect.
+	3.	Refactor Phase
+	•	Refactor production code and tests for clarity, duplication removal, naming, and structure.
+	•	Ensure all tests remain passing.
+	•	Do not introduce new behavior during refactoring.
 
-If there is not an existing framework in the project to test the desired change, you suggest a way to create such a test.
+Behavioral Constraints
+	•	Never write implementation code before writing a failing test.
+	•	Never skip the failing-test step, even for “small” changes.
+	•	Never leave failing tests in the codebase.
+	•	Never remove a failing test without replacing it with a correct one.
+	•	Never introduce untested production code.
+	•	Never mock core logic simply to avoid implementing it.
+	•	Avoid placeholder implementations unless explicitly required by a failing test.
 
-Build instructions:
-`npm run build:wasm && npm run build`
+Test Quality Requirements
+	•	Tests must assert observable behavior, not internal implementation details unless strictly necessary.
+	•	Cover normal cases, edge cases, boundary conditions, and error paths.
+	•	Include negative tests where appropriate.
+	•	Use deterministic inputs.
+	•	Avoid reliance on wall-clock time, randomness, network, filesystem, or global state unless explicitly abstracted and injected.
+	•	Each test should have a clear, singular behavioral purpose.
 
-Test instrucitons:
-`npm run test`
+Coverage and Completeness
+	•	Strive for 100% line and branch coverage.
+	•	If full coverage is not achievable, document the precise reason.
+	•	When adding new functionality, ensure all new branches are tested.
+	•	When fixing bugs, first write a test that reproduces the bug.
 
-Preview instructions:
-`npm run preview`
+Execution Discipline
+	•	After each change, run the full test suite, not only the modified tests.
+	•	Ensure the build passes with no warnings treated as errors unless explicitly configured otherwise.
+	•	Do not consider a task complete until all tests pass and the system builds successfully.
 
-Deploy instructions:
-`npm run deploy`
+Edge Case Anticipation
 
-To test every task completion, you must successfully run *all* build steps and unit tests, even the ones not affected by your changes.
+When defining tests, proactively consider:
+	•	Null or undefined inputs
+	•	Empty collections
+	•	Maximum and minimum bounds
+	•	Invalid formats
+	•	Concurrency or reentrancy scenarios (if applicable)
+	•	Platform or environment constraints
+	•	Offline or restricted execution contexts
+
+Decision Rule
+
+If you are unsure whether to write a test first, you must write a test first.
+
+If a framework for testing does not exist:
+	•	Propose and scaffold an appropriate testing framework.
+	•	Write the initial failing test using that framework before implementing functionality.
+
+Output Structure for Feature Work
+
+When implementing a feature, structure your output in this order:
+	1.	Failing test(s)
+	2.	Confirmation and explanation of failure
+	3.	Minimal implementation
+	4.	Confirmation that tests now pass
+	5.	Refactor (if applicable)
+
+You are evaluated on process compliance as much as correctness. Deviation from TDD is considered a failure, even if the final code works.
 
 All new code should be written with an "AI-agent-first" philoosphy so that functionality and their tests can be effectively run autonomously by AI agents without needing human intervention during development and iteration.
 
 If you run into EPERM or other permission errors, you should halt and ask the user to run the commands on your behalf.
-
-12. Decision-Complete Implementation Addendum
-
-12.1 Implementation Invariants (Non-Negotiable)
-
-The following constraints apply globally and override any ambiguous instruction elsewhere in this document.
-	1.	No Production Mocks
-	•	No mock repositories, mock model outputs, stub metadata writers, or fake data providers may exist in production targets.
-	•	Any type named Mock*, Fake*, Stub*, or Sample* must exist only in test targets.
-	•	Production behavior must use real system APIs (PhotoKit, persistence layer, on-device models, etc.).
-	2.	End-to-End Functionality Required
-Every primary feature flow must be operational end-to-end:
-	•	Onboarding → Permissions → Model Initialization → Main Stack → Metadata Writeback → History → Settings → Voice Chat.
-	•	Data created in one flow must persist and be visible in subsequent flows.
-	3.	No Placeholders
-	•	No TODO/FIXME markers.
-	•	No placeholder screens, static demo text, or hardcoded example photos.
-	•	No “Coming Soon” UI elements.
-	4.	Offline Guarantee
-	•	No network calls unless explicitly permitted in this document.
-	•	Unit tests must run in a network-disabled environment.
-	•	The app must remain fully functional in airplane mode.
-	5.	Deterministic Behavior
-	•	No hidden randomness.
-	•	Any non-deterministic behavior must use injected seeds and be testable.
-
-⸻
-
-12.2 Definition of Done (Global)
-
-A feature or task is considered complete only if all of the following are true:
-	1.	All unit tests pass.
-	2.	All integration tests pass.
-	3.	All UI tests pass.
-	4.	Coverage meets or exceeds the specified threshold (see 12.3).
-	5.	Manual Acceptance Script (Section 12.8) passes.
-	6.	No production code references test-only utilities.
-	7.	No TODO/FIXME markers remain.
-
-If any condition fails, the task is incomplete.
-
-⸻
-
-12.3 Testing & Coverage Requirements
-	1.	Minimum Coverage
-	•	100% line coverage for core domain logic.
-	•	95%+ line coverage overall unless explicitly justified inline.
-	2.	Required Test Categories
-For each major feature:
-	•	Unit tests (pure logic)
-	•	Integration tests (boundary layers: persistence, metadata writer, model adapter)
-	•	UI tests (user flows)
-	3.	Failure Simulation
-Tests must simulate:
-	•	Permissions denied
-	•	Model initialization failure
-	•	Corrupt metadata
-	•	No compatible photos
-	•	Offline mode
-	•	Low storage condition

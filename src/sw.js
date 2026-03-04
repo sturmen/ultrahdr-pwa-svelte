@@ -103,8 +103,24 @@ async function pruneOutdatedBinaryAssets() {
     }));
 }
 
+async function enableNavigationPreload() {
+    const registration = self.registration;
+    if (
+        registration?.navigationPreload
+        && typeof registration.navigationPreload.enable === 'function'
+    ) {
+        await registration.navigationPreload.enable();
+    }
+}
+
 self.addEventListener('activate', (event) => {
-    event.waitUntil(Promise.all([pruneOutdatedVersionedCaches(), pruneOutdatedBinaryAssets()]));
+    event.waitUntil(
+        Promise.all([
+            enableNavigationPreload(),
+            pruneOutdatedVersionedCaches(),
+            pruneOutdatedBinaryAssets(),
+        ])
+    );
 });
 
 registerRoute(

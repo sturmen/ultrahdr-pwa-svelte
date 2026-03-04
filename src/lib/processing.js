@@ -18,7 +18,8 @@ const INFERENCE_TIMEOUT_FIREFOX_MS = 600_000;
 const INFERENCE_TIMEOUT_WASM_MS = 600_000;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const INFERENCE_TIMEOUT_ERROR_MESSAGE = 'Processing worker stalled during GMNet inference.';
-const GMNET_CAPABILITY_CACHE_KEY_PREFIX = 'ultrahdr:gmnet-capability:v1';
+const STARTUP_CAPABILITY_CACHE_KEY = 'ultrahdr:runtime-startup-cache:v1';
+const STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS = 86_400_000;
 
 export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'onnx-load',
@@ -34,7 +35,7 @@ export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
   'webgpu-check': 'Check WebGPU availability',
   'gmnet-session-init': 'Initialize GMNet session',
   'gmnet-provider-verify': 'Verify GMNet execution provider',
-  'gmnet-smoke-run': 'Run GMNet smoke and capability checks',
+  'gmnet-smoke-run': 'Run GMNet smoke test',
   'startup-ready': 'Finalize startup readiness',
 });
 
@@ -42,6 +43,28 @@ let workerClientPromise = null;
 let workerClientCreationError = null;
 let lastRuntimeInitProgressEvent = null;
 const runtimeInitProgressListeners = new Set();
+let mainThreadRuntimePromise = null;
+let mainThreadRuntimeError = null;
+
+function isMainThreadFallbackEnabled(options = {}) {
+  return options?.allowMainThreadFallback !== false;
+}
+
+function resolveRuntimeMode(resolvedExecutionProvider, workerBacked) {
+  const provider = normalizeExecutionProvider(resolvedExecutionProvider);
+  if (workerBacked) {
+    return provider === 'wasm' ? 'worker-wasm' : 'worker-gpu';
+  }
+  return 'main-thread-wasm';
+}
+
+function isWorkerCompatibilityError(error) {
+  return (
+    error?.name === 'ProcessingWorkerUnavailableError'
+    || error?.name === 'ProcessingWorkerInitError'
+    || error?.name === 'ProcessingWorkerInitTimeout'
+  );
+}
 
 function canUseProcessingWorker(runtime = globalThis) {
   return (
@@ -51,6 +74,107 @@ function canUseProcessingWorker(runtime = globalThis) {
     typeof runtime?.fetch === 'function' &&
     typeof runtime?.ImageData !== 'undefined'
   );
+}
+
+function normalizeStartupCapabilityCacheTtlMs(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS;
+  }
+  return Math.floor(numeric);
+}
+
+function getStartupCapabilityCacheContext(runtime = globalThis) {
+  return {
+    userAgent: String(runtime?.navigator?.userAgent || ''),
+    appVersion: import.meta.env.VITE_APP_VERSION || 'dev',
+    assetVersion: import.meta.env.VITE_APP_ASSET_VERSION || 'dev-unversioned-app',
+    wasmAssetVersion: import.meta.env.VITE_WASM_ASSET_VERSION || 'dev-unversioned',
+  };
+}
+
+function readStartupCapabilityCache(runtime = globalThis, ttlMs = STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS) {
+  if (ttlMs <= 0) {
+    return null;
+  }
+
+  const storage = runtime?.localStorage;
+  if (!storage || typeof storage.getItem !== 'function') {
+    return null;
+  }
+
+  try {
+    const raw = storage.getItem(STARTUP_CAPABILITY_CACHE_KEY);
+    if (typeof raw !== 'string' || raw.trim().length === 0) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const updatedAtMs = Number(parsed.updatedAtMs);
+    if (!Number.isFinite(updatedAtMs)) {
+      return null;
+    }
+    if ((Date.now() - updatedAtMs) > ttlMs) {
+      return null;
+    }
+
+    const expected = getStartupCapabilityCacheContext(runtime);
+    if (
+      parsed.userAgent !== expected.userAgent
+      || parsed.appVersion !== expected.appVersion
+      || parsed.assetVersion !== expected.assetVersion
+      || parsed.wasmAssetVersion !== expected.wasmAssetVersion
+    ) {
+      return null;
+    }
+
+    const provider = normalizeExecutionProvider(parsed.resolvedExecutionProvider);
+    if (!provider) {
+      return null;
+    }
+
+    return {
+      provider,
+      updatedAtMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStartupCapabilityCache(
+  resolvedExecutionProvider,
+  runtime = globalThis,
+  ttlMs = STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
+) {
+  if (ttlMs <= 0) {
+    return;
+  }
+  const provider = normalizeExecutionProvider(resolvedExecutionProvider);
+  if (!provider) {
+    return;
+  }
+
+  const storage = runtime?.localStorage;
+  if (!storage || typeof storage.setItem !== 'function') {
+    return;
+  }
+
+  try {
+    const context = getStartupCapabilityCacheContext(runtime);
+    storage.setItem(
+      STARTUP_CAPABILITY_CACHE_KEY,
+      JSON.stringify({
+        updatedAtMs: Date.now(),
+        resolvedExecutionProvider: provider,
+        ...context,
+      }),
+    );
+  } catch {
+    // Best-effort persistence only.
+  }
 }
 
 function createAbortError() {
@@ -110,32 +234,13 @@ function cloneRuntimeInitProgressEvent(eventDetail) {
   if (!eventDetail || typeof eventDetail !== 'object') {
     return eventDetail;
   }
+  const { probeAttempt: _probeAttempt, probeAttempts: _probeAttempts, ...rest } = eventDetail;
 
-  const probeAttempt = eventDetail.probeAttempt && typeof eventDetail.probeAttempt === 'object'
+  const gmnetCapability = rest.gmnetCapability && typeof rest.gmnetCapability === 'object'
     ? {
-      ...eventDetail.probeAttempt,
-      error: eventDetail.probeAttempt.error && typeof eventDetail.probeAttempt.error === 'object'
-        ? { ...eventDetail.probeAttempt.error }
-        : eventDetail.probeAttempt.error,
-    }
-    : eventDetail.probeAttempt;
-  const probeAttempts = Array.isArray(eventDetail.probeAttempts)
-    ? eventDetail.probeAttempts.map((attempt) => (
-      attempt && typeof attempt === 'object'
-        ? {
-          ...attempt,
-          error: attempt.error && typeof attempt.error === 'object'
-            ? { ...attempt.error }
-            : attempt.error,
-        }
-        : attempt
-    ))
-    : eventDetail.probeAttempts;
-  const gmnetCapability = eventDetail.gmnetCapability && typeof eventDetail.gmnetCapability === 'object'
-    ? {
-      ...eventDetail.gmnetCapability,
-      attempts: Array.isArray(eventDetail.gmnetCapability.attempts)
-        ? eventDetail.gmnetCapability.attempts.map((attempt) => (
+      ...rest.gmnetCapability,
+      attempts: Array.isArray(rest.gmnetCapability.attempts)
+        ? rest.gmnetCapability.attempts.map((attempt) => (
           attempt && typeof attempt === 'object'
             ? {
               ...attempt,
@@ -145,19 +250,17 @@ function cloneRuntimeInitProgressEvent(eventDetail) {
             }
             : attempt
         ))
-        : eventDetail.gmnetCapability.attempts,
+        : rest.gmnetCapability.attempts,
     }
-    : eventDetail.gmnetCapability;
+    : rest.gmnetCapability;
 
   return {
-    ...eventDetail,
-    probeAttempt,
-    probeAttempts,
+    ...rest,
     gmnetCapability,
     diagnostics:
-      eventDetail.diagnostics && typeof eventDetail.diagnostics === 'object'
-        ? { ...eventDetail.diagnostics }
-        : eventDetail.diagnostics,
+      rest.diagnostics && typeof rest.diagnostics === 'object'
+        ? { ...rest.diagnostics }
+        : rest.diagnostics,
   };
 }
 
@@ -215,159 +318,6 @@ function normalizeExecutionProvider(value) {
   return normalized || null;
 }
 
-function normalizeGmnetCapability(value) {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  const provider = normalizeExecutionProvider(value.provider || value.gmnetExecutionProvider);
-  const gainMapMaxLongEdge = Number(value.gainMapMaxLongEdge);
-  const outputMaxLongEdge = Number(value.outputMaxLongEdge);
-  if (!provider || !Number.isFinite(gainMapMaxLongEdge) || gainMapMaxLongEdge < 1) {
-    return null;
-  }
-  const normalizedOutputMaxLongEdge = Number.isFinite(outputMaxLongEdge) && outputMaxLongEdge > 0
-    ? Math.floor(outputMaxLongEdge)
-    : Math.floor(gainMapMaxLongEdge * 2);
-  return {
-    provider,
-    gainMapMaxLongEdge: Math.floor(gainMapMaxLongEdge),
-    outputMaxLongEdge: normalizedOutputMaxLongEdge,
-    source: typeof value.source === 'string' && value.source.length > 0
-      ? value.source
-      : (typeof value.gmnetCapabilitySource === 'string' ? value.gmnetCapabilitySource : 'probe'),
-    attempts: Array.isArray(value.attempts) ? value.attempts : [],
-    cachedAt: Number.isFinite(Number(value.cachedAt)) ? Number(value.cachedAt) : Date.now(),
-  };
-}
-
-function normalizeGmnetCapabilityHintsByProvider(value) {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  const normalized = {};
-  for (const [providerKey, providerCapability] of Object.entries(value)) {
-    const provider = normalizeExecutionProvider(providerKey);
-    const capability = normalizeGmnetCapability(providerCapability);
-    if (!provider || !capability) {
-      continue;
-    }
-    normalized[provider] = capability;
-  }
-  return Object.keys(normalized).length > 0 ? normalized : null;
-}
-
-function getCapabilityCacheStorageKey(runtime = globalThis) {
-  const navigatorRef = runtime?.navigator || {};
-  const fingerprint = [
-    String(navigatorRef.userAgent || ''),
-    String(navigatorRef.platform || ''),
-    Number(navigatorRef.hardwareConcurrency || 0) || 0,
-    runtime?.crossOriginIsolated === true ? 1 : 0,
-    navigatorRef.gpu ? 1 : 0,
-  ].join('|');
-  const appVersion = import.meta.env.VITE_APP_VERSION || 'dev';
-  const assetVersion = import.meta.env.VITE_APP_ASSET_VERSION || 'dev-unversioned-app';
-  const wasmAssetVersion = import.meta.env.VITE_WASM_ASSET_VERSION || 'dev-unversioned';
-  return `${GMNET_CAPABILITY_CACHE_KEY_PREFIX}:${appVersion}:${assetVersion}:${wasmAssetVersion}:${fingerprint}`;
-}
-
-function readCapabilityCacheRecord(runtime = globalThis) {
-  try {
-    if (!runtime?.localStorage || typeof runtime.localStorage.getItem !== 'function') {
-      return null;
-    }
-    const raw = runtime.localStorage.getItem(getCapabilityCacheStorageKey(runtime));
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
-      return null;
-    }
-    return parsed;
-  } catch (_error) {
-    return null;
-  }
-}
-
-function writeCapabilityCacheRecord(runtime = globalThis, record = null) {
-  try {
-    if (!runtime?.localStorage || typeof runtime.localStorage.setItem !== 'function') {
-      return;
-    }
-    runtime.localStorage.setItem(
-      getCapabilityCacheStorageKey(runtime),
-      JSON.stringify(record || {}),
-    );
-  } catch (_error) {
-    // Cache writes are best-effort only.
-  }
-}
-
-function resolveRequestedProviderFromOptions(options = {}) {
-  const forceExecutionProviders = Array.isArray(options?.forceExecutionProviders)
-    ? options.forceExecutionProviders
-    : [];
-  const normalizedProviders = forceExecutionProviders
-    .map((provider) => normalizeExecutionProvider(provider))
-    .filter(Boolean);
-  return normalizedProviders.length === 1 ? normalizedProviders[0] : null;
-}
-
-function getCachedCapabilityHint(runtime = globalThis, options = {}) {
-  const record = readCapabilityCacheRecord(runtime);
-  if (!record || typeof record !== 'object') {
-    return null;
-  }
-  const byProvider = record.byProvider && typeof record.byProvider === 'object'
-    ? record.byProvider
-    : {};
-  const requestedProvider = resolveRequestedProviderFromOptions(options);
-  if (requestedProvider) {
-    if (!byProvider[requestedProvider]) {
-      return null;
-    }
-    return normalizeGmnetCapability(byProvider[requestedProvider]);
-  }
-
-  const preferredOrder = ['webgpu', 'webgl'];
-  for (const provider of preferredOrder) {
-    const capability = normalizeGmnetCapability(byProvider[provider]);
-    if (capability) {
-      return capability;
-    }
-  }
-
-  for (const entry of Object.values(byProvider)) {
-    const capability = normalizeGmnetCapability(entry);
-    if (capability) {
-      return capability;
-    }
-  }
-
-  return null;
-}
-
-function getCachedCapabilityHintsByProvider(runtime = globalThis) {
-  const record = readCapabilityCacheRecord(runtime);
-  if (!record || typeof record !== 'object') {
-    return null;
-  }
-  return normalizeGmnetCapabilityHintsByProvider(record.byProvider);
-}
-
-function getTestCapabilityOverride(runtime = globalThis) {
-  const override = runtime?.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE;
-  const normalized = normalizeGmnetCapability(override);
-  if (!normalized) {
-    return null;
-  }
-  return {
-    ...normalized,
-    source: normalized.source || 'test-override',
-  };
-}
-
 function sanitizeRuntimeInitOptions(rawOptions) {
   if (!rawOptions || typeof rawOptions !== 'object') {
     return {};
@@ -399,17 +349,23 @@ function sanitizeRuntimeInitOptions(rawOptions) {
     normalized.forceSmokeFailure = true;
   }
 
-  const gmnetCapabilityHintsByProvider = normalizeGmnetCapabilityHintsByProvider(
-    rawOptions.gmnetCapabilityHintsByProvider,
-  );
-  if (gmnetCapabilityHintsByProvider) {
-    normalized.gmnetCapabilityHintsByProvider = gmnetCapabilityHintsByProvider;
+  if (rawOptions.allowWasmOnly === false) {
+    normalized.allowWasmOnly = false;
   }
 
   if (Array.isArray(rawOptions.forceExecutionProviders) && rawOptions.forceExecutionProviders.length > 0) {
     normalized.forceExecutionProviders = rawOptions.forceExecutionProviders.filter(
       (provider) => typeof provider === 'string' && provider.trim().length > 0,
     );
+  }
+
+  if (Array.isArray(rawOptions.smokeBypassProviders) && rawOptions.smokeBypassProviders.length > 0) {
+    const smokeBypassProviders = rawOptions.smokeBypassProviders
+      .map((provider) => normalizeExecutionProvider(provider))
+      .filter(Boolean);
+    if (smokeBypassProviders.length > 0) {
+      normalized.smokeBypassProviders = Array.from(new Set(smokeBypassProviders));
+    }
   }
 
   return normalized;
@@ -448,25 +404,6 @@ function getTestRuntimeInitOptions(runtime = globalThis) {
   return Object.keys(merged).length > 0 ? merged : null;
 }
 
-function persistCapabilityHint(runtime = globalThis, capabilityInput = null) {
-  const capability = normalizeGmnetCapability(capabilityInput);
-  if (!capability) {
-    return;
-  }
-  const currentRecord = readCapabilityCacheRecord(runtime) || {};
-  const nextRecord = {
-    ...currentRecord,
-    updatedAt: Date.now(),
-    byProvider: {
-      ...(currentRecord.byProvider && typeof currentRecord.byProvider === 'object'
-        ? currentRecord.byProvider
-        : {}),
-      [capability.provider]: capability,
-    },
-  };
-  writeCapabilityCacheRecord(runtime, nextRecord);
-}
-
 function resolveInferenceTimeoutMs(runtime = globalThis, executionProvider = null) {
   if (normalizeExecutionProvider(executionProvider) === 'wasm') {
     return INFERENCE_TIMEOUT_WASM_MS;
@@ -493,6 +430,48 @@ function formatInferenceStatusNote(provider, elapsedMs = 0) {
   }
   const elapsedSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
   return `${INFERENCE_START_NOTE}${runtimeSuffix} Still running (${elapsedSeconds}s).`;
+}
+
+async function loadMainThreadProcessImage() {
+  const module = await import('./processing-core.js');
+  if (typeof module?.processImage !== 'function') {
+    throw new Error('Main-thread image processor is unavailable.');
+  }
+  return module.processImage;
+}
+
+async function ensureMainThreadRuntimeInitialized(initOptions = {}) {
+  void initOptions;
+  if (mainThreadRuntimeError) {
+    throw mainThreadRuntimeError;
+  }
+
+  if (mainThreadRuntimePromise) {
+    return mainThreadRuntimePromise;
+  }
+
+  mainThreadRuntimePromise = Promise.resolve({
+    requestedExecutionProviders: ['wasm'],
+    resolvedExecutionProvider: 'wasm',
+    runtimeDegraded: true,
+  }).catch((error) => {
+    mainThreadRuntimePromise = null;
+    mainThreadRuntimeError = error;
+    throw error;
+  });
+
+  return mainThreadRuntimePromise;
+}
+
+function stripMainThreadOnlyOptions(options = {}) {
+  const {
+    allowMainThreadFallback: _allowMainThreadFallback,
+    runtimeInitOptions: _runtimeInitOptions,
+    allowWasmOnly: _allowWasmOnly,
+    startupCapabilityCacheTtlMs: _startupCapabilityCacheTtlMs,
+    ...rest
+  } = options || {};
+  return rest;
 }
 
 function initializeWorkerClient(initOptions = null) {
@@ -753,7 +732,6 @@ function initializeWorkerClient(initOptions = null) {
           runtimeMetadata = message.runtime && typeof message.runtime === 'object'
             ? { ...message.runtime }
             : {};
-          persistCapabilityHint(globalThis, runtimeMetadata.gmnetCapability);
           initializationSettled = true;
           resolve({
             runtime: runtimeMetadata,
@@ -835,7 +813,6 @@ function initializeWorkerClient(initOptions = null) {
         if (detail && typeof detail === 'object') {
           job.lastProgressDetail = cloneEventDetail(detail);
           updateInferenceTimeoutForProvider(jobId, job, detail.gmnetExecutionProvider);
-          persistCapabilityHint(globalThis, detail.gmnetCapability);
         }
         if (
           job.awaitingWasmLoadCompletion &&
@@ -932,28 +909,34 @@ function createWorkerUnavailableError() {
 function resetRuntimeInitializationState() {
   workerClientPromise = null;
   workerClientCreationError = null;
+  mainThreadRuntimePromise = null;
+  mainThreadRuntimeError = null;
   lastRuntimeInitProgressEvent = null;
 }
 
 export async function initializeRuntime(options = {}) {
   const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
   const forceRetry = Boolean(options?.forceRetry);
-  const explicitRuntimeInitOptions = sanitizeRuntimeInitOptions(options?.runtimeInitOptions);
-  const cachedCapabilityHintsByProvider = getCachedCapabilityHintsByProvider(globalThis);
+  const startupCapabilityCacheTtlMs = normalizeStartupCapabilityCacheTtlMs(
+    options?.startupCapabilityCacheTtlMs,
+  );
   const runtimeInitOptions = sanitizeRuntimeInitOptions({
-    ...(explicitRuntimeInitOptions || {}),
-    ...(
-      explicitRuntimeInitOptions.gmnetCapabilityHintsByProvider || !cachedCapabilityHintsByProvider
-        ? {}
-        : { gmnetCapabilityHintsByProvider: cachedCapabilityHintsByProvider }
-    ),
+    ...(options?.runtimeInitOptions || {}),
+    ...(options?.allowWasmOnly === false ? { allowWasmOnly: false } : {}),
   });
+  if (!Array.isArray(runtimeInitOptions.smokeBypassProviders) || runtimeInitOptions.smokeBypassProviders.length === 0) {
+    const startupCache = readStartupCapabilityCache(globalThis, startupCapabilityCacheTtlMs);
+    if (startupCache?.provider) {
+      runtimeInitOptions.smokeBypassProviders = [startupCache.provider];
+    }
+  }
+  const allowMainThreadFallback = isMainThreadFallbackEnabled(options);
 
   if (forceRetry) {
     resetRuntimeInitializationState();
   }
 
-  if (!canUseProcessingWorker()) {
+  if (!canUseProcessingWorker() && !allowMainThreadFallback) {
     const error = createWorkerUnavailableError();
     error.code = 'RUNTIME_INIT_WORKER_UNAVAILABLE';
     error.userMessage = 'Processing worker support is unavailable in this environment.';
@@ -974,12 +957,32 @@ export async function initializeRuntime(options = {}) {
   }
 
   try {
-    const client = await getWorkerClient(runtimeInitOptions);
-    const runtimeMetadata = client?.runtime && typeof client.runtime === 'object'
-      ? { ...client.runtime }
-      : {};
+    if (canUseProcessingWorker()) {
+      const client = await getWorkerClient(runtimeInitOptions);
+      const runtimeMetadata = client?.runtime && typeof client.runtime === 'object'
+        ? { ...client.runtime }
+        : {};
+      writeStartupCapabilityCache(
+        runtimeMetadata.resolvedExecutionProvider,
+        globalThis,
+        startupCapabilityCacheTtlMs,
+      );
+      return {
+        ready: true,
+        runtimeMode: resolveRuntimeMode(runtimeMetadata.resolvedExecutionProvider, true),
+        ...runtimeMetadata,
+      };
+    }
+
+    const runtimeMetadata = await ensureMainThreadRuntimeInitialized(runtimeInitOptions);
+    writeStartupCapabilityCache(
+      runtimeMetadata?.resolvedExecutionProvider,
+      globalThis,
+      startupCapabilityCacheTtlMs,
+    );
     return {
       ready: true,
+      runtimeMode: resolveRuntimeMode(runtimeMetadata?.resolvedExecutionProvider, false),
       ...runtimeMetadata,
     };
   } finally {
@@ -990,34 +993,32 @@ export async function initializeRuntime(options = {}) {
 }
 
 export async function processImage(file, options = {}) {
-  if (!canUseProcessingWorker()) {
+  const allowMainThreadFallback = isMainThreadFallbackEnabled(options);
+  const runtimeInitOptions = sanitizeRuntimeInitOptions({
+    ...(options?.runtimeInitOptions || {}),
+    ...(options?.allowWasmOnly === false ? { allowWasmOnly: false } : {}),
+  });
+
+  if (!canUseProcessingWorker() && !allowMainThreadFallback) {
     const error = createWorkerUnavailableError();
     throw error;
   }
 
-  const client = await getWorkerClient();
-  const explicitHint = normalizeGmnetCapability(options?.gmnetCapabilityHint);
-  const testOverrideHint = explicitHint ? null : getTestCapabilityOverride(globalThis);
-  const startupRuntimeHint = explicitHint || testOverrideHint
-    ? null
-    : normalizeGmnetCapability(client?.runtime?.gmnetCapability);
-  const cachedHint = explicitHint || testOverrideHint
-    ? null
-    : getCachedCapabilityHint(globalThis, options);
-  const mergedOptions = { ...options };
-  if (explicitHint) {
-    mergedOptions.gmnetCapabilityHint = explicitHint;
-  } else if (testOverrideHint) {
-    mergedOptions.gmnetCapabilityHint = testOverrideHint;
-  } else if (startupRuntimeHint) {
-    mergedOptions.gmnetCapabilityHint = startupRuntimeHint;
-  } else if (cachedHint) {
-    mergedOptions.gmnetCapabilityHint = cachedHint;
+  if (!canUseProcessingWorker()) {
+    await ensureMainThreadRuntimeInitialized(runtimeInitOptions);
+    const processImageMainThread = await loadMainThreadProcessImage();
+    return processImageMainThread(file, stripMainThreadOnlyOptions(options));
   }
 
-  return client.process(file, mergedOptions);
-}
-
-export function __getCapabilityCacheStorageKeyForTests() {
-  return getCapabilityCacheStorageKey(globalThis);
+  try {
+    const client = await getWorkerClient();
+    return client.process(file, { ...options });
+  } catch (error) {
+    if (!allowMainThreadFallback || !isWorkerCompatibilityError(error)) {
+      throw error;
+    }
+    await ensureMainThreadRuntimeInitialized(runtimeInitOptions);
+    const processImageMainThread = await loadMainThreadProcessImage();
+    return processImageMainThread(file, stripMainThreadOnlyOptions(options));
+  }
 }

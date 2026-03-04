@@ -22,30 +22,6 @@
     return ELIGIBLE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
   }
 
-  // Convert an ephemeral File to a stable File by reading its contents into memory
-  async function stabilizeFile(file) {
-    const arrayBuffer = await file.arrayBuffer();
-    return new File([arrayBuffer], file.name, {
-      type: file.type || getMimeType(file.name),
-    });
-  }
-
-  // Get MIME type from file extension
-  function getMimeType(fileName) {
-    const ext = fileName.toLowerCase().split(".").pop();
-    const mimeTypes = {
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      png: "image/png",
-      webp: "image/webp",
-      heic: "image/heic",
-      heif: "image/heif",
-      tif: "image/tiff",
-      tiff: "image/tiff",
-    };
-    return mimeTypes[ext] || "application/octet-stream";
-  }
-
   // Recursively read all files from a FileSystemDirectoryEntry
   async function readDirectoryRecursively(directoryEntry) {
     const files = [];
@@ -78,9 +54,7 @@
             entry.file(resolve, reject);
           });
           if (isEligibleFile(file.name)) {
-            // Immediately read and stabilize the file to prevent stale references
-            const stableFile = await stabilizeFile(file);
-            files.push(stableFile);
+            files.push(file);
           }
         } catch (err) {
           console.warn("Failed to read file:", entry.name, err);
@@ -91,6 +65,36 @@
       }
     }
 
+    return files;
+  }
+
+  async function readHandleRecursively(handle) {
+    if (!handle || typeof handle !== "object") {
+      return [];
+    }
+    if (handle.kind === "file" && typeof handle.getFile === "function") {
+      try {
+        const file = await handle.getFile();
+        return file && isEligibleFile(file.name) ? [file] : [];
+      } catch (err) {
+        console.warn("Failed to read file handle:", err);
+        return [];
+      }
+    }
+
+    if (handle.kind !== "directory" || typeof handle.values !== "function") {
+      return [];
+    }
+
+    const files = [];
+    try {
+      for await (const childHandle of handle.values()) {
+        const childFiles = await readHandleRecursively(childHandle);
+        files.push(...childFiles);
+      }
+    } catch (err) {
+      console.warn("Failed to read directory handle:", err);
+    }
     return files;
   }
 
@@ -111,6 +115,21 @@
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (item.kind === "file") {
+        if (typeof item.getAsFileSystemHandle === "function") {
+          promises.push(
+            (async () => {
+              try {
+                const handle = await item.getAsFileSystemHandle();
+                return await readHandleRecursively(handle);
+              } catch (err) {
+                console.warn("Failed to read dropped handle:", err);
+                return [];
+              }
+            })(),
+          );
+          continue;
+        }
+
         const entry = item.webkitGetAsEntry?.();
         if (entry) {
           if (entry.isDirectory) {
@@ -123,7 +142,7 @@
                     entry.file(resolve, reject);
                   });
                   if (isEligibleFile(file.name)) {
-                    return [await stabilizeFile(file)];
+                    return [file];
                   }
                   return [];
                 } catch (err) {
@@ -135,7 +154,8 @@
           }
         } else {
           // Fallback if webkitGetAsEntry is not available
-          const file = item.getAsFile();
+          const file =
+            typeof item.getAsFile === "function" ? item.getAsFile() : null;
           if (file && isEligibleFile(file.name)) {
             files.push(file);
           }
