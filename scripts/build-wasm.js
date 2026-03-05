@@ -16,6 +16,7 @@ import { createHash } from 'crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execSync } from 'child_process';
 import { buildJpegliWasm } from './build-jpegli-wasm.js';
+import { buildJpegtranWasm } from './build-jpegtran-wasm.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +27,14 @@ const emsdkDir = path.join(rootDir, 'emsdk');
 const outputDir = path.join(rootDir, 'public', 'assets');
 const buildDir = path.join(wasmWrapperDir, 'build');
 const wasmVersionMetadataPath = path.join(rootDir, '.wasm-version.json');
+const REQUIRED_WASM_FILES = Object.freeze([
+    'ultrahdr_wasm.js',
+    'ultrahdr_wasm.wasm',
+    'jpegli_wasm.js',
+    'jpegli_wasm.wasm',
+    'jpegtran_wasm.js',
+    'jpegtran_wasm.wasm',
+]);
 
 // Create output directory if it doesn't exist
 if (!fs.existsSync(outputDir)) {
@@ -115,11 +124,12 @@ function buildWasm() {
 
     console.log('\n=== Building Jpegli WASM module ===');
     buildJpegliWasm();
+    console.log('\n=== Building Jpegtran WASM module ===');
+    buildJpegtranWasm();
 }
 
 function hasExistingAssets() {
-    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm'];
-    return requiredFiles.every((file) => fs.existsSync(path.join(outputDir, file)));
+    return REQUIRED_WASM_FILES.every((file) => fs.existsSync(path.join(outputDir, file)));
 }
 
 export function resolveBuildFailureStrategy({ strictMode, hasAssets }) {
@@ -140,8 +150,7 @@ export function computeWasmAssetVersionFromFiles(files) {
 }
 
 export function computeWasmAssetVersion(outputDirectory = outputDir) {
-    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm'];
-    const filePaths = requiredFiles.map((file) => path.join(outputDirectory, file));
+    const filePaths = REQUIRED_WASM_FILES.map((file) => path.join(outputDirectory, file));
 
     for (const filePath of filePaths) {
         if (!fs.existsSync(filePath)) {
@@ -160,7 +169,7 @@ export function writeWasmVersionMetadata(
     const metadata = {
         wasmAssetVersion,
         generatedAt: new Date().toISOString(),
-        files: ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm']
+        files: [...REQUIRED_WASM_FILES]
     };
     try {
         fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
@@ -251,9 +260,7 @@ function copyAssets() {
 function verifyOutput() {
     console.log('\n=== Verifying output ===');
 
-    const requiredFiles = ['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm'];
-
-    for (const file of requiredFiles) {
+    for (const file of REQUIRED_WASM_FILES) {
         const filePath = path.join(outputDir, file);
         if (fs.existsSync(filePath)) {
             const stats = fs.statSync(filePath);

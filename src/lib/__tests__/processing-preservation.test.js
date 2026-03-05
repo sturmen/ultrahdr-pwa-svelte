@@ -3,6 +3,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+const { losslessRotateCalls } = vi.hoisted(() => ({
+    losslessRotateCalls: [],
+}));
+
 vi.mock('../image-utils.js', async () => {
     const actual = await vi.importActual('../image-utils.js');
     return {
@@ -11,6 +15,20 @@ vi.mock('../image-utils.js', async () => {
         jpegBytesToImageData: vi.fn(actual.jpegBytesToImageData),
     };
 });
+
+vi.mock('../jpegtran-rotate.js', () => ({
+    rotateJpeg: vi.fn(async (inputBytes, transform, options = {}) => {
+        const normalizedInput = inputBytes instanceof Uint8Array
+            ? new Uint8Array(inputBytes)
+            : new Uint8Array(inputBytes);
+        losslessRotateCalls.push({
+            transform,
+            options: { ...options },
+            size: normalizedInput.length,
+        });
+        return normalizedInput;
+    })
+}));
 
 const encodedBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xee, 0x00, 0x01, 0xff, 0xd9]);
 
@@ -55,6 +73,14 @@ const extractedExifPayload = new Uint8Array([
     0x01, 0x00,
     0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+]);
+const extractedExifPayloadOrientation6 = new Uint8Array([
+    0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+    0x01, 0x00,
+    0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x06, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00,
 ]);
 
@@ -110,6 +136,7 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 describe('processImage UltraHDR preservation path', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        losslessRotateCalls.length = 0;
     });
 
     it('encodes SDR and gain-map components into compressed inputs before final encode', async () => {
@@ -382,6 +409,32 @@ describe('processImage UltraHDR preservation path', () => {
         expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
     });
 
+    it('uses lossless bitstream rotation for preserved UltraHDR components when dimensions are MCU-compatible', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(true);
+
+        const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
+
+        await processImage(file, {
+            rotation: 90,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(losslessRotateCalls).toHaveLength(2);
+        expect(losslessRotateCalls[0]).toMatchObject({
+            transform: '90',
+            options: { trim: false, perfect: false },
+        });
+        expect(losslessRotateCalls[1]).toMatchObject({
+            transform: '90',
+            options: { trim: false, perfect: false },
+        });
+    });
+
     it('normalizes multichannel gain-map metadata for rotated preserved UltraHDR output', async () => {
         const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
@@ -478,6 +531,29 @@ describe('processImage UltraHDR preservation path', () => {
 
         expect(encoderInstance.setExifData).toHaveBeenCalledTimes(1);
         expect(encoderInstance.setExifData).toHaveBeenCalledWith(extractedExifPayload);
+    });
+
+    it('normalizes JPEG EXIF orientation flag to 1 before encoder insertion', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { extractExifApp1PayloadFromInput } = await import('../input-exif.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(true);
+        extractExifApp1PayloadFromInput.mockReturnValueOnce(extractedExifPayloadOrientation6);
+
+        const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: false
+        });
+
+        expect(encoderInstance.setExifData).toHaveBeenCalledTimes(1);
+        const [normalizedExif] = encoderInstance.setExifData.mock.calls[0];
+        expect(normalizedExif).toBeInstanceOf(Uint8Array);
+        expect(normalizedExif[24]).toBe(1);
+        expect(normalizedExif[25]).toBe(0);
     });
 
     it('bypasses generated-path clamp and GMNet stages for preserved HEIC components', async () => {
@@ -670,6 +746,9 @@ describe('processImage UltraHDR preservation path', () => {
     it('aligns base and gain-map components using auto-rotation in processUhdrWithRotation', async () => {
         const core = await import('../processing-core.js');
         const imageUtils = await import('../image-utils.js');
+        const { rotateJpeg } = await import('../jpegtran-rotate.js');
+        rotateJpeg.mockRejectedValueOnce(new Error('force decode fallback'));
+        rotateJpeg.mockRejectedValueOnce(new Error('force decode fallback'));
 
         // Mock a JPEG with Orientation 6 (90 CW)
         const uhdrBytesWithExif = new Uint8Array([

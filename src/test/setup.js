@@ -95,10 +95,36 @@ if (typeof window !== 'undefined') {
     HEAPU32: new Uint32Array(mockWasmMemory),
     buffer: mockWasmMemory
   }));
+
+  window.createJpegtranWasm = vi.fn(() => Promise.resolve({
+    _jpegtran_wasm_create: vi.fn(() => 24680),
+    _jpegtran_wasm_destroy: vi.fn(),
+    _jpegtran_wasm_transform: vi.fn(() => 0),
+    _jpegtran_wasm_get_output_data: vi.fn(() => 1024),
+    _jpegtran_wasm_get_output_size: vi.fn(() => 1024),
+    _jpegtran_wasm_get_last_error_code: vi.fn(() => 0),
+    _jpegtran_wasm_get_last_error_message: vi.fn(() => 0),
+    _jpegtran_wasm_get_error_image_width: vi.fn(() => 0),
+    _jpegtran_wasm_get_error_image_height: vi.fn(() => 0),
+    _jpegtran_wasm_get_error_mcu_width: vi.fn(() => 0),
+    _jpegtran_wasm_get_error_mcu_height: vi.fn(() => 0),
+    _jpegtran_wasm_get_error_imperfect_mask: vi.fn(() => 0),
+    _jpegtran_wasm_dct_digest: vi.fn(() => 0),
+    _malloc: vi.fn((size) => {
+      const ptr = mockWasmMemOffset;
+      mockWasmMemOffset = (mockWasmMemOffset + size + 3) & ~3;
+      return ptr;
+    }),
+    _free: vi.fn(),
+    UTF8ToString: vi.fn(() => ''),
+    HEAPU8: new Uint8Array(mockWasmMemory),
+    buffer: mockWasmMemory
+  }));
 }
 
 if (typeof globalThis !== 'undefined') {
   globalThis.createJpegliWasm = typeof window !== 'undefined' ? window.createJpegliWasm : undefined;
+  globalThis.createJpegtranWasm = typeof window !== 'undefined' ? window.createJpegtranWasm : undefined;
 }
 
 

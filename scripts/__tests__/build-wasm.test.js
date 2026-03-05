@@ -46,13 +46,24 @@ describe('build-wasm version metadata', () => {
     const wasmPath = path.join(tempDir, 'ultrahdr_wasm.wasm');
     const jpegliJsPath = path.join(tempDir, 'jpegli_wasm.js');
     const jpegliWasmPath = path.join(tempDir, 'jpegli_wasm.wasm');
+    const jpegtranJsPath = path.join(tempDir, 'jpegtran_wasm.js');
+    const jpegtranWasmPath = path.join(tempDir, 'jpegtran_wasm.wasm');
 
     fs.writeFileSync(jsPath, 'console.log("wrapper");\n', 'utf8');
     fs.writeFileSync(wasmPath, Buffer.from([0x00, 0x61, 0x73, 0x6d]));
     fs.writeFileSync(jpegliJsPath, 'console.log("jpegli");\n', 'utf8');
     fs.writeFileSync(jpegliWasmPath, Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+    fs.writeFileSync(jpegtranJsPath, 'console.log("jpegtran");\n', 'utf8');
+    fs.writeFileSync(jpegtranWasmPath, Buffer.from([0x00, 0x61, 0x73, 0x6d]));
 
-    const tokenA = computeWasmAssetVersionFromFiles([wasmPath, jsPath, jpegliJsPath, jpegliWasmPath]);
+    const tokenA = computeWasmAssetVersionFromFiles([
+      wasmPath,
+      jsPath,
+      jpegliJsPath,
+      jpegliWasmPath,
+      jpegtranJsPath,
+      jpegtranWasmPath,
+    ]);
     const tokenB = computeWasmAssetVersion(tempDir);
 
     expect(tokenA).toMatch(/^[a-f0-9]{16}$/);
@@ -66,13 +77,22 @@ describe('build-wasm version metadata', () => {
     fs.writeFileSync(path.join(tempDir, 'ultrahdr_wasm.wasm'), Buffer.from([1, 2, 3, 4]));
     fs.writeFileSync(path.join(tempDir, 'jpegli_wasm.js'), 'console.log("b");\n', 'utf8');
     fs.writeFileSync(path.join(tempDir, 'jpegli_wasm.wasm'), Buffer.from([5, 6, 7, 8]));
+    fs.writeFileSync(path.join(tempDir, 'jpegtran_wasm.js'), 'console.log("c");\n', 'utf8');
+    fs.writeFileSync(path.join(tempDir, 'jpegtran_wasm.wasm'), Buffer.from([9, 10, 11, 12]));
 
     const metadata = writeWasmVersionMetadata(tempDir, metadataPath);
     const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
 
     expect(metadata.wasmAssetVersion).toMatch(/^[a-f0-9]{16}$/);
     expect(parsed.wasmAssetVersion).toBe(metadata.wasmAssetVersion);
-    expect(parsed.files).toEqual(['ultrahdr_wasm.js', 'ultrahdr_wasm.wasm', 'jpegli_wasm.js', 'jpegli_wasm.wasm']);
+    expect(parsed.files).toEqual([
+      'ultrahdr_wasm.js',
+      'ultrahdr_wasm.wasm',
+      'jpegli_wasm.js',
+      'jpegli_wasm.wasm',
+      'jpegtran_wasm.js',
+      'jpegtran_wasm.wasm',
+    ]);
     expect(typeof parsed.generatedAt).toBe('string');
   });
 });
@@ -84,5 +104,32 @@ describe('ultrahdr wasm dimension guard', () => {
     expect(cmakeContent).toMatch(
       /set\(UHDR_MAX_DIMENSION\s+16384\s+CACHE\s+STRING\s+"Maximum image dimension"\s+FORCE\)/,
     );
+  });
+
+  it('includes jpegtran wasm assets in the service worker cache matcher', () => {
+    const swPath = path.resolve(process.cwd(), 'src/sw.js');
+    const swContent = fs.readFileSync(swPath, 'utf8');
+    expect(swContent).toMatch(/jpegtran_wasm/);
+    expect(swContent).toMatch(/isUltraHdrWasmAssetUrl/);
+  });
+
+  it('documents lossless jpegtran wasm rotation behavior in README', () => {
+    const readmePath = path.resolve(process.cwd(), 'README.md');
+    const readmeContent = fs.readFileSync(readmePath, 'utf8');
+    expect(readmeContent).toMatch(/Lossless JPEG Rotation \(jpegtran WASM\)/);
+    expect(readmeContent).toMatch(/rotateJpeg\(inputBytes, transform, options\?\)/);
+  });
+
+  it('pins CMake policy minimum when configuring jpegtran wasm build', () => {
+    const scriptPath = path.resolve(process.cwd(), 'scripts/build-jpegtran-wasm.js');
+    const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+    expect(scriptContent).toMatch(/CMAKE_POLICY_VERSION_MINIMUM=3\.5/);
+  });
+
+  it('configures jpegtran wasm to avoid try_compile executable linking under emscripten', () => {
+    const cmakePath = path.resolve(process.cwd(), 'jpegtran-wasm/CMakeLists.txt');
+    const cmakeContent = fs.readFileSync(cmakePath, 'utf8');
+    expect(cmakeContent).toMatch(/CMAKE_TRY_COMPILE_TARGET_TYPE\s+STATIC_LIBRARY/);
+    expect(cmakeContent).toMatch(/EMSCRIPTEN_CACHE_PATH/);
   });
 });

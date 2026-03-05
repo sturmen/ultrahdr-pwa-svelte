@@ -7,11 +7,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   gmnetCalls,
   jpegEncodeCanvasSizes,
+  jpegBitstreamRotations,
   encoderSpies,
   decodeDimensions,
 } = vi.hoisted(() => ({
   gmnetCalls: [],
   jpegEncodeCanvasSizes: [],
+  jpegBitstreamRotations: [],
   decodeDimensions: { width: 12000, height: 9000 },
   encoderSpies: {
     init: vi.fn(async () => { }),
@@ -97,6 +99,51 @@ vi.mock('../jpegli-decoder.js', () => ({
   })
 }));
 
+vi.mock('../jpegtran-rotate.js', () => ({
+  rotateJpeg: vi.fn(async (inputBytes, transform, options = {}) => {
+    const normalizedInput = inputBytes instanceof Uint8Array
+      ? new Uint8Array(inputBytes)
+      : new Uint8Array(inputBytes);
+    jpegBitstreamRotations.push({
+      inputBytes: normalizedInput,
+      transform,
+      options: { ...options },
+    });
+    return normalizedInput;
+  }),
+}));
+
+const exifPayloadOrientation6 = new Uint8Array([
+  0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+  0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+  0x01, 0x00,
+  0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
+  0x06, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+]);
+
+function buildJpegWithExif(exifPayload, imageData = new Uint8Array([0x11, 0x22, 0x33])) {
+  const exifLength = exifPayload.length + 2;
+  const segments = [
+    new Uint8Array([0xff, 0xd8]),
+    new Uint8Array([0xff, 0xe0, 0x00, 0x05, 0x4a, 0x46, 0x49]), // JFI
+    new Uint8Array([0xff, 0xe1, (exifLength >> 8) & 0xff, exifLength & 0xff]),
+    exifPayload,
+    new Uint8Array([0xff, 0xda, 0x00, 0x08, 1, 2, 3, 4, 5, 6]),
+    imageData,
+    new Uint8Array([0xff, 0xd9]),
+  ];
+
+  const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
+  const bytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const segment of segments) {
+    bytes.set(segment, offset);
+    offset += segment.length;
+  }
+  return bytes;
+}
+
 class MockOffscreenCanvas {
   constructor(width, height) {
     this.width = width;
@@ -134,6 +181,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     vi.resetModules();
     gmnetCalls.length = 0;
     jpegEncodeCanvasSizes.length = 0;
+    jpegBitstreamRotations.length = 0;
     decodeDimensions.width = 12000;
     decodeDimensions.height = 9000;
 
@@ -174,9 +222,106 @@ describe('processing fixed-resolution generated pipeline', () => {
 
     expect(stages).not.toContain('rotate-sdr-image');
     expect(stages).not.toContain('rotate-gain-map-image');
+    expect(jpegBitstreamRotations).toHaveLength(1);
+    expect(jpegBitstreamRotations[0]).toMatchObject({
+      transform: '90',
+      options: { trim: false, perfect: false },
+    });
     expect(consoleLogSpy).toHaveBeenCalledWith(
       '[Process] Gain map decision: generating new gain map with GMNet'
     );
+  });
+
+  it('normalizes orientation-tagged JPEG EXIF and avoids lossless bitstream rotate', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const { extractExifApp1PayloadFromInput } = await import('../input-exif.js');
+    extractExifApp1PayloadFromInput.mockReturnValueOnce(exifPayloadOrientation6);
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 90,
+      stripExif: false,
+      discardGainMap: true,
+    });
+
+    expect(jpegBitstreamRotations).toHaveLength(0);
+    expect(encoderSpies.setExifData).toHaveBeenCalledTimes(1);
+    const [normalizedExif] = encoderSpies.setExifData.mock.calls[0];
+    expect(normalizedExif).toBeInstanceOf(Uint8Array);
+    expect(normalizedExif[24]).toBe(1);
+    expect(normalizedExif[25]).toBe(0);
+  });
+
+  it('lossless-normalizes EXIF-oriented JPEG before zero-rotation SDR bypass when stripExif=false', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const { extractExifApp1PayloadFromInput } = await import('../input-exif.js');
+    extractExifApp1PayloadFromInput.mockReturnValueOnce(exifPayloadOrientation6);
+    const orientedJpeg = buildJpegWithExif(exifPayloadOrientation6);
+    const file = new File([orientedJpeg], 'oriented.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: false,
+      discardGainMap: true,
+    });
+
+    expect(jpegBitstreamRotations).toHaveLength(1);
+    expect(jpegBitstreamRotations[0]).toMatchObject({
+      transform: '90',
+      options: { trim: false, perfect: true },
+    });
+  });
+
+  it('detects EXIF orientation from JPEG bytes and normalizes when stripExif=true', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const orientedJpeg = buildJpegWithExif(exifPayloadOrientation6);
+    const file = new File([orientedJpeg], 'oriented.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      useJpegli: true,
+    });
+
+    expect(jpegBitstreamRotations).toHaveLength(1);
+    expect(jpegBitstreamRotations[0]).toMatchObject({
+      transform: '90',
+      options: { trim: false, perfect: true },
+    });
+    expect(encoderSpies.setCompressedBaseImage).toHaveBeenCalledTimes(1);
+    const [baseBytes] = encoderSpies.setCompressedBaseImage.mock.calls[0];
+    expect(baseBytes).toBeInstanceOf(Uint8Array);
+    expect(baseBytes.length).toBeGreaterThan(4);
+    expect(encoderSpies.setExifData).not.toHaveBeenCalled();
+  });
+
+  it('falls back to decode/re-encode path when lossless orientation normalization fails', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const { rotateJpeg } = await import('../jpegtran-rotate.js');
+    rotateJpeg.mockImplementationOnce(async () => {
+      throw new Error('imperfect-transform');
+    });
+    const orientedJpeg = buildJpegWithExif(exifPayloadOrientation6);
+    const file = new File([orientedJpeg], 'oriented.jpg', { type: 'image/jpeg' });
+
+    await processImage(file, {
+      rotation: 0,
+      stripExif: true,
+      discardGainMap: true,
+      useJpegli: true,
+    });
+
+    expect(rotateJpeg).toHaveBeenCalledTimes(1);
+    expect(rotateJpeg).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      '90',
+      { trim: false, perfect: true },
+    );
+    expect(encoderSpies.setCompressedBaseImage).toHaveBeenCalledTimes(1);
+    const [baseBytes] = encoderSpies.setCompressedBaseImage.mock.calls[0];
+    expect(baseBytes).toBeInstanceOf(Uint8Array);
+    expect(baseBytes.length).toBe(4);
   });
 
   it('uses full-resolution GMNet input when source is below IMAGE_MAX_LONG_EDGE', async () => {

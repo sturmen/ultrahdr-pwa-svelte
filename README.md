@@ -24,6 +24,57 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 
 Gain-map generation is handled by [GMNet](https://github.com/qtlark/GMNet).
 
+## Lossless JPEG Rotation (jpegtran WASM)
+
+JPEG preservation paths now use coefficient-domain transforms (jpegtran semantics) in-browser through a WebAssembly wrapper around `libjpeg-turbo`.
+
+- API: `rotateJpeg(inputBytes, transform, options?)` from `src/lib/jpegtran-rotate.js`
+- Supported transforms: `"90" | "180" | "270" | "flipH" | "flipV" | "transpose" | "transverse"`
+- Inputs: `Uint8Array | ArrayBuffer`
+- Output: `Promise<Uint8Array>`
+
+```js
+import { rotateJpeg } from './src/lib/jpegtran-rotate.js';
+
+const rotated = await rotateJpeg(jpegBytes, '90', { perfect: false, trim: false });
+```
+
+Option behavior:
+
+| Options | Behavior |
+| --- | --- |
+| default (`trim=false`, `perfect=false`) | Reversible jpegtran-compatible transform without trimming edge MCUs. |
+| `trim=true` | Trims non-transformable edge blocks (jpegtran `-trim`). |
+| `perfect=true` | Fails if transform is not MCU-perfect, throws `JpegTransformError` with code `JPEG_TRANSFORM_IMPERFECT`. |
+| `trim=true` + `perfect=true` | Invalid combination, throws `JpegTransformError` with code `JPEG_TRANSFORM_INVALID_OPTIONS`. |
+
+Processing scope:
+
+- JPEG preservation paths: use lossless bitstream rotation when eligible.
+- Other input formats (HEIC/TIFF/PNG/etc.): continue using the existing canvas-based path.
+- If lossless eligibility fails, processing falls back to decode/rotate/re-encode.
+
+### Reproducible WASM Build
+
+Prerequisites:
+
+- `emcc`, `emcmake`, `emmake` available in `PATH` (via Emscripten SDK).
+- Repo submodules initialized.
+
+Build steps:
+
+1. `git submodule update --init --recursive`
+2. `npm install`
+3. `npm run build:wasm`
+
+Generated artifacts (`public/assets/`):
+
+- `ultrahdr_wasm.js`, `ultrahdr_wasm.wasm`
+- `jpegli_wasm.js`, `jpegli_wasm.wasm`
+- `jpegtran_wasm.js`, `jpegtran_wasm.wasm`
+
+Runtime loading is local (no remote network dependency) and asset versioning is tracked in `.wasm-version.json`.
+
 ## Testing
 
 - Desktop regression: `npm run test:e2e`
