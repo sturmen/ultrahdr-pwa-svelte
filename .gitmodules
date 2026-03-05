@@ -10,3 +10,6 @@
 [submodule "jpegli"]
 	path = jpegli
 	url = https://github.com/google/jpegli
+[submodule "third_party/UTIF.js"]
+	path = third_party/UTIF.js
+	url = https://github.com/photopea/UTIF.js

@@ -12,8 +12,8 @@ const utifMock = vi.hoisted(() => {
   };
 });
 
-// Mock UTIF before importing
-vi.mock('utif', () => ({
+// Mock UTIF adapter before importing
+vi.mock('../utif-adapter.js', () => ({
   default: utifMock,
 }));
 

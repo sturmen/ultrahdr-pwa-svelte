@@ -1,4 +1,4 @@
-import UTIF from 'utif';
+import UTIF from './utif-adapter.js';
 import { canvasToBlob, createCanvasWithContext } from './canvas-runtime.js';
 
 /**
