@@ -222,6 +222,65 @@ EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_image(uhdr_wasm_encoder_t enc,
   return ERR_OK;
 }
 
+EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_intent_image(uhdr_wasm_encoder_t enc,
+                                                       const uint8_t *data,
+                                                       int width, int height,
+                                                       int stride, int fmt,
+                                                       int cg, int ct,
+                                                       int range) {
+  if (enc == nullptr || data == nullptr) {
+    if (enc != nullptr) {
+      std::strncpy(static_cast<WasmEncoderState *>(enc)->error_message,
+                   "null pointer provided",
+                   sizeof(static_cast<WasmEncoderState *>(enc)->error_message));
+    }
+    return ERR_NULL_PTR;
+  }
+
+  if (width <= 0 || height <= 0) {
+    std::strncpy(static_cast<WasmEncoderState *>(enc)->error_message,
+                 "invalid image dimensions",
+                 sizeof(static_cast<WasmEncoderState *>(enc)->error_message));
+    return ERR_INVALID_FORMAT;
+  }
+
+  WasmEncoderState *state = static_cast<WasmEncoderState *>(enc);
+  uhdr_img_fmt_t input_fmt = static_cast<uhdr_img_fmt_t>(fmt);
+
+  if (input_fmt != UHDR_IMG_FMT_32bppRGBA1010102) {
+    std::strncpy(state->error_message,
+                 "unsupported HDR intent format for wasm wrapper",
+                 sizeof(state->error_message));
+    return ERR_INVALID_FORMAT;
+  }
+
+  if (stride == 0) {
+    stride = width * 4; // RGBA1010102 is 4 bytes per pixel
+  }
+
+  uhdr_raw_image_t img = {};
+  img.fmt = input_fmt;
+  img.cg = static_cast<uhdr_color_gamut_t>(cg);
+  img.ct = static_cast<uhdr_color_transfer_t>(ct);
+  img.range = static_cast<uhdr_color_range_t>(range);
+  img.w = static_cast<unsigned int>(width);
+  img.h = static_cast<unsigned int>(height);
+  img.planes[0] = const_cast<uint8_t *>(data);
+  img.stride[0] = static_cast<unsigned int>(stride / 4);
+
+  uhdr_error_info_t status =
+      uhdr_enc_set_raw_image(state->enc, &img, UHDR_HDR_IMG);
+
+  if (status.error_code != UHDR_CODEC_OK) {
+    std::snprintf(state->error_message, sizeof(state->error_message),
+                  "failed to set HDR intent image: %s",
+                  status.has_detail ? status.detail : "unknown error");
+    return ERR_INVALID_FORMAT;
+  }
+
+  return ERR_OK;
+}
+
 /**
  * Set compressed base image (for stitching with gain map)
  */

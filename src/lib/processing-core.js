@@ -125,6 +125,7 @@ const DEFAULT_PROCESS_OPTIONS = {
 };
 let gainMapGenerator = null;
 let processHeicProcessor = null;
+let processHeifHdrProcessor = null;
 let processTiffProcessor = null;
 
 async function getProcessHeic() {
@@ -133,6 +134,14 @@ async function getProcessHeic() {
         processHeicProcessor = module.processHeic;
     }
     return processHeicProcessor;
+}
+
+async function getProcessHeifHdr() {
+    if (!processHeifHdrProcessor) {
+        const module = await import('./heif-hdr-processing.js');
+        processHeifHdrProcessor = module.processHeifHdr;
+    }
+    return processHeifHdrProcessor;
 }
 
 async function getProcessTiff() {
@@ -810,6 +819,23 @@ export async function processImage(file, options = {}) {
             }
         }
 
+        if (!(file instanceof File) && !(file instanceof Blob) && file?.kind === 'hdr-intent-heif' && file?.hdrIntent) {
+            setProcessingPath('generated');
+            const exifForEncode = file.sourceExifBytes instanceof Uint8Array ? file.sourceExifBytes : sourceExifBytes;
+            const { sdr } = await telemetry.runStage(
+                'compress-hdr-intent',
+                async () => compressHdrIntentOnly(file.hdrIntent, mergedOptions, telemetry, exifForEncode),
+                withProcessingPath(),
+            );
+            const blob = await telemetry.runStage(
+                'finalize-output',
+                async () => finalizeUltraHDR(sdr, mergedOptions.stripExif),
+                withProcessingPath(),
+            );
+            telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'hdr-intent-only' }));
+            return blob;
+        }
+
         // If file is an object with raw data from HEIC preservation, handle it.
         if (!(file instanceof File) && !(file instanceof Blob) && file.sdr) {
             setProcessingPath('preserved');
@@ -1310,7 +1336,16 @@ export async function processUhdrWithRotation(fileBuffer, options, telemetry = n
  */
 async function preprocessFile(file, options) {
     const name = file.name.toLowerCase();
-    if (name.endsWith('.heic') || name.endsWith('.heif')) {
+    if (name.endsWith('.hif')) {
+        console.log('[Process] Detected HIF, decoding HDR intent...');
+        try {
+            const processHeifHdr = await getProcessHeifHdr();
+            return await processHeifHdr(file, options);
+        } catch (e) {
+            console.error('[Process] HIF HDR-intent decode failed:', e);
+            throw e;
+        }
+    } else if (name.endsWith('.heic') || name.endsWith('.heif')) {
         console.log('[Process] Detected HEIC/HEIF, converting...');
         try {
             const processHeic = await getProcessHeic();
@@ -1608,6 +1643,82 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
         return {
             sdr: jpegData,
             gainMap: new Uint8Array(0)
+        };
+    } finally {
+        encoder.destroy();
+    }
+}
+
+/**
+ * Encodes a HDR-intent-only image using libultrahdr API-0 path.
+ * @param {Object} hdrIntent
+ * @param {Object} options
+ * @param {Object|null} telemetry
+ * @param {Uint8Array|null} exifPayload
+ * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
+ */
+export async function compressHdrIntentOnly(hdrIntent, options, telemetry = null, exifPayload = null) {
+    const quality = options.quality !== undefined ? options.quality : 0.95;
+    const wasmQuality = Math.round(quality * 100);
+    const encoder = new UHDREncoder();
+
+    if (telemetry) {
+        await telemetry.runStage('encode-init', async () => encoder.init());
+    } else {
+        await encoder.init();
+    }
+
+    try {
+        if (telemetry) {
+            await telemetry.runStage('encode-set-hdr-intent-image', async () => {
+                encoder.setHDRIntentImage(hdrIntent.data, hdrIntent.width, hdrIntent.height, {
+                    strideBytes: hdrIntent.strideBytes,
+                    format: hdrIntent.format,
+                    cg: hdrIntent.cg,
+                    ct: hdrIntent.ct,
+                    range: hdrIntent.range,
+                });
+            });
+        } else {
+            encoder.setHDRIntentImage(hdrIntent.data, hdrIntent.width, hdrIntent.height, {
+                strideBytes: hdrIntent.strideBytes,
+                format: hdrIntent.format,
+                cg: hdrIntent.cg,
+                ct: hdrIntent.ct,
+                range: hdrIntent.range,
+            });
+        }
+
+        if (!options.stripExif && exifPayload instanceof Uint8Array && exifPayload.length > 0) {
+            let finalExifPayload = normalizeExifOrientationTo1(exifPayload);
+            if (finalExifPayload.length + 2 > 0xffff) {
+                finalExifPayload = null;
+            }
+            if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
+                if (telemetry) {
+                    await telemetry.runStage('encode-set-exif', async () => {
+                        encoder.setExifData(finalExifPayload);
+                    });
+                } else {
+                    encoder.setExifData(finalExifPayload);
+                }
+            }
+        }
+
+        if (telemetry) {
+            await telemetry.runStage('encode-ultrahdr', async () => encoder.encode(wasmQuality));
+        } else {
+            encoder.encode(wasmQuality);
+        }
+
+        const jpegData = encoder.getEncodedData();
+        if (!jpegData) {
+            throw new Error('Encoding failed: no output data');
+        }
+
+        return {
+            sdr: jpegData,
+            gainMap: new Uint8Array(0),
         };
     } finally {
         encoder.destroy();

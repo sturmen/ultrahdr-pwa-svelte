@@ -196,11 +196,13 @@ describe('input-exif extractors', () => {
     const fromPng = extractExifApp1PayloadFromInput(png, 'a.png', 'image/png');
     const fromWebp = extractExifApp1PayloadFromInput(webp, 'a.webp', 'image/webp');
     const fromTiff = extractExifApp1PayloadFromInput(tiff, 'a.tiff', 'image/tiff');
+    const fromHif = extractExifApp1PayloadFromInput(new Uint8Array(fs.readFileSync(path.resolve(__dirname, '../../../media/test_hdr_no_gain_map.HIF'))), 'a.hif', 'image/heif');
 
     expect(fromJpeg).not.toBeNull();
     expect(fromPng).not.toBeNull();
     expect(fromWebp).not.toBeNull();
     expect(fromTiff).not.toBeNull();
+    expect(fromHif).not.toBeNull();
   });
 
   it('returns null and does not throw for malformed inputs', () => {

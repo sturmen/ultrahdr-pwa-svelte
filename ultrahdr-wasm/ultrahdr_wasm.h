@@ -91,6 +91,30 @@ EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_image(uhdr_wasm_encoder_t enc,
                                                 int width, int height, int stride);
 
 /**
+ * Set HDR intent image for API-0 flow with explicit image/color descriptor.
+ *
+ * \param enc encoder handle
+ * \param data pointer to packed image data
+ * \param width image width
+ * \param height image height
+ * \param stride row stride in bytes
+ * \param fmt uhdr_img_fmt_t value (e.g. UHDR_IMG_FMT_32bppRGBA1010102)
+ * \param cg uhdr_color_gamut_t value (e.g. UHDR_CG_BT_2100)
+ * \param ct uhdr_color_transfer_t value (e.g. UHDR_CT_PQ)
+ * \param range uhdr_color_range_t value (e.g. UHDR_CR_FULL_RANGE)
+ * \return 0 on success, negative error code on failure
+ */
+EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_intent_image(uhdr_wasm_encoder_t enc,
+                                                       const uint8_t* data,
+                                                       int width,
+                                                       int height,
+                                                       int stride,
+                                                       int fmt,
+                                                       int cg,
+                                                       int ct,
+                                                       int range);
+
+/**
  * Set pre-computed gain map image with metadata
  *
  * \param enc encoder handle

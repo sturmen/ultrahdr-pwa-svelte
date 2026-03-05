@@ -13,6 +13,7 @@
     ".webp",
     ".heic",
     ".heif",
+    ".hif",
     ".tif",
     ".tiff",
   ];
@@ -241,7 +242,7 @@
     type="file"
     id="file-upload"
     multiple
-    accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
+    accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.hif,.tif,.tiff"
     on:change={handleFiles}
     hidden
   />
@@ -258,7 +259,7 @@
         {isDesktopLayout ? "Drag and drop images, or click to upload." : "Tap to upload images."}
       </span>
     </div>
-    <p class="sub-text">Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF</p>
+    <p class="sub-text">Supports JPG, PNG, WebP, HEIC, HEIF, HIF, and TIFF</p>
   </label>
 </div>
 

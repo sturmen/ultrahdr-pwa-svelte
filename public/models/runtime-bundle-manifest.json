@@ -1,6 +1,6 @@
 {
-  "bundleVersion": "5.1.1|97c2ec6abd4f2b84|8379cb84b5ed8056",
-  "generatedAt": "2026-03-05T03:13:04.792Z",
+  "bundleVersion": "5.1.1|3b847d2c99ad7fef|1cdd841aeb63c91d",
+  "generatedAt": "2026-03-05T12:03:13.903Z",
   "requiredAssets": [
     {
       "id": "gmnet-realworld-global",
@@ -79,16 +79,16 @@
       "url": "assets/ultrahdr_wasm.js",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "runtime-script",
-      "byteLength": 66600,
-      "sha256": "d2422dbeaa19247ec0eb96d315d7f3677207016c1a9f058812c774e2bae0dc3d"
+      "byteLength": 66721,
+      "sha256": "558858ed98f9764a2902304b317f7edac894bd7652c08962cd9d6568ef1a14e0"
     },
     {
       "id": "ultrahdr-wasm-bin",
       "url": "assets/ultrahdr_wasm.wasm",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
-      "byteLength": 830023,
-      "sha256": "6f395f73f70c464dc6a83f71f7dc3e78d1e2f79a051e28df8bb3b01fa71370d0"
+      "byteLength": 830427,
+      "sha256": "7cd68306b3861018bcde6daaf070f5cace7512cb6836efb4a0a4be77f8725128"
     },
     {
       "id": "jpegli-wasm-js",

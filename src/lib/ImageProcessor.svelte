@@ -1825,7 +1825,7 @@
               type="file"
               id="add-files"
               multiple
-              accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.tif,.tiff"
+              accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.hif,.tif,.tiff"
               style="display: none;"
               on:change={handleAddFiles}
             />

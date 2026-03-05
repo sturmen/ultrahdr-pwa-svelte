@@ -397,6 +397,83 @@ export class UHDREncoder {
     }
 
     /**
+     * Set HDR intent image for API-0 flow (HDR-only UltraHDR encode).
+     * @param {Uint8Array} data - Packed image data
+     * @param {number} width - Image width
+     * @param {number} height - Image height
+     * @param {Object} descriptor - Color/image descriptor
+     * @param {number} [descriptor.strideBytes=0] - Row stride in bytes
+     * @param {'rgba1010102'|'rgbaf16'|'p010'} [descriptor.format='rgba1010102']
+     * @param {'bt2100'|'displayp3'|'bt709'} [descriptor.cg='bt2100']
+     * @param {'pq'|'hlg'|'linear'|'srgb'} [descriptor.ct='pq']
+     * @param {'full'|'limited'} [descriptor.range='full']
+     */
+    setHDRIntentImage(data, width, height, descriptor = {}) {
+        if (!this._initialized) {
+            throw new Error('Encoder not initialized. Call init() first.');
+        }
+
+        const format = descriptor.format || 'rgba1010102';
+        const cg = descriptor.cg || 'bt2100';
+        const ct = descriptor.ct || 'pq';
+        const range = descriptor.range || 'full';
+        const bytesPerPixel = format === 'rgbaf16' ? 8 : 4;
+        const strideBytes = descriptor.strideBytes || (width * bytesPerPixel);
+
+        const formatCodeMap = {
+            p010: 0,
+            rgba1010102: 5,
+            rgbaf16: 4,
+        };
+        const cgCodeMap = {
+            bt709: 0,
+            displayp3: 1,
+            bt2100: 2,
+        };
+        const ctCodeMap = {
+            linear: 0,
+            hlg: 1,
+            pq: 2,
+            srgb: 3,
+        };
+        const rangeCodeMap = {
+            limited: 0,
+            full: 1,
+        };
+
+        const formatCode = formatCodeMap[format];
+        const cgCode = cgCodeMap[cg];
+        const ctCode = ctCodeMap[ct];
+        const rangeCode = rangeCodeMap[range];
+
+        if (!Number.isInteger(formatCode) || format !== 'rgba1010102') {
+            throw new Error(`Unsupported HDR intent format for WASM encoder: ${format}`);
+        }
+        if (!Number.isInteger(cgCode) || !Number.isInteger(ctCode) || !Number.isInteger(rangeCode)) {
+            throw new Error(`Unsupported HDR intent color descriptor: cg=${cg} ct=${ct} range=${range}`);
+        }
+
+        const Module = getWasmModule();
+        const ptr = this._allocateImageData(data, width, height, strideBytes, 'HDRIntent');
+        try {
+            const result = Module._wasm_enc_set_hdr_intent_image(
+                this._encoder,
+                ptr.dataPtr,
+                width,
+                height,
+                ptr.stride,
+                formatCode,
+                cgCode,
+                ctCode,
+                rangeCode
+            );
+            this._checkResult(result, 'Failed to set HDR intent image');
+        } finally {
+            this._freeMemory(ptr.dataPtr);
+        }
+    }
+
+    /**
      * Set pre-computed gain map image with metadata
      * @param {ImageData|Uint8Array} data - Gain map image data (grayscale or RGBA)
      * @param {Object} metadata - Gain map metadata

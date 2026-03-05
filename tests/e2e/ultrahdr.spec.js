@@ -17,6 +17,7 @@ const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/gain_map_demo_image.jpg
 const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/exif_matrix.jpg');
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
+const HDR_INTENT_HIF = path.resolve(__dirname, '../../media/test_hdr_no_gain_map.HIF');
 const EXIF_MATRIX_FIXTURES = [
     path.resolve(__dirname, '../../media/exif_matrix.jpg'),
     path.resolve(__dirname, '../../media/exif_matrix.png'),
@@ -871,6 +872,21 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(hasGainMapXMP(result)).toBe(true);
         });
 
+        test('should encode HDR-intent HIF input into UltraHDR JPEG', async ({ page }) => {
+            await page.goto('/');
+            await uploadFiles(page, [HDR_INTENT_HIF]);
+            await waitForProcessing(page);
+
+            const resultCards = page.locator('.result-card');
+            await expect(resultCards).toHaveCount(1);
+            await expect(page.locator('.filename')).toContainText('test_hdr_no_gain_map');
+
+            const result = await downloadFirstResult(page);
+            expect(result[0]).toBe(0xFF);
+            expect(result[1]).toBe(0xD8);
+            expect(hasGainMapXMP(result)).toBe(true);
+        });
+
         test('should keep HEIC gain map bitmap close to source after processing', async ({ page, browserName }) => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-compare-${browserName}-`));
 
@@ -1238,7 +1254,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 ...expectedStartupRuntimePolicyForProject(testInfo.project.name),
             });
 
-            await expect(page.getByText('Supports JPG, PNG, WebP, HEIC, HEIF, and TIFF')).toBeVisible();
+            await expect(page.getByText('Supports JPG, PNG, WebP, HEIC, HEIF, HIF, and TIFF')).toBeVisible();
         });
     });
 });

@@ -167,7 +167,7 @@ export default defineConfig({
             files: [
               {
                 name: 'file',
-                accept: ['image/*', '.heic', '.heif', '.tif', '.tiff']
+                accept: ['image/*', '.heic', '.heif', '.hif', '.tif', '.tiff']
               }
             ]
           }

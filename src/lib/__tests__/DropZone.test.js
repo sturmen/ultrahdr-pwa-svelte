@@ -27,6 +27,7 @@ describe('DropZone - file eligibility helpers', () => {
     '.webp',
     '.heic',
     '.heif',
+    '.hif',
     '.tif',
     '.tiff',
   ];
@@ -45,6 +46,7 @@ describe('DropZone - file eligibility helpers', () => {
       webp: 'image/webp',
       heic: 'image/heic',
       heif: 'image/heif',
+      hif: 'image/heif',
       tif: 'image/tiff',
       tiff: 'image/tiff',
     };
@@ -55,12 +57,14 @@ describe('DropZone - file eligibility helpers', () => {
     expect(isEligibleFile('test.jpg')).toBe(true);
     expect(isEligibleFile('test.PNG')).toBe(true);
     expect(isEligibleFile('test.HEIC')).toBe(true);
+    expect(isEligibleFile('test.HIF')).toBe(true);
     expect(isEligibleFile('test.pdf')).toBe(false);
   });
 
   it('maps known MIME types and falls back for unknown types', () => {
     expect(getMimeType('test.jpg')).toBe('image/jpeg');
     expect(getMimeType('test.heif')).toBe('image/heif');
+    expect(getMimeType('test.hif')).toBe('image/heif');
     expect(getMimeType('test.unknown')).toBe('application/octet-stream');
   });
 });

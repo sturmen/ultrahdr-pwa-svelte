@@ -131,7 +131,8 @@ function isHeifInput(mimeType, extension) {
         mimeType === 'image/heic' ||
         mimeType === 'image/heif' ||
         extension === '.heic' ||
-        extension === '.heif'
+        extension === '.heif' ||
+        extension === '.hif'
     );
 }
 

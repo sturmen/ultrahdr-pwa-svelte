@@ -170,6 +170,7 @@ describe('UHDREncoder Class', () => {
       _wasm_release_encoder: vi.fn(),
       _wasm_enc_set_compressed_base_image: vi.fn(() => 0),
       _wasm_enc_set_exif_data: vi.fn(() => 0),
+      _wasm_enc_set_hdr_intent_image: vi.fn(() => 0),
       _wasm_enc_set_gainmap: vi.fn(() => 0),
       _wasm_encode: vi.fn(() => 0),
       _wasm_get_encoded_data: vi.fn(() => 0),
@@ -286,5 +287,35 @@ describe('UHDREncoder Class', () => {
     const { UHDREncoder } = await import('../ultrahdr-wasm.js');
     const encoder = new UHDREncoder();
     expect(() => encoder.setExifData(new Uint8Array([1, 2, 3]))).toThrow('Encoder not initialized');
+  });
+
+  it('should map HDR-intent image metadata to API-0 RGBA1010102 BT2100/PQ/FULL arguments', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    // Two pixels packed RGBA1010102 LE
+    const packed = new Uint8Array([0xff, 0x03, 0x00, 0xc0, 0x00, 0x00, 0xf0, 0x3f]);
+    mockModule._malloc.mockReturnValueOnce(0x2000);
+
+    encoder.setHDRIntentImage(packed, 2, 1, {
+      strideBytes: 8,
+      format: 'rgba1010102',
+      cg: 'bt2100',
+      ct: 'pq',
+      range: 'full',
+    });
+
+    expect(mockModule._wasm_enc_set_hdr_intent_image).toHaveBeenCalledWith(
+      mockEncoderHandle,
+      0x2000,
+      2,
+      1,
+      64,
+      5, // UHDR_IMG_FMT_32bppRGBA1010102
+      2, // UHDR_CG_BT_2100
+      2, // UHDR_CT_PQ
+      1  // UHDR_CR_FULL_RANGE
+    );
   });
 });
