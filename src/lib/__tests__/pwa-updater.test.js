@@ -8,6 +8,22 @@ import {
   createDefaultPwaUpdateState,
   createPwaUpdateCoordinator,
 } from '../pwa-updater.js';
+import { ensureBundleReady, getBundleStatus } from '../offline-runtime-bundle.js';
+
+vi.mock('../offline-runtime-bundle.js', () => ({
+  ensureBundleReady: vi.fn(async () => ({
+    ready: true,
+    state: 'READY',
+    validatedAtMs: 123,
+    diagnostics: null,
+  })),
+  getBundleStatus: vi.fn(() => ({
+    ready: false,
+    state: 'EMPTY',
+    validatedAtMs: null,
+    diagnostics: null,
+  })),
+}));
 
 const importOriginal = globalThis.__dynamicImport__ || globalThis.__import__;
 
@@ -87,6 +103,8 @@ describe('pwa updater coordinator', () => {
     expect(state.updateAvailable).toBe(false);
     expect(state.pendingUntilIdle).toBe(false);
     expect(state.applying).toBe(false);
+    expect(state.bundleReady).toBe(false);
+    expect(state.bundleState).toBe('EMPTY');
   });
 
   it('checks for updates on startup/focus/visibility/online and every 30m', async () => {
@@ -106,6 +124,7 @@ describe('pwa updater coordinator', () => {
     await flushPromises();
 
     expect(registerSWMock).toHaveBeenCalled();
+    expect(ensureBundleReady).toHaveBeenCalled();
     expect(registrationMock.update).toHaveBeenCalledTimes(1); // startup
 
     listeners.get('focus')?.();
@@ -118,6 +137,7 @@ describe('pwa updater coordinator', () => {
     await flushPromises();
 
     expect(registrationMock.update).toHaveBeenCalledTimes(4);
+    expect(ensureBundleReady).toHaveBeenCalledTimes(2);
     expect(intervalCallbacks).toHaveLength(1);
 
     await intervalCallbacks[0]();
@@ -126,6 +146,41 @@ describe('pwa updater coordinator', () => {
     coordinator.dispose();
     expect(clearIntervalSpy).toHaveBeenCalled();
     expect(snapshots.length).toBeGreaterThan(0);
+  });
+
+  it('hydrates bundle status from cache snapshot before async validation', async () => {
+    getBundleStatus.mockReturnValueOnce({
+      ready: true,
+      state: 'READY',
+      validatedAtMs: 999,
+      diagnostics: null,
+    });
+    ensureBundleReady.mockResolvedValueOnce({
+      ready: true,
+      state: 'READY',
+      validatedAtMs: 1000,
+      diagnostics: null,
+    });
+
+    globalThis.__dynamicImport__ = vi.fn(async (specifier) => {
+      if (specifier === 'virtual:pwa-register') {
+        return { registerSW: registerSWMock };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const snapshots = [];
+    const coordinator = createPwaUpdateCoordinator({
+      onStateChange: (state) => snapshots.push(state),
+      isBusy: () => false,
+    });
+    await flushPromises();
+
+    const firstWithBundle = snapshots.find((entry) => entry.bundleState === 'READY');
+    expect(firstWithBundle).toBeTruthy();
+    expect(firstWithBundle.bundleReady).toBe(true);
+    expect(firstWithBundle.bundleLastValidatedAt).toBe(999);
+    coordinator.dispose();
   });
 
   it('defers apply while busy and applies when idle', async () => {

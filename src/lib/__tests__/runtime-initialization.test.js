@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   RUNTIME_INIT_ERROR_CODES,
   RUNTIME_INIT_STEP_ORDER,
@@ -65,6 +65,10 @@ function createRuntimeWithGpuAndWebGl() {
 }
 
 describe('runtime initialization', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('does not invoke capability probing and emits no probe attempt payloads', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     const resolveGainMapCapability = vi.fn();
@@ -447,5 +451,52 @@ describe('runtime initialization', () => {
     expect(result.resolvedExecutionProvider).toBe('webgpu');
     expect(result.gmnetCapability).toBeNull();
     expect(session.resolveGainMapCapability).not.toHaveBeenCalled();
+  });
+
+  it('times out a hanging offline provider init attempt and falls back to the next provider', async () => {
+    vi.useFakeTimers();
+
+    const runtime = createRuntimeWithGpuAndWebGl();
+    runtime.navigator.onLine = false;
+    runtime.document = undefined;
+    runtime.OffscreenCanvas = undefined;
+
+    const init = vi.fn(async (_variant, options = {}) => {
+      const provider = options.forceExecutionProviders?.[0] || 'webgpu';
+      session.activeExecutionProvider = provider;
+
+      if (provider === 'webgpu') {
+        await new Promise(() => {});
+      }
+    });
+    const run = vi.fn(async () => createSmokeOutputRgba());
+    const session = {
+      init,
+      run,
+      resolveGainMapCapability: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: null,
+    };
+
+    const initPromise = initializeRuntime({
+      runtime,
+      sessionFactory: () => session,
+      loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      gmnetSessionInitTimeoutMs: 50,
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await initPromise;
+
+    expect(init).toHaveBeenNthCalledWith(1, 'realworld', {
+      forceExecutionProviders: ['webgpu'],
+      forceReload: true,
+    });
+    expect(init).toHaveBeenNthCalledWith(2, 'realworld', {
+      forceExecutionProviders: ['wasm'],
+      forceReload: true,
+    });
+    expect(result.resolvedExecutionProvider).toBe('wasm');
   });
 });

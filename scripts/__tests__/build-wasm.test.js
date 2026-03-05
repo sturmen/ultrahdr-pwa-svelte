@@ -113,6 +113,15 @@ describe('ultrahdr wasm dimension guard', () => {
     expect(swContent).toMatch(/isUltraHdrWasmAssetUrl/);
   });
 
+  it('supports runtime bundle prepare/validate/repair message commands in the service worker', () => {
+    const swPath = path.resolve(process.cwd(), 'src/sw.js');
+    const swContent = fs.readFileSync(swPath, 'utf8');
+    expect(swContent).toMatch(/UHDR_PREPARE_BUNDLE/);
+    expect(swContent).toMatch(/UHDR_VALIDATE_BUNDLE/);
+    expect(swContent).toMatch(/UHDR_REPAIR_BUNDLE/);
+    expect(swContent).toContain("addEventListener('message'");
+  });
+
   it('documents lossless jpegtran wasm rotation behavior in README', () => {
     const readmePath = path.resolve(process.cwd(), 'README.md');
     const readmeContent = fs.readFileSync(readmePath, 'utf8');
@@ -126,10 +135,25 @@ describe('ultrahdr wasm dimension guard', () => {
     expect(scriptContent).toMatch(/CMAKE_POLICY_VERSION_MINIMUM=3\.5/);
   });
 
+  it('retries jpegtran wasm build after clearing emscripten cache on failure', () => {
+    const scriptPath = path.resolve(process.cwd(), 'scripts/build-jpegtran-wasm.js');
+    const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+    expect(scriptContent).toMatch(/emcc --clear-cache/);
+    expect(scriptContent).toMatch(/Retrying jpegtran WASM build/);
+    expect(scriptContent).toMatch(/retryPrefix/);
+    expect(scriptContent).toMatch(/emcmake cmake/);
+  });
+
   it('configures jpegtran wasm to avoid try_compile executable linking under emscripten', () => {
     const cmakePath = path.resolve(process.cwd(), 'jpegtran-wasm/CMakeLists.txt');
     const cmakeContent = fs.readFileSync(cmakePath, 'utf8');
     expect(cmakeContent).toMatch(/CMAKE_TRY_COMPILE_TARGET_TYPE\s+STATIC_LIBRARY/);
     expect(cmakeContent).toMatch(/EMSCRIPTEN_CACHE_PATH/);
+  });
+
+  it('passes UHDR_BUILD_DEPS=1 to emcmake configure to avoid host JPEG dependency failures', () => {
+    const scriptPath = path.resolve(process.cwd(), 'scripts/build-wasm.js');
+    const scriptContent = fs.readFileSync(scriptPath, 'utf8');
+    expect(scriptContent).toMatch(/-DUHDR_BUILD_DEPS=1/);
   });
 });

@@ -24,10 +24,158 @@ const RUNTIME_CACHE_PREFIX = 'uhdr-runtime';
 const WASM_ASSET_CACHE_PREFIX = 'uhdr-wasm-assets';
 const LIBHEIF_ASSET_CACHE_PREFIX = 'uhdr-libheif-assets';
 const AI_MODEL_CACHE_PREFIX = 'uhdr-ai-models';
+const OFFLINE_BUNDLE_MANIFEST_PATH = 'models/runtime-bundle-manifest.json';
+const UHDR_PREPARE_BUNDLE = 'UHDR_PREPARE_BUNDLE';
+const UHDR_VALIDATE_BUNDLE = 'UHDR_VALIDATE_BUNDLE';
+const UHDR_REPAIR_BUNDLE = 'UHDR_REPAIR_BUNDLE';
 const RUNTIME_CACHE = `${RUNTIME_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const WASM_ASSET_CACHE = `${WASM_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const LIBHEIF_ASSET_CACHE = `${LIBHEIF_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const AI_MODEL_CACHE = `${AI_MODEL_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
+
+function resolveBasePath() {
+    const scope = self.registration?.scope || self.location?.origin || '/';
+    const scopeUrl = new URL(scope, self.location.origin);
+    return scopeUrl.pathname.endsWith('/') ? scopeUrl.pathname : `${scopeUrl.pathname}/`;
+}
+
+function resolveRuntimeBundleAssetUrl(assetPath) {
+    const normalized = String(assetPath || '').replace(/^\/+/, '');
+    const absolute = new URL(`${resolveBasePath()}${normalized}`, self.location.origin);
+    return absolute.href;
+}
+
+function createRuntimeBundleDigest(manifest) {
+    const payload = JSON.stringify(manifest || {});
+    let hash = 2166136261;
+    for (let index = 0; index < payload.length; index += 1) {
+        hash ^= payload.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `fnv32:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+async function sha256HexFromBuffer(buffer) {
+    if (!self.crypto?.subtle?.digest) {
+        throw new Error('crypto.subtle.digest is unavailable in service worker runtime.');
+    }
+    const digest = await self.crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+async function loadRuntimeBundleManifest() {
+    const manifestUrl = resolveRuntimeBundleAssetUrl(OFFLINE_BUNDLE_MANIFEST_PATH);
+    const response = await fetch(manifestUrl, { credentials: 'same-origin' });
+    if (!response?.ok) {
+        throw new Error(`Failed to load runtime bundle manifest (${response?.status || 'unknown'}).`);
+    }
+    const manifest = await response.json();
+    if (
+        !manifest
+        || typeof manifest !== 'object'
+        || typeof manifest.bundleVersion !== 'string'
+        || !Array.isArray(manifest.requiredAssets)
+    ) {
+        throw new Error('Runtime bundle manifest payload is invalid.');
+    }
+    return manifest;
+}
+
+async function validateRuntimeBundleFromManifest(manifest) {
+    const missingAssets = [];
+    const mismatchedAssets = [];
+
+    for (const requiredAsset of manifest.requiredAssets) {
+        const cache = await caches.open(requiredAsset.cacheName);
+        const assetUrl = resolveRuntimeBundleAssetUrl(requiredAsset.url);
+        const response = await cache.match(assetUrl);
+        if (!response) {
+            missingAssets.push({ id: requiredAsset.id, url: requiredAsset.url });
+            continue;
+        }
+
+        const bytes = await response.arrayBuffer();
+        if (
+            Number.isFinite(Number(requiredAsset.byteLength))
+            && Number(requiredAsset.byteLength) !== bytes.byteLength
+        ) {
+            mismatchedAssets.push({ id: requiredAsset.id, url: requiredAsset.url, reason: 'byteLength' });
+            continue;
+        }
+
+        const digest = await sha256HexFromBuffer(bytes);
+        if (digest !== requiredAsset.sha256) {
+            mismatchedAssets.push({ id: requiredAsset.id, url: requiredAsset.url, reason: 'sha256' });
+        }
+    }
+
+    const ready = missingAssets.length === 0 && mismatchedAssets.length === 0;
+    const state = ready
+        ? 'READY'
+        : mismatchedAssets.length > 0
+            ? 'CORRUPT'
+            : 'EMPTY';
+    return {
+        ready,
+        blocked: false,
+        state,
+        bundleVersion: manifest.bundleVersion,
+        validatedAtMs: Date.now(),
+        manifestDigest: createRuntimeBundleDigest(manifest),
+        diagnostics: {
+            missingAssetCount: missingAssets.length,
+            mismatchedAssetCount: mismatchedAssets.length,
+            missingAssetIds: missingAssets.map((asset) => asset.id),
+            mismatchedAssetIds: mismatchedAssets.map((asset) => asset.id),
+        },
+    };
+}
+
+async function prepareRuntimeBundleInSw({ force = false } = {}) {
+    const manifest = await loadRuntimeBundleManifest();
+    if (!force) {
+        const preValidation = await validateRuntimeBundleFromManifest(manifest);
+        if (preValidation.ready) {
+            return preValidation;
+        }
+    }
+
+    for (const requiredAsset of manifest.requiredAssets) {
+        const assetUrl = resolveRuntimeBundleAssetUrl(requiredAsset.url);
+        const response = await fetch(assetUrl, { credentials: 'same-origin' });
+        if (!response?.ok) {
+            return {
+                ready: false,
+                blocked: false,
+                state: 'FAILED',
+                bundleVersion: manifest.bundleVersion,
+                validatedAtMs: Date.now(),
+                manifestDigest: createRuntimeBundleDigest(manifest),
+                diagnostics: {
+                    failedAssetId: requiredAsset.id,
+                    failedAssetUrl: requiredAsset.url,
+                    failedAssetStatus: response?.status || null,
+                },
+            };
+        }
+        const cache = await caches.open(requiredAsset.cacheName);
+        await cache.put(assetUrl, response.clone());
+    }
+
+    return validateRuntimeBundleFromManifest(manifest);
+}
+
+function postMessageResponse(event, payload) {
+    if (event.ports?.[0]) {
+        event.ports[0].postMessage(payload);
+        return;
+    }
+    if (event.source && typeof event.source.postMessage === 'function') {
+        event.source.postMessage(payload);
+    }
+}
 
 function isUltraHdrWasmAssetUrl(url) {
     return /\/assets\/(ultrahdr_wasm|jpegli_wasm|jpegtran_wasm)\.(js|wasm)$/.test(url.pathname);
@@ -209,6 +357,53 @@ function redirectToApp(url, params = {}) {
     });
     return Response.redirect(redirectUrl.href, 303);
 }
+
+self.addEventListener('message', (event) => {
+    const message = event?.data;
+    if (!message || typeof message !== 'object') {
+        return;
+    }
+
+    const messageType = message.type;
+    const messageId = message.messageId || null;
+    if (
+        messageType !== UHDR_PREPARE_BUNDLE
+        && messageType !== UHDR_VALIDATE_BUNDLE
+        && messageType !== UHDR_REPAIR_BUNDLE
+    ) {
+        return;
+    }
+
+    event.waitUntil((async () => {
+        try {
+            let result;
+            if (messageType === UHDR_VALIDATE_BUNDLE) {
+                const manifest = await loadRuntimeBundleManifest();
+                result = await validateRuntimeBundleFromManifest(manifest);
+            } else if (messageType === UHDR_REPAIR_BUNDLE) {
+                result = await prepareRuntimeBundleInSw({ force: true });
+            } else {
+                result = await prepareRuntimeBundleInSw({ force: false });
+            }
+
+            postMessageResponse(event, {
+                type: `${messageType}_RESULT`,
+                messageId,
+                ok: true,
+                result,
+            });
+        } catch (error) {
+            postMessageResponse(event, {
+                type: `${messageType}_RESULT`,
+                messageId,
+                ok: false,
+                error: {
+                    message: String(error?.message || error),
+                },
+            });
+        }
+    })());
+});
 
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);

@@ -58,6 +58,13 @@ export function buildJpegtranWasm() {
             EMCC_SKIP_SANITY_CHECK: '1'
         }
     };
+    const retryExecOptions = {
+        ...execOptions,
+        env: {
+            ...process.env,
+            EM_CACHE: emCachePath
+        }
+    };
     try {
         const envPrefix = `EM_CACHE="${emCachePath}" EMCC_SKIP_SANITY_CHECK=1`;
         execSync(
@@ -66,8 +73,21 @@ export function buildJpegtranWasm() {
         );
         execSync(`${envPrefix} emmake make -j4`, execOptions);
     } catch (e) {
-        console.error('WASM build failed:', e);
-        throw e;
+        console.warn('Initial jpegtran WASM build failed; attempting one cache repair retry...');
+        try {
+            const clearCachePrefix = `EM_CACHE="${emCachePath}"`;
+            execSync(`${clearCachePrefix} emcc --clear-cache`, retryExecOptions);
+            const retryPrefix = `EM_CACHE="${emCachePath}"`;
+            console.log('Retrying jpegtran WASM build after clearing emscripten cache...');
+            execSync(
+                `${retryPrefix} emcmake cmake "${WASM_DIR}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5`,
+                retryExecOptions
+            );
+            execSync(`${retryPrefix} emmake make -j4`, retryExecOptions);
+        } catch (retryError) {
+            console.error('WASM build failed:', retryError);
+            throw retryError;
+        }
     }
 
     try {

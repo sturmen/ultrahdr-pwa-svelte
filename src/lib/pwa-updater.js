@@ -1,3 +1,4 @@
+import { ensureBundleReady, getBundleStatus } from './offline-runtime-bundle.js';
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 function now() {
@@ -25,6 +26,10 @@ export function createDefaultPwaUpdateState() {
     pendingUntilIdle: false,
     applying: false,
     offlineReady: false,
+    bundleReady: false,
+    bundleState: 'EMPTY',
+    bundleError: null,
+    bundleLastValidatedAt: null,
     lastCheckAt: null,
     lastError: null,
   };
@@ -48,6 +53,36 @@ export function createPwaUpdateCoordinator({
   function patchState(changes) {
     state = { ...state, ...changes };
     emit();
+  }
+
+  function patchBundleState(bundleResult) {
+    if (!bundleResult || typeof bundleResult !== 'object') {
+      return;
+    }
+    patchState({
+      bundleReady: bundleResult.ready === true,
+      bundleState: typeof bundleResult.state === 'string' ? bundleResult.state : 'EMPTY',
+      bundleError: bundleResult.error || null,
+      bundleLastValidatedAt: Number.isFinite(Number(bundleResult.validatedAtMs))
+        ? Math.floor(Number(bundleResult.validatedAtMs))
+        : null,
+    });
+  }
+
+  async function syncBundleReadiness() {
+    try {
+      const result = await ensureBundleReady({ runtime: globalThis });
+      patchBundleState(result);
+      return result;
+    } catch (error) {
+      patchBundleState({
+        ready: false,
+        state: 'FAILED',
+        validatedAtMs: null,
+        error: String(error?.message || error),
+      });
+      return null;
+    }
   }
 
   async function checkForUpdates() {
@@ -103,6 +138,7 @@ export function createPwaUpdateCoordinator({
     };
     const onOnline = () => {
       void checkForUpdates();
+      void syncBundleReadiness();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -129,6 +165,8 @@ export function createPwaUpdateCoordinator({
       return;
     }
 
+    patchBundleState(getBundleStatus(globalThis));
+
     try {
       const { registerSW } = await loadRegisterSwModule();
       updateSw = registerSW({
@@ -141,6 +179,7 @@ export function createPwaUpdateCoordinator({
           registration = swRegistration || null;
           scheduleUpdateChecks();
           void checkForUpdates();
+          void syncBundleReadiness();
         },
         onRegisterError(error) {
           patchState({ lastError: String(error?.message || error) });

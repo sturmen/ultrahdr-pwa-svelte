@@ -11,6 +11,9 @@ const DEFAULT_SMOKE_IMAGE_WIDTH = 128;
 const DEFAULT_SMOKE_IMAGE_HEIGHT = 128;
 const SMOKE_OUTPUT_MIN_DYNAMIC_RANGE = 8;
 const SMOKE_OUTPUT_MIN_STD_DEV = 1.5;
+const DEFAULT_GMNET_SESSION_INIT_TIMEOUT_MS = 45_000;
+const DEFAULT_GMNET_SMOKE_RUN_TIMEOUT_MS = 30_000;
+const OFFLINE_RUNTIME_STEP_TIMEOUT_MS = 12_000;
 
 export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'onnx-load',
@@ -38,6 +41,9 @@ export const RUNTIME_INIT_ERROR_CODES = Object.freeze({
   PROVIDER_FALLBACK_EXHAUSTED: 'RUNTIME_INIT_PROVIDER_FALLBACK_EXHAUSTED',
   SMOKE_ASSET_FAILED: 'RUNTIME_INIT_SMOKE_ASSET_FAILED',
   SMOKE_INFERENCE_FAILED: 'RUNTIME_INIT_SMOKE_INFERENCE_FAILED',
+  OFFLINE_BUNDLE_NOT_READY: 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY',
+  BUNDLE_VALIDATION_FAILED: 'RUNTIME_INIT_BUNDLE_VALIDATION_FAILED',
+  BUNDLE_REPAIR_FAILED: 'RUNTIME_INIT_BUNDLE_REPAIR_FAILED',
 });
 
 function normalizeExecutionProvider(value) {
@@ -258,6 +264,64 @@ function emitStepProgress(onProgress, stepId, status, note, payload = {}) {
   });
 }
 
+function resolveStepTimeoutMs(timeoutMs, runtime = globalThis, defaultTimeoutMs = 0) {
+  const numericTimeoutMs = Number(timeoutMs);
+  if (Number.isFinite(numericTimeoutMs) && numericTimeoutMs > 0) {
+    return Math.max(1, Math.floor(numericTimeoutMs));
+  }
+
+  const normalizedDefaultTimeoutMs = Number.isFinite(defaultTimeoutMs) && defaultTimeoutMs > 0
+    ? Math.max(1, Math.floor(defaultTimeoutMs))
+    : 0;
+  if (normalizedDefaultTimeoutMs <= 0) {
+    return 0;
+  }
+
+  if (runtime?.navigator?.onLine === false) {
+    return Math.min(normalizedDefaultTimeoutMs, OFFLINE_RUNTIME_STEP_TIMEOUT_MS);
+  }
+  return normalizedDefaultTimeoutMs;
+}
+
+function runWithStepTimeout(fn, stepId, timeoutMs = 0) {
+  const normalizedTimeoutMs = Number(timeoutMs);
+  if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
+    return Promise.resolve().then(fn);
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      const timeoutError = new Error(`${stepId} timed out after ${Math.floor(normalizedTimeoutMs)}ms.`);
+      timeoutError.name = 'RuntimeInitializationStepTimeoutError';
+      reject(timeoutError);
+    }, Math.floor(normalizedTimeoutMs));
+
+    Promise.resolve()
+      .then(fn)
+      .then((result) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
+}
+
 async function runStep({
   stepId,
   runningNote,
@@ -267,10 +331,11 @@ async function runStep({
   errorCode,
   userMessage,
   fn,
+  timeoutMs = 0,
 }) {
   emitStepProgress(onProgress, stepId, 'running', runningNote);
   try {
-    const result = await fn();
+    const result = await runWithStepTimeout(fn, stepId, timeoutMs);
     emitStepProgress(onProgress, stepId, 'passed', successNote || runningNote);
     return result;
   } catch (cause) {
@@ -360,6 +425,8 @@ export async function initializeRuntime({
   smokeBypassProviders = [],
   modelVariant = DEFAULT_GMNET_MODEL_VARIANT,
   gmnetCapabilityHintsByProvider = {},
+  gmnetSessionInitTimeoutMs,
+  gmnetSmokeRunTimeoutMs,
 } = {}) {
   void gmnetCapabilityHintsByProvider;
 
@@ -373,6 +440,16 @@ export async function initializeRuntime({
   let resolvedExecutionProvider = null;
   let gmnetCapability = null;
   const smokeBypassProviderSet = new Set(normalizeExecutionProviderList(smokeBypassProviders));
+  const gmnetSessionInitStepTimeoutMs = resolveStepTimeoutMs(
+    gmnetSessionInitTimeoutMs,
+    runtime,
+    DEFAULT_GMNET_SESSION_INIT_TIMEOUT_MS,
+  );
+  const gmnetSmokeRunStepTimeoutMs = resolveStepTimeoutMs(
+    gmnetSmokeRunTimeoutMs,
+    runtime,
+    DEFAULT_GMNET_SMOKE_RUN_TIMEOUT_MS,
+  );
 
   function normalizeAttemptFailure(error, provider) {
     const normalizedProvider = normalizeExecutionProvider(provider);
@@ -545,6 +622,7 @@ export async function initializeRuntime({
         runtime,
         errorCode: RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
         userMessage: 'GMNet session initialization failed.',
+        timeoutMs: gmnetSessionInitStepTimeoutMs,
         fn: async () => {
           await session.init(modelVariant, {
             forceExecutionProviders: providerRequest,
@@ -596,6 +674,7 @@ export async function initializeRuntime({
           runtime,
           errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
           userMessage: 'GMNet smoke test failed.',
+          timeoutMs: gmnetSmokeRunStepTimeoutMs,
           fn: async () => {
             if (forceSmokeFailure) {
               throw createInitializationError({

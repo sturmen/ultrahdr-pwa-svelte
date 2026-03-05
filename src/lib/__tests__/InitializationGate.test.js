@@ -195,4 +195,29 @@ describe('InitializationGate', () => {
       screen.queryByTestId('runtime-step-gmnet-smoke-run-attempts'),
     ).not.toBeInTheDocument();
   });
+
+  it('renders dedicated offline bundle blocked guidance for hard-block failures', () => {
+    render(InitializationGate, {
+      props: {
+        state: 'failed',
+        steps: createSteps().map((step) => ({
+          ...step,
+          status: step.id === 'onnx-load' ? 'failed' : step.status,
+        })),
+        failure: {
+          stepId: 'onnx-load',
+          stepLabel: 'Load ONNX Runtime',
+          errorCode: 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY',
+          userMessage: 'Offline startup is blocked until the runtime bundle is prepared online.',
+          diagnostics: {
+            bundleState: 'EMPTY',
+          },
+        },
+      },
+    });
+
+    expect(screen.getByTestId('runtime-init-offline-bundle-blocked')).toHaveTextContent(
+      /connect to the internet/i,
+    );
+  });
 });

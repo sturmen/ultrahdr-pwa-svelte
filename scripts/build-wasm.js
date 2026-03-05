@@ -116,8 +116,9 @@ function buildWasm() {
     }
     fs.mkdirSync(buildDir, { recursive: true });
 
-    // Configure with emcmake
-    runCommand(`emcmake cmake -DCMAKE_BUILD_TYPE=Release ..`, { cwd: buildDir });
+    // Configure with emcmake. UHDR_BUILD_DEPS=1 ensures libultrahdr builds jpeg deps
+    // under Emscripten instead of relying on host sysroot JPEG availability.
+    runCommand(`emcmake cmake -DCMAKE_BUILD_TYPE=Release -DUHDR_BUILD_DEPS=1 ..`, { cwd: buildDir });
 
     // Build
     runCommand(`emmake make -j4`, { cwd: buildDir });

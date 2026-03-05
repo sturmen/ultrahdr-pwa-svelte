@@ -48,6 +48,10 @@ global.fetch = vi.fn((url) => {
     ok: true,
     status: 200,
     arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+    json: () => Promise.resolve({
+      bundleVersion: 'test|test-app-version|test-wasm-version',
+      requiredAssets: [],
+    }),
     text: () => Promise.resolve(''),
   });
 });

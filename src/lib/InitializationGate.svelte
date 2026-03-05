@@ -72,6 +72,8 @@
   $: diagnosticsJson = failure
     ? JSON.stringify(buildDiagnosticsPayload(), null, 2)
     : "";
+  $: offlineBundleBlocked =
+    failure?.errorCode === "RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY";
 </script>
 
 <section
@@ -129,6 +131,15 @@
           failure.message ||
           "Runtime initialization failed."}
       </p>
+      {#if offlineBundleBlocked}
+        <p
+          class="hint"
+          data-testid="runtime-init-offline-bundle-blocked"
+        >
+          Connect to the internet to prepare required runtime assets, then retry
+          initialization.
+        </p>
+      {/if}
       <p class="hint">
         Retry initialization. If the issue persists, copy diagnostics and
         include them in a bug report.

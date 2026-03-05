@@ -3,6 +3,10 @@ import {
   PIPELINE_PROGRESS_EVENT,
   PIPELINE_STATE_KEY,
 } from './pipeline-telemetry.js';
+import {
+  ensureBundleReady,
+  setBundleProviderHint,
+} from './offline-runtime-bundle.js';
 
 const WORKER_SUPPORT_ERROR = 'Processing worker is unavailable in this environment.';
 const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
@@ -931,6 +935,31 @@ export async function initializeRuntime(options = {}) {
     }
   }
   const allowMainThreadFallback = isMainThreadFallbackEnabled(options);
+  const bundleReadiness = await ensureBundleReady({ runtime: globalThis });
+
+  if (!bundleReadiness?.ready) {
+    const blocked = bundleReadiness?.blocked === true;
+    const error = new Error(
+      blocked
+        ? 'Runtime bundle is not ready for offline startup.'
+        : 'Runtime bundle preparation failed.',
+    );
+    error.name = 'RuntimeInitializationError';
+    error.code = blocked
+      ? 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY'
+      : 'RUNTIME_INIT_BUNDLE_REPAIR_FAILED';
+    error.stepId = 'onnx-load';
+    error.userMessage = blocked
+      ? 'Offline startup is blocked until the runtime bundle is prepared online.'
+      : 'Runtime bundle preparation failed. Retry initialization while online.';
+    error.diagnostics = {
+      bundleState: bundleReadiness?.state || null,
+      bundleVersion: bundleReadiness?.bundleVersion || null,
+      bundleValidatedAtMs: bundleReadiness?.validatedAtMs || null,
+      bundleDiagnostics: bundleReadiness?.diagnostics || null,
+    };
+    throw error;
+  }
 
   if (forceRetry) {
     resetRuntimeInitializationState();
@@ -967,9 +996,13 @@ export async function initializeRuntime(options = {}) {
         globalThis,
         startupCapabilityCacheTtlMs,
       );
+      await setBundleProviderHint(runtimeMetadata.resolvedExecutionProvider, globalThis);
       return {
         ready: true,
         runtimeMode: resolveRuntimeMode(runtimeMetadata.resolvedExecutionProvider, true),
+        bundleState: bundleReadiness.state || null,
+        bundleVersion: bundleReadiness.bundleVersion || null,
+        bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
         ...runtimeMetadata,
       };
     }
@@ -980,9 +1013,13 @@ export async function initializeRuntime(options = {}) {
       globalThis,
       startupCapabilityCacheTtlMs,
     );
+    await setBundleProviderHint(runtimeMetadata?.resolvedExecutionProvider, globalThis);
     return {
       ready: true,
       runtimeMode: resolveRuntimeMode(runtimeMetadata?.resolvedExecutionProvider, false),
+      bundleState: bundleReadiness.state || null,
+      bundleVersion: bundleReadiness.bundleVersion || null,
+      bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
       ...runtimeMetadata,
     };
   } finally {
