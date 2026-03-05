@@ -28,6 +28,7 @@ const OFFLINE_BUNDLE_MANIFEST_PATH = 'models/runtime-bundle-manifest.json';
 const UHDR_PREPARE_BUNDLE = 'UHDR_PREPARE_BUNDLE';
 const UHDR_VALIDATE_BUNDLE = 'UHDR_VALIDATE_BUNDLE';
 const UHDR_REPAIR_BUNDLE = 'UHDR_REPAIR_BUNDLE';
+const UHDR_GET_APP_ASSET_VERSION = 'UHDR_GET_APP_ASSET_VERSION';
 const RUNTIME_CACHE = `${RUNTIME_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const WASM_ASSET_CACHE = `${WASM_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
 const LIBHEIF_ASSET_CACHE = `${LIBHEIF_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
@@ -370,6 +371,7 @@ self.addEventListener('message', (event) => {
         messageType !== UHDR_PREPARE_BUNDLE
         && messageType !== UHDR_VALIDATE_BUNDLE
         && messageType !== UHDR_REPAIR_BUNDLE
+        && messageType !== UHDR_GET_APP_ASSET_VERSION
     ) {
         return;
     }
@@ -380,6 +382,10 @@ self.addEventListener('message', (event) => {
             if (messageType === UHDR_VALIDATE_BUNDLE) {
                 const manifest = await loadRuntimeBundleManifest();
                 result = await validateRuntimeBundleFromManifest(manifest);
+            } else if (messageType === UHDR_GET_APP_ASSET_VERSION) {
+                result = {
+                    appAssetVersion: RESOLVED_APP_ASSET_VERSION,
+                };
             } else if (messageType === UHDR_REPAIR_BUNDLE) {
                 result = await prepareRuntimeBundleInSw({ force: true });
             } else {

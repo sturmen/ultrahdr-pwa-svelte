@@ -31,6 +31,25 @@ function flushPromises() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function createWaitingWorker({ appAssetVersion = 'next-version' } = {}) {
+  return {
+    postMessage: vi.fn((message, ports = []) => {
+      const replyPort = ports[0];
+      if (!replyPort || typeof replyPort.postMessage !== 'function') {
+        return;
+      }
+      if (message?.type === 'UHDR_GET_APP_ASSET_VERSION') {
+        replyPort.postMessage({
+          type: 'UHDR_GET_APP_ASSET_VERSION_RESULT',
+          messageId: message?.messageId || null,
+          ok: true,
+          result: { appAssetVersion },
+        });
+      }
+    }),
+  };
+}
+
 describe('pwa updater coordinator', () => {
   let registerSWMock;
   let updateSWMock;
@@ -41,6 +60,8 @@ describe('pwa updater coordinator', () => {
   let removeEventListenerSpy;
   let setIntervalSpy;
   let clearIntervalSpy;
+  let localStorageMock;
+  let originalLocalStorage;
 
   beforeEach(() => {
     listeners = new Map();
@@ -62,6 +83,24 @@ describe('pwa updater coordinator', () => {
       return intervalCallbacks.length;
     });
     clearIntervalSpy = vi.spyOn(window, 'clearInterval').mockImplementation(() => {});
+    originalLocalStorage = globalThis.localStorage;
+    const store = new Map();
+    localStorageMock = {
+      getItem: vi.fn((key) => (store.has(key) ? store.get(key) : null)),
+      setItem: vi.fn((key, value) => {
+        store.set(key, String(value));
+      }),
+      removeItem: vi.fn((key) => {
+        store.delete(key);
+      }),
+      clear: vi.fn(() => {
+        store.clear();
+      }),
+    };
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: localStorageMock,
+    });
 
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
@@ -95,12 +134,19 @@ describe('pwa updater coordinator', () => {
       delete globalThis.__dynamicImport__;
       delete globalThis.__import__;
     }
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: originalLocalStorage,
+    });
     vi.restoreAllMocks();
   });
 
   it('initializes with expected default state', () => {
     const state = createDefaultPwaUpdateState();
     expect(state.updateAvailable).toBe(false);
+    expect(state.notificationVisible).toBe(false);
+    expect(state.availableVersion).toBe(null);
+    expect(state.ignoredVersions).toEqual([]);
     expect(state.pendingUntilIdle).toBe(false);
     expect(state.applying).toBe(false);
     expect(state.bundleReady).toBe(false);
@@ -136,12 +182,12 @@ describe('pwa updater coordinator', () => {
     listeners.get('visibilitychange')?.();
     await flushPromises();
 
-    expect(registrationMock.update).toHaveBeenCalledTimes(4);
+    expect(registrationMock.update).toHaveBeenCalledTimes(2);
     expect(ensureBundleReady).toHaveBeenCalledTimes(2);
     expect(intervalCallbacks).toHaveLength(1);
 
     await intervalCallbacks[0]();
-    expect(registrationMock.update).toHaveBeenCalledTimes(5);
+    expect(registrationMock.update).toHaveBeenCalledTimes(3);
 
     coordinator.dispose();
     expect(clearIntervalSpy).toHaveBeenCalled();
@@ -224,6 +270,102 @@ describe('pwa updater coordinator', () => {
     await coordinator.applyUpdate();
     expect(updateSWMock).toHaveBeenCalledWith(true);
 
+    coordinator.dispose();
+  });
+
+  it('fails silently for offline update checks', async () => {
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      get: () => false,
+    });
+
+    globalThis.__dynamicImport__ = vi.fn(async (specifier) => {
+      if (specifier === 'virtual:pwa-register') {
+        return { registerSW: registerSWMock };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const snapshots = [];
+    const coordinator = createPwaUpdateCoordinator({
+      onStateChange: (state) => snapshots.push(state),
+      isBusy: () => false,
+    });
+    await flushPromises();
+
+    expect(registrationMock.update).not.toHaveBeenCalled();
+    const latest = snapshots.at(-1);
+    expect(latest.lastError).toBe(null);
+    coordinator.dispose();
+  });
+
+  it('stores dismissed versions, deduplicates, and caps ignored versions at 100 entries', async () => {
+    const waitingWorker = createWaitingWorker({ appAssetVersion: 'v-101' });
+    registrationMock.waiting = waitingWorker;
+
+    const ignoredVersions = Array.from({ length: 101 }, (_unused, index) => `v-${index}`);
+    globalThis.localStorage.setItem(
+      'ultrahdr:pwa-update-ignored-versions:v1',
+      JSON.stringify(ignoredVersions),
+    );
+
+    let onNeedRefresh;
+    globalThis.__dynamicImport__ = vi.fn(async (specifier) => {
+      if (specifier === 'virtual:pwa-register') {
+        return {
+          registerSW: (options) => {
+            onNeedRefresh = options.onNeedRefresh;
+            options.onRegisteredSW?.('/sw.js', registrationMock);
+            return updateSWMock;
+          },
+        };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const snapshots = [];
+    const coordinator = createPwaUpdateCoordinator({
+      onStateChange: (state) => snapshots.push(state),
+      isBusy: () => false,
+    });
+    await flushPromises();
+
+    onNeedRefresh?.();
+    await flushPromises();
+    await coordinator.dismissUpdateNotification();
+
+    const latest = snapshots.at(-1);
+    expect(latest.ignoredVersions).toHaveLength(100);
+    expect(latest.ignoredVersions).not.toContain('v-0');
+    expect(latest.ignoredVersions.at(-1)).toBe('v-101');
+
+    const stored = JSON.parse(
+      globalThis.localStorage.getItem('ultrahdr:pwa-update-ignored-versions:v1'),
+    );
+    expect(stored).toHaveLength(100);
+    expect(stored.filter((entry) => entry === 'v-101')).toHaveLength(1);
+    coordinator.dispose();
+  });
+
+  it('restores ignored versions from storage and falls back to empty on invalid JSON', async () => {
+    globalThis.localStorage.setItem('ultrahdr:pwa-update-ignored-versions:v1', '{bad json');
+
+    globalThis.__dynamicImport__ = vi.fn(async (specifier) => {
+      if (specifier === 'virtual:pwa-register') {
+        return { registerSW: registerSWMock };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const snapshots = [];
+    const coordinator = createPwaUpdateCoordinator({
+      onStateChange: (state) => snapshots.push(state),
+      isBusy: () => false,
+    });
+    await flushPromises();
+
+    const latest = snapshots.at(-1);
+    expect(latest.ignoredVersions).toEqual([]);
     coordinator.dispose();
   });
 

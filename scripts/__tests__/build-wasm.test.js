@@ -119,6 +119,7 @@ describe('ultrahdr wasm dimension guard', () => {
     expect(swContent).toMatch(/UHDR_PREPARE_BUNDLE/);
     expect(swContent).toMatch(/UHDR_VALIDATE_BUNDLE/);
     expect(swContent).toMatch(/UHDR_REPAIR_BUNDLE/);
+    expect(swContent).toMatch(/UHDR_GET_APP_ASSET_VERSION/);
     expect(swContent).toContain("addEventListener('message'");
   });
 

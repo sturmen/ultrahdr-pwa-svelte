@@ -1,5 +1,9 @@
 import { ensureBundleReady, getBundleStatus } from './offline-runtime-bundle.js';
+
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const IGNORED_VERSIONS_STORAGE_KEY = 'ultrahdr:pwa-update-ignored-versions:v1';
+const IGNORED_VERSIONS_LIMIT = 100;
+const UHDR_GET_APP_ASSET_VERSION = 'UHDR_GET_APP_ASSET_VERSION';
 
 function now() {
   return Date.now();
@@ -11,6 +15,85 @@ function canUseServiceWorker() {
     && 'serviceWorker' in navigator;
 }
 
+function normalizeVersion(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeIgnoredVersions(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const deduped = [];
+  const seen = new Set();
+  for (const candidate of input) {
+    const version = normalizeVersion(candidate);
+    if (!version) {
+      continue;
+    }
+    if (seen.has(version)) {
+      continue;
+    }
+    seen.add(version);
+    deduped.push(version);
+  }
+  if (deduped.length <= IGNORED_VERSIONS_LIMIT) {
+    return deduped;
+  }
+  return deduped.slice(-IGNORED_VERSIONS_LIMIT);
+}
+
+function readIgnoredVersions(runtime = globalThis) {
+  const storage = runtime?.localStorage;
+  if (!storage || typeof storage.getItem !== 'function') {
+    return [];
+  }
+
+  try {
+    const raw = storage.getItem(IGNORED_VERSIONS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return normalizeIgnoredVersions(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function writeIgnoredVersions(ignoredVersions, runtime = globalThis) {
+  const storage = runtime?.localStorage;
+  if (!storage || typeof storage.setItem !== 'function') {
+    return;
+  }
+  try {
+    storage.setItem(IGNORED_VERSIONS_STORAGE_KEY, JSON.stringify(ignoredVersions));
+  } catch {
+    // Best-effort only.
+  }
+}
+
+function appendIgnoredVersion(ignoredVersions, version) {
+  const normalized = normalizeVersion(version);
+  if (!normalized) {
+    return normalizeIgnoredVersions(ignoredVersions);
+  }
+  const next = normalizeIgnoredVersions(ignoredVersions).filter((entry) => entry !== normalized);
+  next.push(normalized);
+  return normalizeIgnoredVersions(next);
+}
+
+function isIgnoredVersion(ignoredVersions, version) {
+  const normalized = normalizeVersion(version);
+  if (!normalized) {
+    return false;
+  }
+  return ignoredVersions.includes(normalized);
+}
+
 async function loadRegisterSwModule() {
   if (typeof globalThis.__dynamicImport__ === 'function') {
     return globalThis.__dynamicImport__('virtual:pwa-register');
@@ -18,11 +101,60 @@ async function loadRegisterSwModule() {
   return import('virtual:pwa-register');
 }
 
+function resolveVersionFromMessagePayload(payload) {
+  const version = payload?.result?.appAssetVersion;
+  return normalizeVersion(version);
+}
+
+async function queryWaitingWorkerAssetVersion(swRegistration) {
+  const waitingWorker = swRegistration?.waiting;
+  if (!waitingWorker || typeof waitingWorker.postMessage !== 'function') {
+    return null;
+  }
+  if (typeof MessageChannel === 'undefined') {
+    return null;
+  }
+
+  const messageId = `UHDR_ASSET_VERSION_${now()}_${Math.random().toString(16).slice(2)}`;
+  try {
+    const result = await new Promise((resolve) => {
+      const channel = new MessageChannel();
+      const timeoutId = setTimeout(() => {
+        channel.port1.onmessage = null;
+        resolve(null);
+      }, 1500);
+
+      channel.port1.onmessage = (event) => {
+        clearTimeout(timeoutId);
+        const payload = event?.data;
+        if (!payload || payload.messageId !== messageId || payload.ok !== true) {
+          resolve(null);
+          return;
+        }
+        resolve(resolveVersionFromMessagePayload(payload));
+      };
+
+      waitingWorker.postMessage(
+        {
+          type: UHDR_GET_APP_ASSET_VERSION,
+          messageId,
+        },
+        [channel.port2],
+      );
+    });
+    return normalizeVersion(result);
+  } catch {
+    return null;
+  }
+}
+
 export function createDefaultPwaUpdateState() {
   return {
     supported: canUseServiceWorker(),
-    checking: false,
     updateAvailable: false,
+    notificationVisible: false,
+    availableVersion: null,
+    ignoredVersions: [],
     pendingUntilIdle: false,
     applying: false,
     offlineReady: false,
@@ -39,11 +171,15 @@ export function createPwaUpdateCoordinator({
   onStateChange = () => {},
   isBusy = () => false,
 } = {}) {
-  let state = createDefaultPwaUpdateState();
+  let state = {
+    ...createDefaultPwaUpdateState(),
+    ignoredVersions: readIgnoredVersions(globalThis),
+  };
   let disposed = false;
   let registration = null;
   let updateSw = null;
   let intervalId = null;
+  let inFlightUpdateCheck = null;
   const listeners = [];
 
   function emit() {
@@ -92,18 +228,23 @@ export function createPwaUpdateCoordinator({
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       return false;
     }
-
-    patchState({ checking: true, lastError: null });
-    try {
-      await registration.update();
-      patchState({ lastCheckAt: now() });
-      return true;
-    } catch (error) {
-      patchState({ lastError: String(error?.message || error) });
-      return false;
-    } finally {
-      patchState({ checking: false });
+    if (inFlightUpdateCheck) {
+      return inFlightUpdateCheck;
     }
+
+    inFlightUpdateCheck = (async () => {
+      try {
+        await registration.update();
+        patchState({ lastCheckAt: now() });
+        return true;
+      } catch {
+        return false;
+      } finally {
+        inFlightUpdateCheck = null;
+      }
+    })();
+
+    return inFlightUpdateCheck;
   }
 
   function updatePendingStateFromBusy() {
@@ -120,9 +261,13 @@ export function createPwaUpdateCoordinator({
     }
   }
 
-  function onNeedRefresh() {
+  async function onNeedRefresh() {
+    const availableVersion = await queryWaitingWorkerAssetVersion(registration);
+    const ignored = isIgnoredVersion(state.ignoredVersions, availableVersion);
     patchState({
       updateAvailable: true,
+      notificationVisible: !ignored,
+      availableVersion,
       pendingUntilIdle: Boolean(isBusy()),
       applying: false,
     });
@@ -171,7 +316,9 @@ export function createPwaUpdateCoordinator({
       const { registerSW } = await loadRegisterSwModule();
       updateSw = registerSW({
         immediate: true,
-        onNeedRefresh,
+        onNeedRefresh() {
+          void onNeedRefresh();
+        },
         onOfflineReady() {
           patchState({ offlineReady: true });
         },
@@ -213,6 +360,16 @@ export function createPwaUpdateCoordinator({
     }
   }
 
+  async function dismissUpdateNotification() {
+    const nextIgnored = appendIgnoredVersion(state.ignoredVersions, state.availableVersion);
+    writeIgnoredVersions(nextIgnored, globalThis);
+    patchState({
+      ignoredVersions: nextIgnored,
+      notificationVisible: false,
+    });
+    return true;
+  }
+
   function setBusy(isProcessingBusy) {
     if (isProcessingBusy) {
       if (state.updateAvailable && !state.pendingUntilIdle) {
@@ -240,6 +397,7 @@ export function createPwaUpdateCoordinator({
 
   return {
     applyUpdate,
+    dismissUpdateNotification,
     checkForUpdates,
     dispose,
     getState: () => ({ ...state }),

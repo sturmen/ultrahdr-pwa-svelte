@@ -309,6 +309,10 @@
     await pwaUpdateCoordinator?.applyUpdate();
   }
 
+  async function dismissAppUpdate() {
+    await pwaUpdateCoordinator?.dismissUpdateNotification?.();
+  }
+
   function handleRuntimeRetry() {
     void bootApp({ forceRetry: true });
   }
@@ -422,6 +426,40 @@
     {/if}
   </section>
 
+  {#if runtimeInitState === "ready" && pwaUpdateState.notificationVisible}
+    <div class="pwa-update-snackbar" data-testid="pwa-update-snackbar" role="status">
+      <span class="pwa-update-snackbar-copy">
+        {#if pwaUpdateState.pendingUntilIdle}
+          Reload will happen when processing becomes idle.
+        {:else}
+          A new version is ready.
+        {/if}
+      </span>
+      <button
+        class="footer-link pwa-update-snackbar-action"
+        type="button"
+        on:click={applyAppUpdate}
+        disabled={pwaUpdateState.applying || pwaUpdateState.pendingUntilIdle}
+      >
+        {#if pwaUpdateState.pendingUntilIdle}
+          Waiting for idle...
+        {:else if pwaUpdateState.applying}
+          Updating...
+        {:else}
+          Reload
+        {/if}
+      </button>
+      <button
+        class="footer-link pwa-update-snackbar-action"
+        type="button"
+        on:click={dismissAppUpdate}
+        disabled={pwaUpdateState.applying}
+      >
+        Dismiss
+      </button>
+    </div>
+  {/if}
+
   <footer class="footer">
     <p class="footer-compatibility">
       <b>Try Google Chrome on Windows/macOS if you run into issues.</b>
@@ -434,29 +472,6 @@
       {:else}
         <button class="footer-link" type="button" on:click={openAbout}
           >About</button
-        >
-      {/if}
-      {#if pwaUpdateState.updateAvailable}
-        {#if pwaUpdateState.pendingUntilIdle}
-          <span class="footer-update" data-testid="pwa-update-pending">
-            Update downloaded. It can be applied when processing is idle.
-          </span>
-        {:else}
-          <span class="footer-update" data-testid="pwa-update-available">
-            A newer version is ready.
-            <button
-              class="footer-link footer-update-action"
-              type="button"
-              on:click={applyAppUpdate}
-              disabled={pwaUpdateState.applying}
-            >
-              {pwaUpdateState.applying ? "Updating..." : "Update now"}
-            </button>
-          </span>
-        {/if}
-      {:else if pwaUpdateState.checking}
-        <span class="footer-update" data-testid="pwa-update-checking"
-          >Checking for updates...</span
         >
       {/if}
     {/if}
@@ -592,14 +607,30 @@
     text-decoration: underline;
   }
 
-  .footer-update {
-    display: inline-flex;
-    gap: 0.35rem;
+  .pwa-update-snackbar {
+    position: fixed;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    z-index: 120;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem 0.8rem;
     align-items: center;
-    color: var(--text-secondary);
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.7rem;
+    background: color-mix(in srgb, var(--surface-card) 94%, black 6%);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.2);
   }
 
-  .footer-update-action:disabled {
+  .pwa-update-snackbar-copy {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    flex: 1 1 14rem;
+  }
+
+  .pwa-update-snackbar-action:disabled {
     opacity: 0.65;
     cursor: progress;
   }
@@ -615,6 +646,13 @@
 
     .about-page {
       gap: 1rem;
+    }
+
+    .pwa-update-snackbar {
+      left: 50%;
+      right: auto;
+      transform: translateX(-50%);
+      width: min(680px, calc(100vw - 1.5rem));
     }
   }
 </style>
