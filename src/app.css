@@ -1,30 +1,36 @@
 :root {
-  --bg-color: #0f1618;
-  --bg-gradient: radial-gradient(circle at 0% 0%, #1f3e42 0%, rgba(31, 62, 66, 0) 52%),
-    radial-gradient(circle at 100% 0%, #1b2b3e 0%, rgba(27, 43, 62, 0) 45%),
-    linear-gradient(180deg, #0f1618 0%, #0a1013 100%);
-  --surface-color: #121b20;
-  --surface-raised: rgba(20, 29, 34, 0.85);
-  --surface-muted: rgba(255, 255, 255, 0.035);
-  --surface-interactive: rgba(47, 200, 212, 0.12);
-  --primary-color: #2fc8d4;
-  --text-color: #f3f8fa;
-  --text-on-primary: #001114;
-  --text-secondary: #c4d3d8;
-  --text-muted: #93aab2;
-  --text-link: #5adbe5;
-  --border-subtle: rgba(176, 203, 211, 0.28);
+  --bg-color: #0d1317;
+  --bg-gradient:
+    radial-gradient(circle at top left, rgba(111, 150, 170, 0.18) 0%, rgba(111, 150, 170, 0) 32%),
+    radial-gradient(circle at 100% 12%, rgba(63, 94, 112, 0.22) 0%, rgba(63, 94, 112, 0) 34%),
+    linear-gradient(180deg, #0d1317 0%, #0a1013 52%, #090d10 100%);
+  --surface-color: rgba(16, 23, 28, 0.74);
+  --surface-raised: rgba(20, 28, 34, 0.58);
+  --surface-muted: rgba(255, 255, 255, 0.028);
+  --surface-interactive: rgba(123, 163, 184, 0.12);
+  --surface-active: rgba(19, 27, 33, 0.82);
+  --primary-color: #8cb6cb;
+  --primary-strong: #9fc4d6;
+  --text-color: #eef4f6;
+  --text-on-primary: #0b1215;
+  --text-secondary: #bccad1;
+  --text-muted: #8397a1;
+  --text-link: #9fc4d6;
+  --border-subtle: rgba(171, 193, 203, 0.14);
+  --divider-subtle: rgba(171, 193, 203, 0.08);
   --queue-completed: #2fc8d4;
   --queue-processing: #47d68f;
   --queue-failed: #ff6b6b;
   --queue-stale: #f3b356;
   --queue-paused: #8aa4ff;
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.22);
+  --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.12);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 22px;
   --spacing-unit: 16px;
-  font-family: "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
   line-height: 1.5;
   font-weight: 450;
   color-scheme: dark;
@@ -51,38 +57,46 @@ body {
   background: var(--bg-gradient);
   color: var(--text-color);
   overflow-x: hidden;
+  background-attachment: fixed;
 }
 
 #app {
   width: 100%;
   max-width: 1320px;
   margin: 0 auto;
-  padding: 1rem 0.9rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  padding: 1.1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
 }
 
 h1 {
-  font-size: clamp(1.6rem, 4.5vw, 2.7rem);
+  font-size: clamp(1.55rem, 4vw, 2.25rem);
   line-height: 1.1;
   margin: 0;
   color: var(--text-color);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  font-weight: 640;
 }
 
 button {
   border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  padding: 0.6rem 1rem;
-  font-size: 0.95rem;
+  border: 1px solid var(--border-subtle);
+  padding: 0.55rem 0.95rem;
+  font-size: 0.93rem;
   font-weight: 600;
   font-family: inherit;
-  background-color: var(--surface-color);
+  background-color: color-mix(in srgb, var(--surface-color) 92%, transparent);
   color: var(--text-color);
   cursor: pointer;
-  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 button:hover {
-  border-color: var(--primary-color);
+  border-color: color-mix(in srgb, var(--primary-color) 45%, var(--border-subtle));
+  background-color: color-mix(in srgb, var(--surface-color) 82%, transparent);
 }
 
 button:focus,
@@ -92,11 +106,17 @@ button:focus-visible {
 }
 
 .card {
-  padding: 0.95rem;
-  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  padding: 0.9rem;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-raised) 96%, rgba(255, 255, 255, 0.04)),
+      color-mix(in srgb, var(--surface-raised) 84%, transparent)
+    );
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(14px) saturate(115%);
 }
 
 a {
@@ -109,30 +129,37 @@ a:hover {
 
 @media (min-width: 768px) {
   #app {
-    padding: 1.2rem 1.2rem calc(1.4rem + env(safe-area-inset-bottom, 0px));
+    padding: 1.35rem 1.3rem calc(1.45rem + env(safe-area-inset-bottom, 0px));
   }
 
   .card {
-    padding: 1.1rem;
+    padding: 1rem;
   }
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg-color: #f5f8fa;
-    --bg-gradient: radial-gradient(circle at 0% 0%, #d9eef1 0%, rgba(217, 238, 241, 0) 52%),
-      radial-gradient(circle at 100% 0%, #dce8f4 0%, rgba(220, 232, 244, 0) 45%),
-      linear-gradient(180deg, #f5f8fa 0%, #edf2f6 100%);
-    --surface-color: #f9fbfd;
-    --surface-raised: rgba(255, 255, 255, 0.86);
-    --surface-muted: rgba(7, 21, 33, 0.05);
-    --surface-interactive: rgba(47, 200, 212, 0.16);
-    --text-color: #1a272d;
-    --text-on-primary: #031115;
-    --text-secondary: #324750;
-    --text-muted: #536d77;
-    --text-link: #0e8d9a;
-    --border-subtle: rgba(88, 120, 135, 0.24);
+    --bg-color: #f1f5f7;
+    --bg-gradient:
+      radial-gradient(circle at top left, rgba(180, 202, 212, 0.28) 0%, rgba(180, 202, 212, 0) 36%),
+      radial-gradient(circle at 100% 14%, rgba(195, 208, 219, 0.34) 0%, rgba(195, 208, 219, 0) 38%),
+      linear-gradient(180deg, #f1f5f7 0%, #ebf0f3 52%, #e7ecef 100%);
+    --surface-color: rgba(255, 255, 255, 0.76);
+    --surface-raised: rgba(255, 255, 255, 0.68);
+    --surface-muted: rgba(17, 28, 35, 0.04);
+    --surface-interactive: rgba(121, 156, 177, 0.16);
+    --surface-active: rgba(255, 255, 255, 0.9);
+    --text-color: #1b262c;
+    --text-on-primary: #091015;
+    --text-secondary: #42535c;
+    --text-muted: #61717a;
+    --text-link: #547b8e;
+    --border-subtle: rgba(99, 123, 136, 0.16);
+    --divider-subtle: rgba(99, 123, 136, 0.08);
+    --primary-color: #7198ad;
+    --primary-strong: #638ca3;
+    --shadow-lg: 0 24px 58px rgba(88, 105, 115, 0.14);
+    --shadow-sm: 0 12px 30px rgba(88, 105, 115, 0.08);
     --queue-completed: #0f9baa;
     --queue-processing: #2a9e63;
     --queue-failed: #cc3f3f;

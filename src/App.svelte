@@ -343,8 +343,18 @@
   data-testid="app-shell"
   data-runtime-init-state={runtimeInitState}
 >
-  <header class="app-header">
+  <header class="app-header" data-testid="app-topbar">
     <h1>UltraHDR Converter</h1>
+    {#if runtimeInitState === "ready"}
+      <button
+        class="topbar-link"
+        type="button"
+        data-testid="app-about-link"
+        on:click={openAbout}
+      >
+        About
+      </button>
+    {/if}
   </header>
 
   <section class="content-area" aria-live="polite">
@@ -377,17 +387,6 @@
           directly in your browser. Your files stay on your device, and output
           images are generated locally.
         </p>
-
-        <div
-          class="about-taglines"
-          role="list"
-          aria-label="UltraHDR Converter advantages"
-        >
-          <span role="listitem">No Cloud Upload</span>
-          <span role="listitem">Works Offline</span>
-          <span role="listitem">Private Processing</span>
-          <span role="listitem">Share In and Share Out</span>
-        </div>
 
         <div class="about-copy">
           <h3>How This PWA Works</h3>
@@ -463,17 +462,10 @@
   {/if}
 
   <footer class="footer">
-    <p class="footer-compatibility">
-      <b>Try Google Chrome on Windows/macOS if you run into issues.</b>
-    </p>
     {#if runtimeInitState === "ready"}
       {#if activeView === "about"}
         <button class="footer-link" type="button" on:click={openConverter}
           >Back to Converter</button
-        >
-      {:else}
-        <button class="footer-link" type="button" on:click={openAbout}
-          >About</button
         >
       {/if}
     {/if}
@@ -486,16 +478,37 @@
 <style>
   .app-shell {
     display: grid;
-    gap: 1rem;
+    gap: 1.15rem;
   }
 
   .app-header {
-    padding-top: 0.25rem;
+    padding-top: 0.15rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 2.5rem;
   }
 
   h1 {
     margin: 0;
-    font-size: clamp(1.3rem, 2.2vw, 1.8rem);
+    font-size: clamp(1.2rem, 2vw, 1.55rem);
+  }
+
+  .topbar-link {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: var(--text-link);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  .topbar-link:hover {
+    text-decoration: underline;
   }
 
   .content-area {
@@ -526,11 +539,11 @@
   }
 
   .about-page {
-    max-width: 820px;
+    max-width: 720px;
     margin: 0 auto;
-    padding: 0.4rem 0.1rem 0.6rem;
+    padding: 0.2rem 0.1rem 0.45rem;
     display: grid;
-    gap: 0.9rem;
+    gap: 0.8rem;
   }
 
   .about-page h2,
@@ -540,32 +553,20 @@
   }
 
   .about-page h2 {
-    font-size: clamp(1.1rem, 2.4vw, 1.4rem);
+    font-size: clamp(1.05rem, 2.2vw, 1.25rem);
+    letter-spacing: -0.02em;
   }
 
   .about-page h3 {
-    font-size: 1rem;
+    font-size: 0.94rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .about-page p {
     color: var(--text-secondary);
-    line-height: 1.55;
-  }
-
-  .about-taglines {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .about-taglines span {
-    border: 1px solid var(--border-subtle);
-    background: var(--surface-muted);
-    color: var(--text-muted);
-    border-radius: 999px;
-    padding: 0.25rem 0.7rem;
-    font-size: 0.8rem;
-    font-weight: 600;
+    line-height: 1.6;
   }
 
   .about-copy {
@@ -576,17 +577,12 @@
   .footer {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem 1rem;
+    gap: 0.35rem 0.9rem;
     align-items: center;
     color: var(--text-muted);
-    font-size: 0.85rem;
-    border-top: 1px solid var(--border-subtle);
-    padding-top: 1rem;
-  }
-
-  .footer-compatibility {
-    margin: 0;
-    flex-basis: 100%;
+    font-size: 0.8rem;
+    border-top: 1px solid var(--divider-subtle);
+    padding-top: 0.8rem;
   }
 
   .footer a {
@@ -621,9 +617,10 @@
     align-items: center;
     padding: 0.75rem 0.9rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 0.7rem;
-    background: color-mix(in srgb, var(--surface-card) 94%, black 6%);
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.2);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--surface-active) 96%, transparent);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(16px) saturate(115%);
   }
 
   .pwa-update-snackbar-copy {

@@ -657,10 +657,6 @@
     openSheet = "export";
   }
 
-  function openReprocessSheet() {
-    openSheet = "reprocess";
-  }
-
   function closeSheet() {
     openSheet = "none";
   }
@@ -1362,24 +1358,6 @@
     }
   }
 
-  function reprocessAllStale() {
-    const staleIds = new Set(
-      queue
-        .filter((item) => item.status === QUEUE_ITEM_STATES.STALE)
-        .map((item) => item.id),
-    );
-    if (requeueByIds(staleIds)) {
-      showStalePrompt = false;
-      closeSheet();
-      startQueue();
-    }
-  }
-
-  function keepCurrentResults() {
-    showStalePrompt = false;
-    closeSheet();
-  }
-
   function enqueueFiles(fileList) {
     const newFiles = Array.from(fileList || []).filter(
       (file) => file instanceof File,
@@ -1785,8 +1763,11 @@
   >
     <section class="controls-column">
       {#if showConvertPanel}
-        <div class="controls card panel convert-panel" id="panel-convert">
-          <h2>Convert</h2>
+        <div
+          class="controls card panel convert-panel"
+          id="panel-convert"
+          aria-label="Convert controls"
+        >
 
           <div class="control-group" data-testid="quick-controls">
             <label for="boost">HDR Strength (Max Content Boost Stops)</label>
@@ -2024,7 +2005,7 @@
             <div class="stale-prompt card" data-testid="stale-reprocess-prompt">
               <p>{staleCount} result(s) were generated with older settings.</p>
               <div class="stale-actions">
-                <button class="primary small" on:click={openReprocessSheet}
+                <button class="primary small" on:click={reprocessSelectedStale}
                   >Reprocess</button
                 >
               </div>
@@ -2040,10 +2021,11 @@
       {/if}
 
       {#if showSettingsPanel}
-        <div class="controls card panel settings-panel" id="panel-settings">
-          <div class="settings-header">
-            <h2>Settings</h2>
-          </div>
+        <div
+          class="controls card panel settings-panel"
+          id="panel-settings"
+          aria-label="Processing settings"
+        >
           <div data-testid="advanced-settings">
             <div class="control-group">
               <span class="label">Rotation</span>
@@ -2215,7 +2197,6 @@
           {#if results.length > 0}
             <div class="results">
               <div class="results-header">
-                <h3>Results</h3>
                 <div class="selection-controls compact">
                   <button class="text-btn" on:click={toggleSelectionSet}>
                     {selectionToggleState === "all"
@@ -2271,7 +2252,7 @@
                       <button
                         class="secondary small"
                         data-testid="results-reprocess-btn"
-                        on:click={openReprocessSheet}
+                        on:click={reprocessSelectedStale}
                       >
                         Reprocess
                       </button>
@@ -2475,7 +2456,6 @@
   {#if openSheet === "settings" && !isDesktopLayout}
     <div class="sheet-card" data-testid="settings-sheet">
       <div class="sheet-header">
-        <h3>Settings</h3>
         <button class="text-btn" on:click={closeSheet}>Done</button>
       </div>
 
@@ -2634,26 +2614,6 @@
     </div>
   {/if}
 
-  {#if openSheet === "reprocess"}
-    <div class="sheet-card" data-testid="reprocess-sheet">
-      <div class="sheet-header">
-        <h3>Reprocess</h3>
-        <button class="text-btn" on:click={closeSheet}>Done</button>
-      </div>
-      <div class="sheet-actions">
-        <button class="primary" on:click={reprocessSelectedStale}
-          >Reprocess Selected</button
-        >
-        <button class="secondary" on:click={reprocessAllStale}
-          >Reprocess All Stale</button
-        >
-        <button class="text-btn" on:click={keepCurrentResults}
-          >Keep Current Results</button
-        >
-      </div>
-    </div>
-  {/if}
-
 </div>
 
 <style>
@@ -2661,7 +2621,7 @@
     width: 100%;
     margin: 0 auto;
     display: grid;
-    gap: 1rem;
+    gap: 0.85rem;
   }
 
   .mobile-tab-bar {
@@ -2670,12 +2630,13 @@
     z-index: 15;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.5rem;
-    padding: 0.4rem;
+    gap: 0.3rem;
+    padding: 0.28rem;
     border: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+    background: color-mix(in srgb, var(--surface-active) 90%, transparent);
     backdrop-filter: blur(14px);
-    border-radius: var(--radius-lg);
+    border-radius: 999px;
+    box-shadow: var(--shadow-sm);
   }
 
   .tab-btn {
@@ -2683,8 +2644,8 @@
     background: transparent;
     color: var(--text-muted);
     min-height: 44px;
-    border-radius: 0.8rem;
-    font-size: 0.9rem;
+    border-radius: 999px;
+    font-size: 0.86rem;
     font-weight: 600;
     display: inline-flex;
     align-items: center;
@@ -2693,9 +2654,10 @@
   }
 
   .tab-btn[aria-selected="true"] {
-    background: var(--surface-interactive);
-    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--surface-active) 84%, transparent);
+    border-color: color-mix(in srgb, var(--primary-color) 26%, transparent);
     color: var(--text-color);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
 
   .tab-badge {
@@ -2714,7 +2676,7 @@
 
   .processor-layout {
     display: grid;
-    gap: 1rem;
+    gap: 0.85rem;
   }
 
   .controls-column,
@@ -2726,17 +2688,9 @@
 
   .panel {
     display: grid;
-    gap: 1rem;
+    gap: 0.9rem;
   }
 
-  .panel-intro {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 0.9rem;
-  }
-
-  .controls h2,
-  .results h3,
   .error h3 {
     margin: 0;
     font-size: 1.1rem;
@@ -2745,7 +2699,7 @@
   .control-group {
     text-align: left;
     display: grid;
-    gap: 0.5rem;
+    gap: 0.38rem;
   }
 
   .control-group.switch-group .switch-text {
@@ -2755,14 +2709,10 @@
     gap: 0.25rem;
   }
 
-  .control-group.switch-group .switch-text .help-text {
-    margin: 0;
-  }
-
   .control-group.horizontal {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.7rem;
     flex-wrap: wrap;
   }
 
@@ -2837,8 +2787,10 @@
   .label {
     display: block;
     margin-bottom: 0.2rem;
-    font-weight: 600;
-    font-size: 0.95rem;
+    font-weight: 560;
+    font-size: 0.83rem;
+    letter-spacing: 0.01em;
+    color: var(--text-secondary);
   }
 
   .range-wrapper,
@@ -2846,7 +2798,7 @@
   .button-group {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.6rem;
   }
 
   .button-group {
@@ -2855,9 +2807,9 @@
 
   input[type="range"] {
     flex: 1;
-    height: 6px;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+    height: 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-muted) 24%, transparent);
     outline: none;
     -webkit-appearance: none;
     appearance: none;
@@ -2866,12 +2818,12 @@
   select {
     flex: 1;
     min-height: 44px;
-    padding: 0.65rem 0.8rem;
-    border-radius: 10px;
+    padding: 0.62rem 0.78rem;
+    border-radius: 12px;
     border: 1px solid var(--border-subtle);
-    background-color: var(--surface-raised);
+    background-color: color-mix(in srgb, var(--surface-color) 94%, transparent);
     color: var(--text-color);
-    font-size: 1rem;
+    font-size: 0.93rem;
     cursor: pointer;
   }
 
@@ -2897,12 +2849,13 @@
   .value {
     font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
       "Liberation Mono", monospace;
-    font-size: 0.95rem;
+    font-size: 0.88rem;
     min-width: 3ch;
+    color: var(--text-color);
   }
 
   .help-text {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--text-secondary);
     margin: 0;
   }
@@ -2912,11 +2865,11 @@
     align-items: center;
     gap: 0.45rem;
     min-height: 44px;
-    padding: 0.55rem 0.9rem;
-    background-color: transparent;
+    padding: 0.52rem 0.82rem;
+    background-color: color-mix(in srgb, var(--surface-color) 52%, transparent);
     border: 1px solid var(--border-subtle);
     color: var(--text-color);
-    border-radius: 10px;
+    border-radius: 999px;
     cursor: pointer;
   }
 
@@ -2932,7 +2885,7 @@
   .actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.6rem;
     justify-content: flex-start;
   }
 
@@ -2963,19 +2916,12 @@
     color: var(--text-color);
   }
 
-  .settings-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-  }
-
   .pipeline-status {
-    margin-top: 0.35rem;
-    padding: 0.75rem;
+    margin-top: 0.2rem;
+    padding: 0.72rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    background: var(--surface-muted);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface-color) 68%, transparent);
     display: grid;
     gap: 0.45rem;
   }
@@ -3073,13 +3019,18 @@
   }
 
   button.primary {
-    background-color: var(--primary-color);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--primary-strong) 94%, white 6%),
+      var(--primary-color)
+    );
     color: var(--text-on-primary);
     border: 1px solid transparent;
     min-height: 44px;
-    padding: 0.65rem 1rem;
-    font-size: 0.95rem;
+    padding: 0.62rem 0.98rem;
+    font-size: 0.92rem;
     font-weight: 700;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
   button.primary.small {
@@ -3099,13 +3050,13 @@
   }
 
   button.secondary {
-    background-color: transparent;
+    background-color: color-mix(in srgb, var(--surface-color) 52%, transparent);
     border: 1px solid var(--border-subtle);
     color: var(--text-color);
     min-height: 44px;
-    padding: 0.55rem 0.9rem;
-    font-size: 0.92rem;
-    font-weight: 600;
+    padding: 0.52rem 0.86rem;
+    font-size: 0.9rem;
+    font-weight: 550;
   }
 
   button.secondary:hover {
@@ -3173,15 +3124,15 @@
 
   .results {
     display: grid;
-    gap: 0.85rem;
+    gap: 0.75rem;
   }
 
   .results-header {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.55rem;
   }
 
   .selection-controls {
@@ -3198,7 +3149,7 @@
 
   .results-tools {
     display: grid;
-    gap: 0.55rem;
+    gap: 0.45rem;
   }
 
   .results-rotation-controls {
@@ -3212,29 +3163,40 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 0.75rem;
+    gap: 0.65rem;
   }
 
   .result-card {
-    padding: 0.5rem;
+    padding: 0.42rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.42rem;
     position: relative;
     cursor: default;
-    border: 1px solid transparent;
+    border: 1px solid var(--divider-subtle);
     transition:
       transform 0.15s ease,
-      border-color 0.15s ease;
+      border-color 0.15s ease,
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--surface-raised) 90%, transparent),
+        color-mix(in srgb, var(--surface-raised) 74%, transparent)
+      );
+    box-shadow: none;
   }
 
   .result-card:hover {
     transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--primary-color) 22%, var(--border-subtle));
   }
 
   .result-card.selected {
     border-color: var(--primary-color);
-    background-color: var(--surface-interactive);
+    background-color: color-mix(in srgb, var(--surface-interactive) 78%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 18%, transparent);
   }
 
   .result-card.stale {
@@ -3308,7 +3270,7 @@
     padding: 0;
     margin: 0;
     width: 100%;
-    border-radius: 8px;
+    border-radius: 12px;
     overflow: hidden;
     display: block;
     cursor: zoom-in;
@@ -3318,6 +3280,8 @@
     width: 100%;
     height: auto;
     display: block;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
   }
 
   .info {
@@ -3327,25 +3291,25 @@
 
   .filename {
     font-weight: 600;
-    margin-bottom: 0.25rem;
+    margin: 0 0 0.12rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 0.9rem;
+    font-size: 0.84rem;
   }
 
   .size {
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     color: var(--text-secondary);
-    margin-bottom: 0;
+    margin: 0;
   }
 
   .status-tag {
-    margin: 0.25rem 0 0;
-    font-size: 0.75rem;
+    margin: 0.18rem 0 0;
+    font-size: 0.68rem;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.06em;
   }
 
   .error {
@@ -3368,12 +3332,13 @@
     bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
     z-index: 14;
     display: flex;
-    gap: 0.6rem;
-    padding: 0.7rem;
+    gap: 0.5rem;
+    padding: 0.45rem;
     border: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
-    backdrop-filter: blur(12px);
-    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--surface-active) 92%, transparent);
+    backdrop-filter: blur(16px);
+    border-radius: 999px;
+    box-shadow: var(--shadow-sm);
   }
 
   .mobile-action-bar button {
@@ -3391,13 +3356,13 @@
   }
 
   .floating-gear {
-    width: 56px;
-    height: 56px;
+    width: 52px;
+    height: 52px;
     border-radius: 999px;
-    border: 1px solid transparent;
-    background: var(--primary-color);
-    color: var(--text-on-primary);
-    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-active) 94%, transparent);
+    color: var(--text-color);
+    box-shadow: var(--shadow-sm);
     display: grid;
     place-items: center;
     padding: 0;
@@ -3426,7 +3391,7 @@
     border: none;
     padding: 0;
     margin: 0;
-    background: rgba(0, 0, 0, 0.35);
+    background: rgba(7, 11, 14, 0.28);
     z-index: 29;
   }
 
@@ -3533,20 +3498,21 @@
     width: min(92vw, 520px);
     max-height: min(72vh, 680px);
     overflow: auto;
-    padding: 0.95rem;
-    border-radius: 14px;
+    padding: 0.9rem;
+    border-radius: 20px;
     border: 1px solid var(--border-subtle);
-    background: var(--surface-raised);
+    background: color-mix(in srgb, var(--surface-active) 96%, transparent);
     z-index: 30;
     display: grid;
-    gap: 0.8rem;
+    gap: 0.75rem;
     box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(18px) saturate(115%);
   }
 
   .sheet-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 0.6rem;
   }
 
@@ -3593,9 +3559,9 @@
     bottom: calc(100% + 0.4rem);
     width: min(280px, 70vw);
     padding: 0.5rem 0.6rem;
-    border-radius: 8px;
+    border-radius: 12px;
     border: 1px solid var(--border-subtle);
-    background: var(--surface-raised);
+    background: color-mix(in srgb, var(--surface-active) 96%, transparent);
     color: var(--text-color);
     font-size: 0.78rem;
     line-height: 1.35;

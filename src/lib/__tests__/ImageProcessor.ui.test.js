@@ -140,6 +140,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     const convertTab = screen.getByTestId('tab-convert');
     expect(convertTab).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^convert$/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Keep camera metadata')).not.toBeInTheDocument();
     expect(screen.queryByTestId('tab-settings')).not.toBeInTheDocument();
     expect(screen.queryByText(/existing input gain maps are preserved as-is/i)).not.toBeInTheDocument();
@@ -148,6 +149,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.click(screen.getByTestId('floating-gear'));
     expect(screen.getByTestId('advanced-settings')).toBeInTheDocument();
     expect(screen.queryByTestId('floating-gear')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^settings$/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
   });
 
@@ -160,6 +162,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^results$/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('mobile-action-bar')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^export/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^discard all$/i })).toBeInTheDocument();
@@ -363,7 +366,9 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByTestId('desktop-two-pane')).toBeInTheDocument();
     expect(screen.queryByTestId('mobile-tab-bar')).not.toBeInTheDocument();
     expect(screen.getByTestId('quick-controls')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /^settings$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^convert$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^settings$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^results$/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
     expect(screen.getByTestId('results-discard-all')).toBeInTheDocument();
 
@@ -848,7 +853,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
   });
 
-  it('shows one stale reprocess CTA that opens reprocess sheet options', async () => {
+  it('reprocesses selected stale results directly from the stale prompt', async () => {
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
@@ -865,12 +870,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
-    expect(screen.getByTestId('reprocess-sheet')).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
     await waitFor(() => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
+    expect(screen.queryByTestId('reprocess-sheet')).not.toBeInTheDocument();
   });
 
   it('does not expose reverse tone map version controls and keeps processing fixed to v2 behavior', async () => {
@@ -895,7 +898,6 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
     });
     await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
-    await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
 
     await waitFor(() => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
@@ -939,7 +941,6 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
-    await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
 
     await waitFor(() => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
@@ -949,7 +950,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(secondOptions.maxContentBoost).toBeCloseTo(2 ** 4, 6);
   });
 
-  it('shows results reprocess button only after rotation makes results stale', async () => {
+  it('reprocesses selected stale results directly from the results toolbar', async () => {
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
@@ -963,7 +964,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     await fireEvent.click(screen.getByTestId('results-reprocess-btn'));
-    expect(screen.getByTestId('reprocess-sheet')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByTestId('reprocess-sheet')).not.toBeInTheDocument();
   });
 
   it('moves to results and emphasizes share-out action after share-target completion', async () => {

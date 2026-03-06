@@ -1,6 +1,6 @@
 {
-  "bundleVersion": "5.2.0|0950353642b9c933|1cdd841aeb63c91d",
-  "generatedAt": "2026-03-06T01:42:47.644Z",
+  "bundleVersion": "5.2.0|421335b0a9dc8e95|36ca9086b93b9e58",
+  "generatedAt": "2026-03-06T11:29:37.084Z",
   "requiredAssets": [
     {
       "id": "gmnet-realworld-global",
@@ -88,7 +88,7 @@
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 830427,
-      "sha256": "7cd68306b3861018bcde6daaf070f5cace7512cb6836efb4a0a4be77f8725128"
+      "sha256": "35f084ff688eb00422748d857382cb5dd6efe8629e6aa327d9fd69a5080a6263"
     },
     {
       "id": "jpegli-wasm-js",

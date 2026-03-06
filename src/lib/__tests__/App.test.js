@@ -118,22 +118,23 @@ describe('App shell and startup gate', () => {
     await screen.findByTestId('tab-convert');
 
     expect(screen.getByTestId('app-shell')).toBeInTheDocument();
+    expect(screen.getByTestId('app-topbar')).toBeInTheDocument();
+    expect(screen.getByTestId('app-about-link')).toBeInTheDocument();
+    expect(screen.queryByText(/try google chrome on windows\/macos if you run into issues/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/private processing/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/works offline/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/no cloud upload/i)).not.toBeInTheDocument();
   });
 
-  it('opens About page from footer and shows technical explanation with feature taglines', async () => {
+  it('opens About page from the compact top bar and keeps the explanation concise', async () => {
     render(App);
 
     await screen.findByTestId('tab-convert');
-    await fireEvent.click(screen.getByRole('button', { name: /about/i }));
+    await fireEvent.click(screen.getByTestId('app-about-link'));
 
     expect(screen.getByRole('heading', { name: /About UltraHDR Converter/i })).toBeInTheDocument();
-    expect(screen.getByText(/no cloud upload/i)).toBeInTheDocument();
-    expect(screen.getByText(/works offline/i)).toBeInTheDocument();
-    expect(screen.getByText(/private processing/i)).toBeInTheDocument();
     expect(screen.getByText(/the app is a progressive web app/i)).toBeInTheDocument();
+    expect(screen.queryByText(/share in and share out/i)).not.toBeInTheDocument();
   });
 
   it('shows startup failure diagnostics and retries initialization', async () => {

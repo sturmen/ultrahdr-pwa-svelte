@@ -18,6 +18,10 @@ const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/exif_matrix.jpg');
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
 const HDR_INTENT_HIF = path.resolve(__dirname, '../../media/test_hdr_no_gain_map.HIF');
+const UNROTATED_SDR_FIXTURES = [
+    path.resolve(__dirname, '../../media/test_sdr.jpg'),
+    path.resolve(__dirname, '../../media/test_sdr2.jpg'),
+];
 const EXIF_MATRIX_FIXTURES = [
     path.resolve(__dirname, '../../media/exif_matrix.jpg'),
     path.resolve(__dirname, '../../media/exif_matrix.png'),
@@ -122,16 +126,13 @@ async function waitForReprocessing(page) {
     const prompt = page.getByTestId('stale-reprocess-prompt');
     if (await prompt.count()) {
         await prompt.getByRole('button', { name: /^Reprocess$/i }).click();
-        await dismissWasmRecommendationIfVisible(page);
-        await page.getByTestId('reprocess-sheet').getByRole('button', { name: /Reprocess All Stale/i }).click();
     } else {
         const fallback = page.getByRole('button', { name: /^Reprocess$/i });
         if (await fallback.count()) {
             await fallback.first().click();
-            await dismissWasmRecommendationIfVisible(page);
-            await page.getByTestId('reprocess-sheet').getByRole('button', { name: /Reprocess All Stale/i }).click();
         }
     }
+    await dismissWasmRecommendationIfVisible(page);
     await waitForProcessing(page, 1);
 }
 
@@ -674,6 +675,42 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(jpegData[0]).toBe(0xFF);
             expect(jpegData[1]).toBe(0xD8);
             expect(hasGainMapXMP(jpegData)).toBe(true);
+        });
+
+        test.describe('fixture orientation regressions', () => {
+            for (const fixturePath of UNROTATED_SDR_FIXTURES) {
+                test(`should not unexpectedly rotate ${path.basename(fixturePath)} during default processing`, async ({ page }, testInfo) => {
+                    test.setTimeout(180_000);
+                    const fixtureName = path.basename(fixturePath);
+                    const tempDir = fs.mkdtempSync(
+                        path.join(os.tmpdir(), `uhdr-unexpected-rotation-${testInfo.project.name}-`)
+                    );
+
+                    try {
+                        await page.goto('/');
+                        await uploadFiles(page, [fixturePath]);
+                        await waitForProcessing(page);
+
+                        const result = await downloadFirstResult(page);
+                        const outputPath = writeTempJpeg(result, tempDir, `${fixtureName}-output.jpg`);
+                        const sourceBitmap = await loadBitmap(fixturePath);
+                        const outputBitmap = await loadBitmap(outputPath);
+
+                        expect(
+                            {
+                                width: outputBitmap.width,
+                                height: outputBitmap.height,
+                            },
+                            `${fixtureName}: output dimensions should match source dimensions`,
+                        ).toEqual({
+                            width: sourceBitmap.width,
+                            height: sourceBitmap.height,
+                        });
+                    } finally {
+                        fs.rmSync(tempDir, { recursive: true, force: true });
+                    }
+                });
+            }
         });
 
         test('should enforce explicit WebGL backend behavior across browsers', async ({ page }) => {

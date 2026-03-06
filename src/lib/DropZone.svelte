@@ -267,24 +267,25 @@
   .drop-zone {
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xl);
-    padding: 1rem;
+    padding: 0.9rem;
     text-align: left;
     transition: all 0.25s ease;
-    background: var(--surface-raised);
+    background: color-mix(in srgb, var(--surface-color) 74%, transparent);
+    backdrop-filter: blur(14px) saturate(115%);
     cursor: pointer;
     min-height: 44px;
   }
 
   .drop-zone.active {
     border-color: var(--primary-color);
-    background: var(--surface-interactive);
+    background: color-mix(in srgb, var(--surface-interactive) 78%, transparent);
     transform: translateY(-1px);
   }
 
   .drop-label {
     cursor: pointer;
     display: grid;
-    gap: 0.75rem;
+    gap: 0.55rem;
   }
 
   .primary-invite {
@@ -293,9 +294,13 @@
     gap: 0.6rem;
     min-height: 44px;
     width: fit-content;
-    padding: 0.55rem 0.9rem;
-    border-radius: 0.85rem;
-    background: var(--primary-color);
+    padding: 0.52rem 0.88rem;
+    border-radius: 999px;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--primary-strong) 94%, white 6%),
+      var(--primary-color)
+    );
     color: var(--text-on-primary);
     font-weight: 700;
     letter-spacing: 0.01em;
@@ -315,23 +320,15 @@
     color: var(--text-color);
   }
 
-  .headline {
-    font-weight: 600;
-    font-size: 1rem;
-  }
-
   .sub-text {
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     color: var(--text-muted);
   }
 
   @media (min-width: 768px) {
     .drop-zone {
-      padding: 1.4rem;
+      padding: 1.1rem;
     }
 
-    .headline {
-      font-size: 1.06rem;
-    }
   }
 </style>
