@@ -26,3 +26,4 @@ emsdk/
 test-results/
 .wasm-version.json
 .app-version.json
+public/models/runtime-bundle-manifest.json

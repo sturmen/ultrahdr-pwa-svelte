@@ -1,18 +1,11 @@
 import { processImage as processImageCore } from './processing-core.js';
 import { initializeRuntime as initializeRuntimeChecks } from './runtime-initialization.js';
+import { sanitizeRuntimeInitOptions } from './runtime-contract.js';
 
 const activeJobs = new Map();
 let runtimeInitializationPromise = null;
 let runtimeInitializationResult = null;
 let runtimeInitializationError = null;
-
-function normalizeExecutionProvider(value) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
-}
 
 function normalizeError(error) {
   if (error instanceof Error) {
@@ -61,53 +54,6 @@ function postInitError(error) {
   });
 }
 
-function normalizeRuntimeInitializationOptions(rawOptions) {
-  if (!rawOptions || typeof rawOptions !== 'object') {
-    return {};
-  }
-
-  const normalized = {};
-
-  if (typeof rawOptions.smokeAssetPath === 'string') {
-    const smokeAssetPath = rawOptions.smokeAssetPath.trim();
-    if (smokeAssetPath.length > 0) {
-      normalized.smokeAssetPath = smokeAssetPath;
-    }
-  }
-
-  if (typeof rawOptions.modelVariant === 'string') {
-    const modelVariant = rawOptions.modelVariant.trim();
-    if (modelVariant.length > 0) {
-      normalized.modelVariant = modelVariant;
-    }
-  }
-
-  const forceSmokeFailure = rawOptions.forceSmokeFailure;
-  if (
-    forceSmokeFailure === true
-    || forceSmokeFailure === 1
-    || forceSmokeFailure === '1'
-    || (typeof forceSmokeFailure === 'string' && forceSmokeFailure.trim().toLowerCase() === 'true')
-  ) {
-    normalized.forceSmokeFailure = true;
-  }
-
-  if (rawOptions.allowWasmOnly === false) {
-    normalized.allowWasmOnly = false;
-  }
-
-  if (Array.isArray(rawOptions.smokeBypassProviders) && rawOptions.smokeBypassProviders.length > 0) {
-    const smokeBypassProviders = rawOptions.smokeBypassProviders
-      .filter((provider) => typeof provider === 'string' && provider.trim().length > 0)
-      .map((provider) => provider.trim().toLowerCase());
-    if (smokeBypassProviders.length > 0) {
-      normalized.smokeBypassProviders = Array.from(new Set(smokeBypassProviders));
-    }
-  }
-
-  return normalized;
-}
-
 async function ensureRuntimeInitialized(initOptions = null) {
   if (runtimeInitializationResult) {
     return runtimeInitializationResult;
@@ -119,7 +65,7 @@ async function ensureRuntimeInitialized(initOptions = null) {
     return runtimeInitializationPromise;
   }
 
-  const runtimeInitializationOptions = normalizeRuntimeInitializationOptions(initOptions);
+  const runtimeInitializationOptions = sanitizeRuntimeInitOptions(initOptions);
 
   runtimeInitializationPromise = initializeRuntimeChecks({
     onProgress: (event) => {

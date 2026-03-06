@@ -5,6 +5,12 @@ import {
   GMNET_WASM_EXECUTION_PROVIDER,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.js';
+import {
+  RUNTIME_INIT_ERROR_CODES,
+  RUNTIME_INIT_STEP_LABELS,
+  RUNTIME_INIT_STEP_ORDER,
+  normalizeExecutionProvider,
+} from './runtime-contract.js';
 
 const DEFAULT_SMOKE_ASSET_PATH = 'models/gmnet-smoke-128.png';
 const DEFAULT_SMOKE_IMAGE_WIDTH = 128;
@@ -15,44 +21,7 @@ const DEFAULT_GMNET_SESSION_INIT_TIMEOUT_MS = 45_000;
 const DEFAULT_GMNET_SMOKE_RUN_TIMEOUT_MS = 30_000;
 const OFFLINE_RUNTIME_STEP_TIMEOUT_MS = 12_000;
 
-export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
-  'onnx-load',
-  'webgpu-check',
-  'gmnet-session-init',
-  'gmnet-provider-verify',
-  'gmnet-smoke-run',
-  'startup-ready',
-]);
-
-export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
-  'onnx-load': 'Load ONNX Runtime',
-  'webgpu-check': 'Check WebGPU availability',
-  'gmnet-session-init': 'Initialize GMNet session',
-  'gmnet-provider-verify': 'Verify GMNet execution provider',
-  'gmnet-smoke-run': 'Run GMNet smoke test',
-  'startup-ready': 'Finalize startup readiness',
-});
-
-export const RUNTIME_INIT_ERROR_CODES = Object.freeze({
-  ONNX_FAILED: 'RUNTIME_INIT_ONNX_FAILED',
-  WEBGPU_UNAVAILABLE: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
-  NO_COMPATIBLE_GPU_PROVIDER: 'RUNTIME_INIT_NO_COMPATIBLE_GPU_PROVIDER',
-  PROVIDER_MISMATCH: 'RUNTIME_INIT_PROVIDER_MISMATCH',
-  PROVIDER_FALLBACK_EXHAUSTED: 'RUNTIME_INIT_PROVIDER_FALLBACK_EXHAUSTED',
-  SMOKE_ASSET_FAILED: 'RUNTIME_INIT_SMOKE_ASSET_FAILED',
-  SMOKE_INFERENCE_FAILED: 'RUNTIME_INIT_SMOKE_INFERENCE_FAILED',
-  OFFLINE_BUNDLE_NOT_READY: 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY',
-  BUNDLE_VALIDATION_FAILED: 'RUNTIME_INIT_BUNDLE_VALIDATION_FAILED',
-  BUNDLE_REPAIR_FAILED: 'RUNTIME_INIT_BUNDLE_REPAIR_FAILED',
-});
-
-function normalizeExecutionProvider(value) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
-}
+export { RUNTIME_INIT_ERROR_CODES, RUNTIME_INIT_STEP_LABELS, RUNTIME_INIT_STEP_ORDER } from './runtime-contract.js';
 
 function normalizeExecutionProviderList(values) {
   if (!Array.isArray(values)) {
