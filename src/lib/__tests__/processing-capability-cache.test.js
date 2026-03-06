@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRuntimeFixture } from './fixtures/createRuntimeFixture.js';
 
 class CapabilityWorker {
   static instances = [];
@@ -132,13 +133,13 @@ describe('processing probe-free runtime init and process options', () => {
       },
     };
 
-    const { initializeRuntime, processImage } = await import('../processing.js');
-    await initializeRuntime();
+    const { initialize, process } = await createRuntimeFixture();
+    await initialize();
 
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', {
       type: 'image/jpeg',
     });
-    await processImage(file, {});
+    await process(file, {});
 
     const worker = CapabilityWorker.instances[0];
     const processMessage = worker.posted.find((message) => message.type === 'process');
@@ -146,7 +147,7 @@ describe('processing probe-free runtime init and process options', () => {
   });
 
   it('does not persist gmnet capability payloads emitted from worker progress events', async () => {
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
 
     CapabilityWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {
@@ -187,15 +188,15 @@ describe('processing probe-free runtime init and process options', () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', {
       type: 'image/jpeg',
     });
-    await processImage(file, {});
+    await process(file, {});
 
     expect(localStorage.setItem).not.toHaveBeenCalled();
   });
 
   it('does not forward gmnetCapabilityHintsByProvider in initializeRuntime init options', async () => {
-    const { initializeRuntime } = await import('../processing.js');
+    const { initialize } = await createRuntimeFixture();
 
-    await initializeRuntime({
+    await initialize({
       runtimeInitOptions: {
         gmnetCapabilityHintsByProvider: {
           webgpu: {
@@ -226,8 +227,8 @@ describe('processing probe-free runtime init and process options', () => {
     };
 
     try {
-      const { initializeRuntime } = await import('../processing.js');
-      await initializeRuntime();
+      const { initialize } = await createRuntimeFixture();
+      await initialize();
     } finally {
       delete globalThis.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS;
     }
@@ -248,8 +249,8 @@ describe('processing probe-free runtime init and process options', () => {
       '/?__uhdr_test_smoke_asset_path=models/gmnet-smoke-128-missing.png',
     );
 
-    const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    await initialize();
 
     const worker = CapabilityWorker.instances[0];
     const initMessage = worker.posted.find((message) => message.type === 'init');
@@ -273,8 +274,8 @@ describe('processing probe-free runtime init and process options', () => {
       }),
     );
 
-    const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    await initialize();
 
     const worker = CapabilityWorker.instances[0];
     const initMessage = worker.posted.find((message) => message.type === 'init');
@@ -292,8 +293,8 @@ describe('processing probe-free runtime init and process options', () => {
       '/?__uhdr_test_force_smoke_failure=1',
     );
 
-    const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    await initialize();
 
     const worker = CapabilityWorker.instances[0];
     const initMessage = worker.posted.find((message) => message.type === 'init');
@@ -305,8 +306,8 @@ describe('processing probe-free runtime init and process options', () => {
   });
 
   it('forwards explicit runtimeInitOptions from initializeRuntime', async () => {
-    const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime({
+    const { initialize } = await createRuntimeFixture();
+    await initialize({
       runtimeInitOptions: {
         smokeAssetPath: 'models/gmnet-smoke-explicit.png',
         forceExecutionProviders: ['webgl'],

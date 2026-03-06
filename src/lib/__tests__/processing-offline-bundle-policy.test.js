@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRuntimeFixture } from './fixtures/createRuntimeFixture.js';
 
 vi.mock('../offline-runtime-bundle.js', () => ({
   BUNDLE_STATES: {
@@ -87,9 +88,9 @@ describe('processing runtime bundle policy', () => {
       diagnostics: { reason: 'missing-readiness' },
     });
 
-    const { initializeRuntime } = await import('../processing.js');
+    const { initialize } = await createRuntimeFixture();
 
-    await expect(initializeRuntime()).rejects.toMatchObject({
+    await expect(initialize()).rejects.toMatchObject({
       code: 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY',
       stepId: 'onnx-load',
     });
@@ -105,8 +106,8 @@ describe('processing runtime bundle policy', () => {
       validatedAtMs: 123,
     });
 
-    const { initializeRuntime } = await import('../processing.js');
-    const result = await initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    const result = await initialize();
 
     expect(result.bundleState).toBe('READY');
     expect(result.bundleVersion).toBe('bundle-v1');

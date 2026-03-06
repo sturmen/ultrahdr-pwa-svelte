@@ -4,12 +4,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/svelte';
 import ImageProcessor from '../ImageProcessor.svelte';
-import { processImage } from '../processing';
 import { storeQueueState } from '../share-store.js';
 
-vi.mock('../processing', () => ({
-  processImage: vi.fn(),
-}));
+const runtimeProcessMock = vi.fn();
 
 vi.mock('../capabilities.js', () => ({
   getCapabilities: vi.fn(() => ({
@@ -47,9 +44,20 @@ function makeFile(name = 'photo.jpg') {
   return new File(['file'], name, { type: 'image/jpeg' });
 }
 
+function createRuntime() {
+  return {
+    process: runtimeProcessMock,
+    subscribe: vi.fn(() => () => {}),
+    getSnapshot: vi.fn(() => ({ status: 'idle', runtime: null, error: null, progress: null })),
+    initialize: vi.fn(async () => ({ ready: true })),
+    dispose: vi.fn(async () => {}),
+  };
+}
+
 describe('ImageProcessor lifecycle durability', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeProcessMock.mockReset();
     delete globalThis.scheduler;
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: false,
@@ -65,7 +73,7 @@ describe('ImageProcessor lifecycle durability', () => {
 
   it('reacquires wake lock when tab becomes visible again during active queue processing', async () => {
     const processingGate = createDeferred();
-    vi.mocked(processImage).mockImplementationOnce(async () => {
+    runtimeProcessMock.mockImplementationOnce(async () => {
       await processingGate.promise;
       return new Blob(['done'], { type: 'image/jpeg' });
     });
@@ -95,11 +103,12 @@ describe('ImageProcessor lifecycle durability', () => {
     render(ImageProcessor, {
       props: {
         files: [makeFile()],
+        runtime: createRuntime(),
       },
     });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
       expect(requestWakeLock).toHaveBeenCalledTimes(1);
     });
 
@@ -119,7 +128,7 @@ describe('ImageProcessor lifecycle durability', () => {
 
   it('flushes queue state to storage when pagehide fires', async () => {
     const processingGate = createDeferred();
-    vi.mocked(processImage).mockImplementationOnce(async () => {
+    runtimeProcessMock.mockImplementationOnce(async () => {
       await processingGate.promise;
       return new Blob(['done'], { type: 'image/jpeg' });
     });
@@ -127,11 +136,12 @@ describe('ImageProcessor lifecycle durability', () => {
     render(ImageProcessor, {
       props: {
         files: [makeFile()],
+        runtime: createRuntime(),
       },
     });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
     await Promise.resolve();
 
@@ -149,7 +159,7 @@ describe('ImageProcessor lifecycle durability', () => {
 
   it('uses scheduler.postTask for non-urgent queue persistence when available', async () => {
     const processingGate = createDeferred();
-    vi.mocked(processImage).mockImplementationOnce(async () => {
+    runtimeProcessMock.mockImplementationOnce(async () => {
       await processingGate.promise;
       return new Blob(['done'], { type: 'image/jpeg' });
     });
@@ -164,11 +174,12 @@ describe('ImageProcessor lifecycle durability', () => {
     render(ImageProcessor, {
       props: {
         files: [makeFile()],
+        runtime: createRuntime(),
       },
     });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
       expect(postTask).toHaveBeenCalled();
     });
 

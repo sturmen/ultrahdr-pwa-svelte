@@ -11,8 +11,13 @@ vi.mock('../share-target-launch.js', () => ({
 }));
 
 vi.mock('../processing.js', () => ({
-  initializeRuntime: vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' })),
-  processImage: vi.fn(async () => new Blob(['mock-jpeg'], { type: 'image/jpeg' })),
+  createProcessingRuntime: vi.fn(() => ({
+    initialize: vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' })),
+    process: vi.fn(async () => new Blob(['mock-jpeg'], { type: 'image/jpeg' })),
+    subscribe: vi.fn(() => () => {}),
+    getSnapshot: vi.fn(() => ({ status: 'idle', runtime: null, error: null, progress: null })),
+    dispose: vi.fn(async () => {}),
+  })),
   RUNTIME_INIT_STEP_ORDER: ['startup-ready'],
   RUNTIME_INIT_STEP_LABELS: { 'startup-ready': 'Finalize startup readiness' },
 }));

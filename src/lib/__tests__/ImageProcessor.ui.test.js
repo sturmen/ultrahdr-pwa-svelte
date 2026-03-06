@@ -4,20 +4,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte';
 import ImageProcessor from '../ImageProcessor.svelte';
-import { processImage } from '../processing';
 
-vi.mock('../processing', () => ({
-  processImage: vi.fn(async (_file, options = {}) => {
-    options.onProgress?.({
-      phase: 'pipeline-complete',
-      stage: 'encode',
-      elapsedMs: 5,
-      stageDurationsMs: { encode: 5 },
-      timestamp: Date.now(),
-    });
-    return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-  }),
-}));
+const runtimeProcessMock = vi.fn(async (_file, options = {}) => {
+  options.onProgress?.({
+    phase: 'pipeline-complete',
+    stage: 'encode',
+    elapsedMs: 5,
+    stageDurationsMs: { encode: 5 },
+    timestamp: Date.now(),
+  });
+  return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+});
 
 function createMatchMedia(matchesDesktop) {
   return vi.fn().mockImplementation((query) => ({
@@ -55,9 +52,24 @@ function setUserAgent(userAgent) {
   });
 }
 
+function createRuntime() {
+  return {
+    process: runtimeProcessMock,
+    subscribe: vi.fn(() => () => {}),
+    getSnapshot: vi.fn(() => ({ status: 'idle', runtime: null, error: null, progress: null })),
+    initialize: vi.fn(async () => ({ ready: true })),
+    dispose: vi.fn(async () => {}),
+  };
+}
+
+function renderProcessor(props = {}) {
+  return render(ImageProcessor, { props: { runtime: createRuntime(), ...props } });
+}
+
 describe('ImageProcessor mobile-native UI behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeProcessMock.mockClear();
     window.matchMedia = createMatchMedia(false);
     window.localStorage?.clear?.();
     delete window.__ULTRAHDR_PROCESSING_PREFERENCES;
@@ -73,9 +85,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('honors launch intent tab=results on initial render', async () => {
-    render(ImageProcessor, {
-      props: { files: makeFiles(1), launchIntent: { tab: 'results' } },
-    });
+    renderProcessor({ files: makeFiles(1), launchIntent: { tab: 'results' } });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveAttribute('aria-selected', 'true');
@@ -83,7 +93,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('auto-switches to results tab after regular mobile queue completion', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -93,14 +103,14 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
   it('shows empty-gallery drop zone in desktop two-pane layout when queue is empty', async () => {
     window.matchMedia = createMatchMedia(true);
-    render(ImageProcessor, { props: { files: [] } });
+    renderProcessor({ files: [] });
 
     expect(screen.getByTestId('desktop-two-pane')).toBeInTheDocument();
     expect(screen.getByTestId('upload-drop-zone')).toBeInTheDocument();
   });
 
   it('keeps Add Images in convert tab and shows drop zone in empty mobile results gallery', async () => {
-    render(ImageProcessor, { props: { files: [] } });
+    renderProcessor({ files: [] });
 
     expect(screen.getByRole('button', { name: /add images/i })).toBeInTheDocument();
     await fireEvent.click(screen.getByTestId('tab-results'));
@@ -108,7 +118,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('processes files selected from empty-gallery drop zone', async () => {
-    render(ImageProcessor, { props: { files: [] } });
+    renderProcessor({ files: [] });
 
     await fireEvent.click(screen.getByTestId('tab-results'));
     const input = document.getElementById('file-upload');
@@ -125,7 +135,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('shows only Convert/Results mobile tabs and opens settings directly from floating gear', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     const convertTab = screen.getByTestId('tab-convert');
     expect(convertTab).toHaveAttribute('aria-selected', 'true');
@@ -142,7 +152,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('shows mobile results action bar with export and discard controls', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -163,7 +173,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('opens a full-screen photo viewer from a result thumbnail and closes it with X', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(2) } });
+    renderProcessor({ files: makeFiles(2) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
@@ -179,7 +189,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('uses explicit selection control while thumbnail clicks open viewer', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -199,7 +209,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('supports swipe navigation in viewer and bounces at edges without wrap-around', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(2) } });
+    renderProcessor({ files: makeFiles(2) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
@@ -250,7 +260,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
   it('supports keyboard navigation and escape close while viewer is open', async () => {
     window.matchMedia = createMatchMedia(true);
-    render(ImageProcessor, { props: { files: makeFiles(2) } });
+    renderProcessor({ files: makeFiles(2) });
 
     await waitFor(() => {
       expect(screen.getByTestId('results-grid')).toBeInTheDocument();
@@ -273,7 +283,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
   it('shows close control only when hovering top-right corner on desktop', async () => {
     window.matchMedia = createMatchMedia(true);
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('results-grid')).toBeInTheDocument();
@@ -291,7 +301,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('keeps close control always visible on mobile viewer', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -307,7 +317,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('anchors the close control to the top-right corner of the viewer', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -323,7 +333,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('keeps rotation controls on mobile results and hides them in mobile settings sheet', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -344,7 +354,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('renders two-pane desktop layout and hides mobile tab bar', async () => {
     window.matchMedia = createMatchMedia(true);
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('results-grid')).toBeInTheDocument();
@@ -361,7 +371,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('shows clear multi-download choices with tooltip info in export sheet', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(2) } });
+    renderProcessor({ files: makeFiles(2) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
@@ -393,7 +403,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('renders granular progress details from stage-progress telemetry updates', async () => {
     const progressGate = createDeferred();
 
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
       const baseEvent = {
         elapsedMs: 12,
         stageDurationsMs: {},
@@ -426,7 +436,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('pipeline-progress')).toBeInTheDocument();
@@ -445,7 +455,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('shows AI model updates inside pipeline-status with inline progress UI', async () => {
     const progressGate = createDeferred();
 
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
       const baseEvent = {
         elapsedMs: 12,
         stageDurationsMs: {},
@@ -468,7 +478,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
@@ -487,7 +497,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('renders checkpoint memory mode telemetry when checkpointed progress metadata is emitted', async () => {
     const progressGate = createDeferred();
 
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
       options.onProgress?.({
         phase: 'stage-progress',
         stage: 'generate-gain-map',
@@ -509,7 +519,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
@@ -528,7 +538,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('shows only "Processing complete" in progress box after queue completion', async () => {
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
       const baseEvent = {
         elapsedMs: 12,
         stageDurationsMs: { encode: 9 },
@@ -554,10 +564,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
@@ -568,7 +578,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('does not render capability restriction UI when legacy capability payloads are emitted', async () => {
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
       const now = Date.now();
       options.onProgress?.({
         phase: 'stage-progress',
@@ -598,10 +608,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
     await fireEvent.click(screen.getByTestId('tab-convert'));
     expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
@@ -612,7 +622,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('does not show wasm recommendation modal from legacy constrainedByCapability events', async () => {
-    vi.mocked(processImage).mockImplementationOnce(async (_file, options = {}) => {
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
       const now = Date.now();
       options.onProgress?.({
         phase: 'stage-progress',
@@ -640,20 +650,20 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
     });
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
     expect(screen.queryByTestId('capability-restriction-banner')).not.toBeInTheDocument();
     expect(screen.queryByTestId('wasm-recommendation-modal')).not.toBeInTheDocument();
   });
 
   it('renders backend preference dropdown with all backend options in mobile settings', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
@@ -674,10 +684,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('persists backend preference and applies forced provider to subsequent processing runs', async () => {
-    const { unmount } = render(ImageProcessor, { props: { files: makeFiles(1) } });
+    const { unmount } = renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
@@ -685,13 +695,13 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.change(backendSelect, { target: { value: 'webgl' } });
     unmount();
 
-    vi.mocked(processImage).mockClear();
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    vi.mocked(runtimeProcessMock).mockClear();
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
-    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).toEqual(
       expect.objectContaining({
         forceExecutionProviders: ['webgl'],
       }),
@@ -708,13 +718,13 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       window,
     );
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).toEqual(
       expect.objectContaining({
         forceExecutionProviders: ['webgl'],
         gmnetCheckpointing: 'force',
@@ -735,13 +745,13 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       window,
     );
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).toEqual(
       expect.objectContaining({
         gmnetCheckpointing: 'force',
       }),
@@ -761,13 +771,13 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       window,
     );
 
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(vi.mocked(processImage).mock.calls[0][1]).toEqual(
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).toEqual(
       expect.objectContaining({
         gmnetCheckpointing: 'off',
       }),
@@ -777,7 +787,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('pauses after the current file and resumes queued work only when resumed', async () => {
     const firstFileGate = createDeferred();
 
-    vi.mocked(processImage)
+    vi.mocked(runtimeProcessMock)
       .mockImplementationOnce(async (_file, options = {}) => {
         options.onProgress?.({
           phase: 'pipeline-start',
@@ -813,10 +823,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
         return new Blob(['second'], { type: 'image/jpeg' });
       });
 
-    render(ImageProcessor, { props: { files: makeFiles(2) } });
+    renderProcessor({ files: makeFiles(2) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/pause queue/i);
@@ -830,19 +840,19 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await waitFor(() => {
       expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/resume queue/i);
     });
-    expect(processImage).toHaveBeenCalledTimes(1);
+    expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(screen.getByTestId('queue-smart-control'));
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(2);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
   });
 
   it('shows one stale reprocess CTA that opens reprocess sheet options', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
@@ -859,17 +869,17 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(2);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
   });
 
   it('does not expose reverse tone map version controls and keeps processing fixed to v2 behavior', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
-    expect(vi.mocked(processImage).mock.calls[0][1]).not.toHaveProperty('reverseToneMapVersion');
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).not.toHaveProperty('reverseToneMapVersion');
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
     expect(screen.queryByText(/advanced algorithm controls/i)).not.toBeInTheDocument();
@@ -888,35 +898,35 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(2);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
-    expect(vi.mocked(processImage).mock.calls[1][1]).not.toHaveProperty('reverseToneMapVersion');
+    expect(vi.mocked(runtimeProcessMock).mock.calls[1][1]).not.toHaveProperty('reverseToneMapVersion');
   });
 
   it('removes performance mode controls and legacy resolution options from process requests', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
     expect(screen.queryByLabelText(/performance mode/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /performance mode/i })).not.toBeInTheDocument();
 
-    const firstOptions = vi.mocked(processImage).mock.calls[0][1];
+    const firstOptions = vi.mocked(runtimeProcessMock).mock.calls[0][1];
     expect(firstOptions).not.toHaveProperty('safeMode');
     expect(firstOptions).not.toHaveProperty('maxOutputMegapixels');
     expect(firstOptions).not.toHaveProperty('gainMapScale');
   });
 
   it('treats HDR strength slider values as stops and converts them to linear maxContentBoost', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(1);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
-    const firstOptions = vi.mocked(processImage).mock.calls[0][1];
+    const firstOptions = vi.mocked(runtimeProcessMock).mock.calls[0][1];
     expect(firstOptions.maxContentBoost).toBeCloseTo(2 ** 2.3, 6);
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
@@ -932,15 +942,15 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.click(screen.getByRole('button', { name: /reprocess all stale/i }));
 
     await waitFor(() => {
-      expect(processImage).toHaveBeenCalledTimes(2);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
 
-    const secondOptions = vi.mocked(processImage).mock.calls[1][1];
+    const secondOptions = vi.mocked(runtimeProcessMock).mock.calls[1][1];
     expect(secondOptions.maxContentBoost).toBeCloseTo(2 ** 4, 6);
   });
 
   it('shows results reprocess button only after rotation makes results stale', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -957,7 +967,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('moves to results and emphasizes share-out action after share-target completion', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1), launchSource: 'share-target' } });
+    renderProcessor({ files: makeFiles(1), launchSource: 'share-target' });
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
@@ -968,7 +978,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('renders floating gear as icon-only control instead of text label', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     const gearButton = screen.getByTestId('floating-gear');
     expect(gearButton.querySelector('svg')).toBeTruthy();
@@ -976,7 +986,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('updates app badge during queue work and clears badge when queue completes', async () => {
-    render(ImageProcessor, { props: { files: makeFiles(1) } });
+    renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(window.navigator.setAppBadge).toHaveBeenCalled();

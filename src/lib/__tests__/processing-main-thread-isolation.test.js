@@ -9,7 +9,7 @@ describe('processing wrapper main-thread isolation', () => {
 
     await expect(import('../processing.js')).resolves.toEqual(
       expect.objectContaining({
-        processImage: expect.any(Function),
+        createProcessingRuntime: expect.any(Function),
       }),
     );
   });

@@ -3,7 +3,7 @@
   import ImageProcessor from "./lib/ImageProcessor.svelte";
   import InitializationGate from "./lib/InitializationGate.svelte";
   import {
-    initializeRuntime,
+    createProcessingRuntime,
     RUNTIME_INIT_STEP_LABELS,
     RUNTIME_INIT_STEP_ORDER,
   } from "./lib/processing.js";
@@ -34,6 +34,7 @@
   let runtimeInitMode = null;
   let runtimeInitDegraded = false;
   let appDisposed = false;
+  const processingRuntime = createProcessingRuntime();
 
   function createRuntimeInitSteps() {
     return RUNTIME_INIT_STEP_ORDER.map((stepId) => ({
@@ -169,7 +170,7 @@
       const runtimeInitOptions = resolveRuntimeInitOverrides(
         typeof window !== "undefined" ? window.location.search : "",
       );
-      const runtimeResult = await initializeRuntime({
+      const runtimeResult = await processingRuntime.initialize({
         forceRetry,
         onProgress: (event) => {
           if (appDisposed || runId !== runtimeInitRunId) {
@@ -419,6 +420,7 @@
         {files}
         {launchSource}
         {launchIntent}
+        runtime={processingRuntime}
         runtimeExecutionProvider={runtimeInitExecutionProvider}
         on:reset={handleReset}
         on:processingbusychange={handleProcessingBusyChange}

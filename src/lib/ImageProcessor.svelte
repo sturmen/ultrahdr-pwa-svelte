@@ -2,7 +2,6 @@
   import { createEventDispatcher, onMount } from "svelte";
   import DropZone from "./DropZone.svelte";
   import { getCapabilities } from "./capabilities.js";
-  import { processImage } from "./processing";
   import JSZip from "jszip";
   import {
     buildShareFiles,
@@ -36,6 +35,7 @@
   export let files = [];
   export let launchSource = "regular";
   export let launchIntent = { action: null, tab: null };
+  export let runtime = null;
   export let runtimeExecutionProvider = null;
 
   let maxContentBoostStops = 2.3;
@@ -1095,7 +1095,7 @@
         });
 
         try {
-          const blob = await processImage(
+          const blob = await runtime.process(
             nextItem.file,
             buildProcessingOptions(
               controller.signal,

@@ -5,7 +5,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import App from '../../App.svelte';
 import { consumeSharedFilesFromLaunch, registerLaunchQueueConsumer } from '../share-target-launch.js';
-import { initializeRuntime } from '../processing.js';
+import { createProcessingRuntime } from '../processing.js';
+
+const runtimeInitializeMock = vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' }));
+const runtimeProcessMock = vi.fn(async (_file, options = {}) => {
+  options.onProgress?.({
+    phase: 'pipeline-complete',
+    stage: 'encode',
+    elapsedMs: 5,
+    stageDurationsMs: { encode: 5 },
+    timestamp: Date.now(),
+    fileIndex: 0,
+    totalFiles: 1,
+  });
+  return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+});
 
 vi.mock('../share-target-launch.js', () => ({
   consumeSharedFilesFromLaunch: vi.fn(),
@@ -13,19 +27,13 @@ vi.mock('../share-target-launch.js', () => ({
 }));
 
 vi.mock('../processing.js', () => ({
-  initializeRuntime: vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' })),
-  processImage: vi.fn(async (_file, options = {}) => {
-    options.onProgress?.({
-      phase: 'pipeline-complete',
-      stage: 'encode',
-      elapsedMs: 5,
-      stageDurationsMs: { encode: 5 },
-      timestamp: Date.now(),
-      fileIndex: 0,
-      totalFiles: 1,
-    });
-    return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-  }),
+  createProcessingRuntime: vi.fn(() => ({
+    initialize: runtimeInitializeMock,
+    process: runtimeProcessMock,
+    subscribe: vi.fn(() => () => {}),
+    getSnapshot: vi.fn(() => ({ status: 'idle', runtime: null, error: null, progress: null })),
+    dispose: vi.fn(async () => {}),
+  })),
   RUNTIME_INIT_STEP_ORDER: [
     'onnx-load',
     'webgpu-check',
@@ -75,7 +83,7 @@ describe('App shell and startup gate', () => {
     delete window.__ULTRAHDR_BACKEND_PREFERENCE;
     consumeSharedFilesFromLaunch.mockResolvedValue([]);
     registerLaunchQueueConsumer.mockReturnValue(true);
-    vi.mocked(initializeRuntime).mockResolvedValue({ ready: true, resolvedExecutionProvider: 'webgpu' });
+    runtimeInitializeMock.mockResolvedValue({ ready: true, resolvedExecutionProvider: 'webgpu' });
     window.history.replaceState({}, '', '/');
   });
 
@@ -89,7 +97,7 @@ describe('App shell and startup gate', () => {
 
   it('renders initialization checklist while runtime is still initializing', async () => {
     const initGate = deferred();
-    vi.mocked(initializeRuntime).mockReturnValue(initGate.promise);
+    runtimeInitializeMock.mockReturnValue(initGate.promise);
 
     render(App);
 
@@ -129,7 +137,7 @@ describe('App shell and startup gate', () => {
   });
 
   it('shows startup failure diagnostics and retries initialization', async () => {
-    vi.mocked(initializeRuntime)
+    runtimeInitializeMock
       .mockRejectedValueOnce(createInitFailure())
       .mockResolvedValueOnce({ ready: true, resolvedExecutionProvider: 'webgl' });
 
@@ -145,7 +153,7 @@ describe('App shell and startup gate', () => {
       expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
     });
     expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/webgl/i);
-    expect(initializeRuntime).toHaveBeenCalledTimes(2);
+    expect(runtimeInitializeMock).toHaveBeenCalledTimes(2);
   });
 
   it('shows loading state while share-target launch files are being checked after init', async () => {
@@ -165,7 +173,7 @@ describe('App shell and startup gate', () => {
   });
 
   it('surfaces compatibility-mode messaging when runtime initializes in degraded main-thread wasm mode', async () => {
-    vi.mocked(initializeRuntime).mockResolvedValueOnce({
+    runtimeInitializeMock.mockResolvedValueOnce({
       ready: true,
       resolvedExecutionProvider: 'wasm',
       runtimeMode: 'main-thread-wasm',
@@ -195,7 +203,7 @@ describe('App shell and startup gate', () => {
 
   it('ignores legacy probe attempt fields in runtime init progress updates', async () => {
     const initGate = deferred();
-    vi.mocked(initializeRuntime).mockImplementationOnce(async ({ onProgress } = {}) => {
+    runtimeInitializeMock.mockImplementationOnce(async ({ onProgress } = {}) => {
       onProgress?.({
         stepId: 'gmnet-smoke-run',
         status: 'running',

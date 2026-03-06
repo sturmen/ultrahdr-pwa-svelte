@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRuntimeFixture } from './fixtures/createRuntimeFixture.js';
 
 class HangingInitWorker {
   constructor() {
@@ -50,8 +51,8 @@ describe('processing worker init timeout', () => {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0',
     );
 
-    const { initializeRuntime } = await import('../processing.js');
-    const initPromise = initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    const initPromise = initialize();
 
     const settled = { value: false };
     initPromise.catch(() => {

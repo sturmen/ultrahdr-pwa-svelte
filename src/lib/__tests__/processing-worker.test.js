@@ -6,6 +6,7 @@ import {
   PIPELINE_HISTORY_KEY,
   PIPELINE_STATE_KEY,
 } from '../pipeline-telemetry.js';
+import { createRuntimeFixture } from './fixtures/createRuntimeFixture.js';
 
 const processImageCoreMock = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/jpeg' }));
 
@@ -138,10 +139,10 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = undefined;
     globalThis.createImageBitmap = undefined;
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
 
-    const result = await processImage(file, {});
+    const result = await process(file, {});
     expect(result).toBeInstanceOf(Blob);
     expect(processImageCoreMock).toHaveBeenCalledTimes(1);
   });
@@ -155,10 +156,10 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
 
-    const result = await processImage(file, {});
+    const result = await process(file, {});
     expect(result).toBeInstanceOf(Blob);
     expect(processImageCoreMock).toHaveBeenCalledTimes(1);
   });
@@ -168,10 +169,10 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = undefined;
     globalThis.createImageBitmap = undefined;
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
 
-    await expect(processImage(file, { allowMainThreadFallback: false })).rejects.toMatchObject({
+    await expect(process(file, { allowMainThreadFallback: false })).rejects.toMatchObject({
       name: 'ProcessingWorkerUnavailableError',
     });
     expect(processImageCoreMock).not.toHaveBeenCalled();
@@ -219,8 +220,8 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { initializeRuntime } = await import('../processing.js');
-    const result = await initializeRuntime({ onProgress });
+    const { initialize } = await createRuntimeFixture();
+    const result = await initialize({ onProgress });
 
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -260,8 +261,8 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { initializeRuntime } = await import('../processing.js');
-    const result = await initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    const result = await initialize();
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -277,8 +278,8 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = undefined;
     globalThis.createImageBitmap = undefined;
 
-    const { initializeRuntime } = await import('../processing.js');
-    const result = await initializeRuntime();
+    const { initialize } = await createRuntimeFixture();
+    const result = await initialize();
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -335,8 +336,8 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime({ onProgress });
+    const { initialize } = await createRuntimeFixture();
+    await initialize({ onProgress });
 
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -361,8 +362,8 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
 
-    const { initializeRuntime } = await import('../processing.js');
-    await initializeRuntime({
+    const { initialize } = await createRuntimeFixture();
+    await initialize({
       runtimeInitOptions: {
         gmnetCapabilityHintsByProvider: {
           webgpu: {
@@ -417,8 +418,8 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { initializeRuntime } = await import('../processing.js');
-    await expect(initializeRuntime()).rejects.toMatchObject({
+    const { initialize } = await createRuntimeFixture();
+    await expect(initialize()).rejects.toMatchObject({
       name: 'RuntimeInitializationError',
       code: 'RUNTIME_INIT_WEBGPU_UNAVAILABLE',
       stepId: 'webgpu-check',
@@ -434,11 +435,11 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
     const onProgress = vi.fn();
 
-    const resultPromise = processImage(file, { onProgress });
+    const resultPromise = process(file, { onProgress });
     await flush();
     const result = await resultPromise;
 
@@ -489,11 +490,11 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
     const onProgress = vi.fn();
 
-    await processImage(file, { onProgress });
+    await process(file, { onProgress });
 
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -508,10 +509,10 @@ describe('processing worker wrapper', () => {
     globalThis.OffscreenCanvas = class OffscreenCanvas {};
     globalThis.createImageBitmap = vi.fn();
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
 
-    await processImage(file, {
+    await process(file, {
       gmnetCheckpointing: 'force',
     });
 
@@ -561,11 +562,11 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
     const onProgress = vi.fn();
 
-    await processImage(file, { onProgress });
+    await process(file, { onProgress });
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
         gmnetMemoryMode: 'checkpointed',
@@ -599,11 +600,11 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
     const controller = new AbortController();
 
-    const promise = processImage(file, { abortSignal: controller.signal });
+    const promise = process(file, { abortSignal: controller.signal });
     await flush();
     controller.abort();
 
@@ -623,9 +624,9 @@ describe('processing worker wrapper', () => {
       // Simulate a stuck worker job: no progress/result/error messages.
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
-    const promise = processImage(file, {});
+    const promise = process(file, {});
     const rejection = expect(promise).rejects.toMatchObject({ name: 'ProcessingWorkerTimeoutError' });
 
     await Promise.resolve();
@@ -684,12 +685,12 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
     const onProgress = vi.fn();
     const controller = new AbortController();
 
-    const promise = processImage(file, { onProgress, abortSignal: controller.signal });
+    const promise = process(file, { onProgress, abortSignal: controller.signal });
     await Promise.resolve();
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(16_000);
@@ -748,10 +749,10 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
     let settled = false;
-    const promise = processImage(file, {});
+    const promise = process(file, {});
     promise.then(
       () => {
         settled = true;
@@ -828,10 +829,10 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
     let settled = false;
-    const promise = processImage(file, {});
+    const promise = process(file, {});
     promise.then(
       () => {
         settled = true;
@@ -888,11 +889,11 @@ describe('processing worker wrapper', () => {
       });
     };
 
-    const { processImage } = await import('../processing.js');
+    const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
     const onProgress = vi.fn();
 
-    const promise = processImage(file, { onProgress });
+    const promise = process(file, { onProgress });
     const rejection = expect(promise).rejects.toMatchObject({
       name: 'ProcessingWorkerInferenceTimeoutError',
     });

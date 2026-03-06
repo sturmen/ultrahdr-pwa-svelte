@@ -1047,13 +1047,3 @@ export function createProcessingRuntime(dependencies = {}) {
     return lastResult;
   }
 }
-
-const defaultProcessingRuntime = createProcessingRuntime();
-
-export async function initializeRuntime(options = {}) {
-  return defaultProcessingRuntime.initialize(options);
-}
-
-export async function processImage(file, options = {}) {
-  return defaultProcessingRuntime.process(file, options);
-}
