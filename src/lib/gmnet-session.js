@@ -212,9 +212,6 @@ function configureOrtRuntime(ortModule, runtime = globalThis) {
     ortModule.env.wasm.simd = !isWebKitRuntime(runtime);
     const ortAssetBasePath = resolveOrtAssetBasePath();
     ortModule.env.wasm.wasmPaths = {
-        'ort-wasm.wasm': `${ortAssetBasePath}ort-wasm.wasm`,
-        'ort-wasm-simd.wasm': `${ortAssetBasePath}ort-wasm-simd.wasm`,
-        'ort-wasm-threaded.wasm': `${ortAssetBasePath}ort-wasm-threaded.wasm`,
         'ort-wasm-simd-threaded.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.wasm`,
         'ort-wasm-simd-threaded.jsep.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jsep.wasm`,
         'ort-wasm-simd-threaded.asyncify.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.asyncify.wasm`,

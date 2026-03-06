@@ -4,6 +4,15 @@ import { registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { storeSharedFiles } from './lib/share-store.js';
+import {
+    AI_MODEL_CACHE_PREFIX,
+    LIBHEIF_ASSET_CACHE_PREFIX,
+    ONNX_WASM_CACHE_PREFIX,
+    RUNTIME_CACHE_PREFIX,
+    WASM_ASSET_CACHE_PREFIX,
+    buildRuntimeBundleCacheNames,
+    resolveRuntimeBundleCacheName,
+} from './lib/runtime-bundle-asset-map.js';
 
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
@@ -20,19 +29,17 @@ const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 's
     ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
     : '';
 const RESOLVED_APP_ASSET_VERSION = APP_ASSET_VERSION || 'dev-unversioned-app';
-const RUNTIME_CACHE_PREFIX = 'uhdr-runtime';
-const WASM_ASSET_CACHE_PREFIX = 'uhdr-wasm-assets';
-const LIBHEIF_ASSET_CACHE_PREFIX = 'uhdr-libheif-assets';
-const AI_MODEL_CACHE_PREFIX = 'uhdr-ai-models';
 const OFFLINE_BUNDLE_MANIFEST_PATH = 'models/runtime-bundle-manifest.json';
 const UHDR_PREPARE_BUNDLE = 'UHDR_PREPARE_BUNDLE';
 const UHDR_VALIDATE_BUNDLE = 'UHDR_VALIDATE_BUNDLE';
 const UHDR_REPAIR_BUNDLE = 'UHDR_REPAIR_BUNDLE';
 const UHDR_GET_APP_ASSET_VERSION = 'UHDR_GET_APP_ASSET_VERSION';
-const RUNTIME_CACHE = `${RUNTIME_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
-const WASM_ASSET_CACHE = `${WASM_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
-const LIBHEIF_ASSET_CACHE = `${LIBHEIF_ASSET_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
-const AI_MODEL_CACHE = `${AI_MODEL_CACHE_PREFIX}-${RESOLVED_APP_ASSET_VERSION}`;
+const CACHE_NAMES = buildRuntimeBundleCacheNames(RESOLVED_APP_ASSET_VERSION);
+const RUNTIME_CACHE = CACHE_NAMES.runtime;
+const WASM_ASSET_CACHE = CACHE_NAMES.wasmAssets;
+const LIBHEIF_ASSET_CACHE = CACHE_NAMES.libheifAssets;
+const AI_MODEL_CACHE = CACHE_NAMES.aiModels;
+const ONNX_WASM_CACHE = CACHE_NAMES.onnxWasmAssets;
 
 function resolveBasePath() {
     const scope = self.registration?.scope || self.location?.origin || '/';
@@ -89,7 +96,8 @@ async function validateRuntimeBundleFromManifest(manifest) {
     const mismatchedAssets = [];
 
     for (const requiredAsset of manifest.requiredAssets) {
-        const cache = await caches.open(requiredAsset.cacheName);
+        const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
+        const cache = await caches.open(cacheName);
         const assetUrl = resolveRuntimeBundleAssetUrl(requiredAsset.url);
         const response = await cache.match(assetUrl);
         if (!response) {
@@ -161,7 +169,8 @@ async function prepareRuntimeBundleInSw({ force = false } = {}) {
                 },
             };
         }
-        const cache = await caches.open(requiredAsset.cacheName);
+        const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
+        const cache = await caches.open(cacheName);
         await cache.put(assetUrl, response.clone());
     }
 
@@ -194,15 +203,24 @@ function isAiModelManifestUrl(url) {
     return /\/models\/.*\.onnx$/.test(url.pathname);
 }
 
+function isSmokeAssetUrl(url) {
+    return /\/models\/gmnet-smoke-128\.png$/.test(url.pathname);
+}
+
 function isVersionedCacheName(cacheName, cachePrefix) {
     return cacheName === cachePrefix || cacheName.startsWith(`${cachePrefix}-`);
 }
 
 async function pruneOutdatedVersionedCaches() {
     const cacheNames = await caches.keys();
-    const ONNX_CACHE = 'uhdr-onnx-wasm-' + RESOLVED_APP_ASSET_VERSION;
-    const expectedCacheNames = new Set([RUNTIME_CACHE, WASM_ASSET_CACHE, LIBHEIF_ASSET_CACHE, AI_MODEL_CACHE, ONNX_CACHE]);
-    const managedPrefixes = [RUNTIME_CACHE_PREFIX, WASM_ASSET_CACHE_PREFIX, LIBHEIF_ASSET_CACHE_PREFIX, AI_MODEL_CACHE_PREFIX];
+    const expectedCacheNames = new Set([RUNTIME_CACHE, WASM_ASSET_CACHE, LIBHEIF_ASSET_CACHE, AI_MODEL_CACHE, ONNX_WASM_CACHE]);
+    const managedPrefixes = [
+        RUNTIME_CACHE_PREFIX,
+        WASM_ASSET_CACHE_PREFIX,
+        LIBHEIF_ASSET_CACHE_PREFIX,
+        AI_MODEL_CACHE_PREFIX,
+        ONNX_WASM_CACHE_PREFIX,
+    ];
     await Promise.all(cacheNames.map(async (cacheName) => {
         const managed = managedPrefixes.some((prefix) => isVersionedCacheName(cacheName, prefix));
         if (!managed) {
@@ -246,7 +264,7 @@ async function pruneOutdatedBinaryAssets() {
             return;
         }
         const requestUrl = new URL(request.url);
-        if (isAiModelManifestUrl(requestUrl) && requestUrl.searchParams.get('v') !== APP_ASSET_VERSION) {
+        if ((isAiModelManifestUrl(requestUrl) || isSmokeAssetUrl(requestUrl)) && requestUrl.searchParams.get('v') !== APP_ASSET_VERSION) {
             await aiModelCache.delete(request);
         }
     }));
@@ -311,6 +329,19 @@ registerRoute(
     })
 );
 
+registerRoute(
+    ({ url }) => isSmokeAssetUrl(url),
+    new CacheFirst({
+        cacheName: AI_MODEL_CACHE,
+        plugins: [
+            new ExpirationPlugin({
+                maxEntries: 4,
+                maxAgeSeconds: 30 * 24 * 60 * 60
+            })
+        ]
+    })
+);
+
 function isOnnxWasmAssetUrl(url) {
     return /\/assets\/ort-wasm.*\.wasm$/.test(url.pathname);
 }
@@ -318,16 +349,7 @@ function isOnnxWasmAssetUrl(url) {
 registerRoute(
     ({ url }) => isOnnxWasmAssetUrl(url),
     new CacheFirst({
-        cacheName: WASM_ASSET_CACHE, // Share WASM cache or separate? Let's share for simplicity or create new.
-        // Actually, let's reuse WASM_ASSET_CACHE for all large WASM binaries to keep it simple, 
-        // or separate if we want granular control. 
-        // The pruner checks for v param on WASM_ASSET_CACHE.
-        // These don't have v param usually.
-        // Better to use a separate cache or ensure pruner doesn't delete them aggressively.
-        // Let's use AI_MODEL_CACHE logic or just a new one without strict version pruning?
-        // Or just put them in WASM_ASSET_CACHE but update pruner.
-        // Simpler: Use a dedicated name.
-        cacheName: 'uhdr-onnx-wasm-' + RESOLVED_APP_ASSET_VERSION,
+        cacheName: ONNX_WASM_CACHE,
         plugins: [
             new ExpirationPlugin({
                 maxEntries: 10,
@@ -339,7 +361,11 @@ registerRoute(
 
 registerRoute(
     ({ request, url }) =>
-        !isUltraHdrWasmAssetUrl(url) && !isLibheifWasmAssetUrl(url) && !isAiModelUrl(url) && !isOnnxWasmAssetUrl(url) && (
+        !isUltraHdrWasmAssetUrl(url)
+        && !isLibheifWasmAssetUrl(url)
+        && !isAiModelUrl(url)
+        && !isSmokeAssetUrl(url)
+        && !isOnnxWasmAssetUrl(url) && (
             request.mode === 'navigate' ||
             request.destination === 'script' ||
             request.destination === 'style' ||

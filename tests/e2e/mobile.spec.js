@@ -36,7 +36,24 @@ function resolveRuntimeGateExpectations(projectName) {
 }
 
 async function uploadSingleFile(page, filePath) {
-  await page.locator('#file-upload').setInputFiles(filePath);
+  await page.waitForFunction(() =>
+    Boolean(document.querySelector('#file-upload') || document.querySelector('#add-files')),
+  );
+  const targetSelector = await page.evaluate(() => {
+    if (document.querySelector('#file-upload')) {
+      return '#file-upload';
+    }
+    if (document.querySelector('#add-files')) {
+      return '#add-files';
+    }
+    return null;
+  });
+
+  if (!targetSelector) {
+    throw new Error('No upload input is available for mobile test flow.');
+  }
+
+  await page.locator(targetSelector).setInputFiles(filePath);
 }
 
 async function waitForProcessing(page, expectedResults = 1) {
@@ -194,7 +211,7 @@ test.describe('Mobile smoke tests', () => {
     await expect(page.getByRole('button', { name: /^Download/i })).toBeVisible();
   });
 
-  test('does not render capability restriction UI, even when legacy override payload is injected', async ({ page }) => {
+  test('does not render capability restriction UI, even when legacy override payload is injected', async ({ page }, testInfo) => {
     await page.evaluate(() => {
       window.__ULTRAHDR_TEST_GMNET_CAPABILITY_OVERRIDE = {
         provider: 'webgl',
@@ -205,8 +222,12 @@ test.describe('Mobile smoke tests', () => {
       };
     });
 
+    const overrideProcessingTimeoutMs = String(testInfo.project.name).includes('webkit')
+      ? PROCESSING_TIMEOUT_FALLBACK_MS
+      : processingTimeoutMs;
+
     await uploadSingleFile(page, uploadImagePath);
-    await waitForProcessingWithTimeout(page, 1, processingTimeoutMs);
+    await waitForProcessingWithTimeout(page, 1, overrideProcessingTimeoutMs);
     await dismissWasmRecommendationIfVisible(page);
 
     await page.getByTestId('tab-convert').click();

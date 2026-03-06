@@ -61,6 +61,19 @@ describe('GMNetInferenceSession (probe-free split/tile path)', () => {
     vi.clearAllMocks();
   });
 
+  it('configures ONNX wasmPaths to only the shipped threaded wasm binaries', async () => {
+    const ort = await import('onnxruntime-web/webgpu');
+
+    await import('../gmnet-session.js');
+
+    expect(ort.env.wasm.wasmPaths).toEqual({
+      'ort-wasm-simd-threaded.wasm': '/assets/ort-wasm-simd-threaded.wasm',
+      'ort-wasm-simd-threaded.jsep.wasm': '/assets/ort-wasm-simd-threaded.jsep.wasm',
+      'ort-wasm-simd-threaded.asyncify.wasm': '/assets/ort-wasm-simd-threaded.asyncify.wasm',
+      'ort-wasm-simd-threaded.jspi.wasm': '/assets/ort-wasm-simd-threaded.jspi.wasm',
+    });
+  });
+
   it('does not block Safari-style user agents when WebGPU is feature-detected', async () => {
     const ort = await import('onnxruntime-web/webgpu');
     ort.InferenceSession.create.mockResolvedValue({

@@ -23,6 +23,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-realworld-global.onnx',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-realworld-global-data',
@@ -30,6 +31,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-realworld-global.onnx.data',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-realworld-local',
@@ -37,6 +39,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-realworld-local.onnx',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-realworld-local-data',
@@ -44,6 +47,23 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-realworld-local.onnx.data',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
+  },
+  {
+    id: 'gmnet-realworld-global-inline',
+    sourcePath: 'public/models/gmnet-realworld-global-inline.onnx',
+    url: 'models/gmnet-realworld-global-inline.onnx',
+    cacheName: 'uhdr-ai-models-runtime-bundle',
+    kind: 'model',
+    versionScope: 'app',
+  },
+  {
+    id: 'gmnet-realworld-local-inline-webgl',
+    sourcePath: 'public/models/gmnet-realworld-local-inline-webgl.onnx',
+    url: 'models/gmnet-realworld-local-inline-webgl.onnx',
+    cacheName: 'uhdr-ai-models-runtime-bundle',
+    kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-synthetic-global',
@@ -51,6 +71,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-synthetic-global.onnx',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-synthetic-global-data',
@@ -58,6 +79,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-synthetic-global.onnx.data',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-synthetic-local',
@@ -65,6 +87,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-synthetic-local.onnx',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-synthetic-local-data',
@@ -72,6 +95,23 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-synthetic-local.onnx.data',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'model',
+    versionScope: 'app',
+  },
+  {
+    id: 'gmnet-synthetic-global-inline',
+    sourcePath: 'public/models/gmnet-synthetic-global-inline.onnx',
+    url: 'models/gmnet-synthetic-global-inline.onnx',
+    cacheName: 'uhdr-ai-models-runtime-bundle',
+    kind: 'model',
+    versionScope: 'app',
+  },
+  {
+    id: 'gmnet-synthetic-local-inline-webgl',
+    sourcePath: 'public/models/gmnet-synthetic-local-inline-webgl.onnx',
+    url: 'models/gmnet-synthetic-local-inline-webgl.onnx',
+    cacheName: 'uhdr-ai-models-runtime-bundle',
+    kind: 'model',
+    versionScope: 'app',
   },
   {
     id: 'gmnet-smoke-asset',
@@ -79,6 +119,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'models/gmnet-smoke-128.png',
     cacheName: 'uhdr-ai-models-runtime-bundle',
     kind: 'smoke',
+    versionScope: 'app',
   },
   {
     id: 'ultrahdr-wasm-js',
@@ -86,6 +127,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'assets/ultrahdr_wasm.js',
     cacheName: 'uhdr-wasm-assets-runtime-bundle',
     kind: 'runtime-script',
+    versionScope: 'wasm',
   },
   {
     id: 'ultrahdr-wasm-bin',
@@ -93,6 +135,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'assets/ultrahdr_wasm.wasm',
     cacheName: 'uhdr-wasm-assets-runtime-bundle',
     kind: 'wasm',
+    versionScope: 'wasm',
   },
   {
     id: 'jpegli-wasm-js',
@@ -100,6 +143,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'assets/jpegli_wasm.js',
     cacheName: 'uhdr-wasm-assets-runtime-bundle',
     kind: 'runtime-script',
+    versionScope: 'wasm',
   },
   {
     id: 'jpegli-wasm-bin',
@@ -107,13 +151,15 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     url: 'assets/jpegli_wasm.wasm',
     cacheName: 'uhdr-wasm-assets-runtime-bundle',
     kind: 'wasm',
+    versionScope: 'wasm',
   },
   {
     id: 'libheif-wasm-bin',
     sourcePath: 'node_modules/libheif-js/libheif-wasm/libheif.wasm',
     url: 'assets/libheif.wasm',
-    cacheName: 'uhdr-wasm-assets-runtime-bundle',
+    cacheName: 'uhdr-libheif-assets-runtime-bundle',
     kind: 'wasm',
+    versionScope: 'app',
   },
   {
     id: 'ort-wasm-simd-threaded-asyncify',
@@ -144,6 +190,24 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     kind: 'wasm',
   },
 ]);
+
+function appendVersionQuery(url, version) {
+  if (typeof version !== 'string' || version.trim().length === 0) {
+    return url;
+  }
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${encodeURIComponent(version.trim())}`;
+}
+
+function resolveVersionedAssetUrl(assetSpec, { appAssetVersion, wasmAssetVersion }) {
+  if (assetSpec?.versionScope === 'app') {
+    return appendVersionQuery(assetSpec.url, appAssetVersion);
+  }
+  if (assetSpec?.versionScope === 'wasm') {
+    return appendVersionQuery(assetSpec.url, wasmAssetVersion);
+  }
+  return assetSpec.url;
+}
 
 function readVersionMetadata(metadataPath, key, fallbackValue) {
   if (!fs.existsSync(metadataPath)) {
@@ -185,7 +249,7 @@ export async function buildRuntimeBundleManifest({
     const bytes = fs.readFileSync(sourceAbsolutePath);
     return {
       id: assetSpec.id,
-      url: assetSpec.url,
+      url: resolveVersionedAssetUrl(assetSpec, { appAssetVersion, wasmAssetVersion }),
       cacheName: assetSpec.cacheName,
       kind: assetSpec.kind,
       byteLength: bytes.byteLength,

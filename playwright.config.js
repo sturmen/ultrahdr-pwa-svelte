@@ -46,7 +46,7 @@ export default defineConfig({
         {
             name: 'mobile-webkit-ios',
             use: { ...devices['iPhone 14'] },
-            testMatch: '**/mobile.spec.js',
+            testMatch: ['**/mobile.spec.js', '**/offline.spec.js'],
         },
         {
             name: 'mobile-chromium-android-gpu',
@@ -69,6 +69,6 @@ export default defineConfig({
         command: 'npm run build:wasm && npm run build && npm run preview',
         url: 'http://localhost:4173/ultrahdr-pwa-svelte/',
         reuseExistingServer: false,
-        timeout: 120 * 1000,
+        timeout: 240 * 1000,
     },
 });

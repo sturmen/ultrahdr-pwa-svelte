@@ -1,3 +1,7 @@
+import {
+  buildRuntimeBundleCacheNames,
+  resolveRuntimeBundleCacheName,
+} from './runtime-bundle-asset-map.js';
 const OFFLINE_BUNDLE_MANIFEST_PATH = 'models/runtime-bundle-manifest.json';
 export const OFFLINE_BUNDLE_STORAGE_KEY = 'ultrahdr:offline-bundle:v1';
 
@@ -14,6 +18,11 @@ export const BUNDLE_STATES = Object.freeze({
 const bundleStatusListeners = new Set();
 let inflightEnsurePromise = null;
 let inflightPreparePromise = null;
+const CACHE_NAMES = buildRuntimeBundleCacheNames(
+  typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
+    ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
+    : '',
+);
 
 function resolveBaseUrl() {
   const baseUrl = import.meta.env.BASE_URL || '/';
@@ -196,8 +205,21 @@ function resolveRuntimeStartupOnline(runtime = globalThis) {
 }
 
 async function invokeServiceWorkerBundleCommand(runtime, type, timeoutMs = 20_000) {
-  const controller = runtime?.navigator?.serviceWorker?.controller;
-  if (!controller || typeof controller.postMessage !== 'function') {
+  const serviceWorkerContainer = runtime?.navigator?.serviceWorker;
+  let messageTarget = serviceWorkerContainer?.controller || null;
+
+  if (!messageTarget && serviceWorkerContainer?.ready) {
+    try {
+      const registration = await serviceWorkerContainer.ready;
+      if (registration?.active && typeof registration.active.postMessage === 'function') {
+        messageTarget = registration.active;
+      }
+    } catch {
+      messageTarget = null;
+    }
+  }
+
+  if (!messageTarget || typeof messageTarget.postMessage !== 'function') {
     return null;
   }
   if (typeof MessageChannel === 'undefined') {
@@ -226,7 +248,7 @@ async function invokeServiceWorkerBundleCommand(runtime, type, timeoutMs = 20_00
       resolve(payload.result || null);
     };
 
-    controller.postMessage({ type, messageId }, [channel.port2]);
+    messageTarget.postMessage({ type, messageId }, [channel.port2]);
   });
 }
 
@@ -340,7 +362,8 @@ export async function validateBundle({
   const mismatchedAssets = [];
 
   for (const requiredAsset of resolvedManifest.requiredAssets) {
-    const cache = await cacheStorage.open(requiredAsset.cacheName);
+    const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
+    const cache = await cacheStorage.open(cacheName);
     const assetUrl = resolveAssetUrl(requiredAsset.url);
     const response = await cache.match(assetUrl);
     if (!response) {
@@ -495,7 +518,8 @@ async function prepareBundleInternal({
       return failedResult;
     }
 
-    const cache = await cacheStorage.open(requiredAsset.cacheName);
+    const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
+    const cache = await cacheStorage.open(cacheName);
     await cache.put(assetUrl, response.clone());
   }
 
@@ -584,6 +608,7 @@ export async function ensureBundleReady({
   inflightEnsurePromise = (async () => {
     const online = resolveRuntimeStartupOnline(runtime);
     const cacheStorage = runtime?.caches || globalThis.caches;
+    const record = readBundleRecord(runtime);
     if (!cacheStorage || typeof cacheStorage.open !== 'function') {
       const unsupportedResult = {
         ready: online,
@@ -599,8 +624,48 @@ export async function ensureBundleReady({
       return unsupportedResult;
     }
 
+    if (!online) {
+      if (record?.ready === true) {
+        try {
+          const swValidation = await invokeServiceWorkerBundleCommand(runtime, 'UHDR_VALIDATE_BUNDLE');
+          if (swValidation?.ready === true && typeof swValidation === 'object') {
+            return {
+              ...swValidation,
+              blocked: swValidation.ready !== true,
+            };
+          }
+        } catch {
+          // Fall back to the last known readiness record when offline.
+        }
+
+        const readyResult = {
+          ready: true,
+          blocked: false,
+          state: record.state || BUNDLE_STATES.READY,
+          bundleVersion: record.bundleVersion || null,
+          validatedAtMs: record.validatedAtMs || null,
+          diagnostics: record.diagnosticsSummary || null,
+        };
+        emitBundleStatus(readyResult);
+        return readyResult;
+      }
+
+      const state = record?.state || BUNDLE_STATES.EMPTY;
+      const blockedResult = {
+        ready: false,
+        blocked: true,
+        state,
+        bundleVersion: record?.bundleVersion || null,
+        validatedAtMs: record?.validatedAtMs || null,
+        diagnostics: record?.diagnosticsSummary || {
+          reason: 'offline-without-ready-bundle',
+        },
+      };
+      emitBundleStatus(blockedResult);
+      return blockedResult;
+    }
+
     const manifest = await loadManifest({ runtime });
-    const record = readBundleRecord(runtime);
 
     if (record?.ready === true && record.bundleVersion === manifest.bundleVersion) {
       const validationResult = await validateBundle({ runtime, manifest, hashBuffer });
@@ -610,22 +675,6 @@ export async function ensureBundleReady({
           blocked: false,
         };
       }
-    }
-
-    if (!online) {
-      const state = record?.state || BUNDLE_STATES.EMPTY;
-      const blockedResult = {
-        ready: false,
-        blocked: true,
-        state,
-        bundleVersion: manifest.bundleVersion,
-        validatedAtMs: record?.validatedAtMs || null,
-        diagnostics: record?.diagnosticsSummary || {
-          reason: 'offline-without-ready-bundle',
-        },
-      };
-      emitBundleStatus(blockedResult);
-      return blockedResult;
     }
 
     const prepared = await prepareBundle({ runtime, manifest, loadManifest, hashBuffer });

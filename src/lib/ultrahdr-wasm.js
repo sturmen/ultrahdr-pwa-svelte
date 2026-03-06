@@ -41,6 +41,26 @@ function resolveWasmBaseUrl() {
     return baseUrl;
 }
 
+async function loadWasmBinaryWithOfflineFallback(wasmBinaryPath) {
+    try {
+        const wasmResponse = await fetch(wasmBinaryPath);
+        if (!wasmResponse.ok) {
+            throw new Error(`Failed to fetch WASM binary: ${wasmResponse.status} ${wasmResponse.statusText}`);
+        }
+        return wasmResponse.arrayBuffer();
+    } catch (fetchError) {
+        const cacheStorage = globalThis.caches;
+        if (!cacheStorage || typeof cacheStorage.match !== 'function') {
+            throw fetchError;
+        }
+        const cachedResponse = await cacheStorage.match(wasmBinaryPath);
+        if (!cachedResponse) {
+            throw fetchError;
+        }
+        return cachedResponse.arrayBuffer();
+    }
+}
+
 async function loadWasmFactoryViaModuleImport(wasmJsPath) {
     const importedModule = await import(/* @vite-ignore */ wasmJsPath);
     const moduleFactory = importedModule?.default || importedModule?.UHDREncoderModule;
@@ -74,6 +94,66 @@ async function loadWasmFactoryViaEval(wasmJsPath) {
     throw new Error('UHDREncoderModule not found after script evaluation');
 }
 
+async function loadWasmFactoryViaScriptTag(wasmJsPath) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            reject(new Error(`Timed out loading WASM script from ${wasmJsPath}`));
+        }, 3_000);
+
+        const settle = (callback) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeoutId);
+            callback();
+        };
+
+        const existingScript = document.querySelector(`script[src="${wasmJsPath}"]`);
+        if (existingScript) {
+            const existingFactory = getGlobalWasmFactory();
+            if (existingFactory) {
+                settle(() => resolve(existingFactory));
+                return;
+            }
+            existingScript.addEventListener('load', () => {
+                const loadedFactory = getGlobalWasmFactory();
+                if (loadedFactory) {
+                    settle(() => resolve(loadedFactory));
+                } else {
+                    settle(() => reject(new Error('UHDREncoderModule not found after script load')));
+                }
+            }, { once: true });
+            existingScript.addEventListener('error', () => {
+                settle(() => reject(new Error(`Failed to load WASM script from ${wasmJsPath}`)));
+            }, { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = wasmJsPath;
+        script.async = true;
+        script.onload = () => {
+            console.log('[WASM] Script loaded from:', wasmJsPath);
+            const loadedFactory = getGlobalWasmFactory();
+            if (loadedFactory) {
+                settle(() => resolve(loadedFactory));
+            } else {
+                settle(() => reject(new Error('UHDREncoderModule not defined after loading script')));
+            }
+        };
+        script.onerror = () => {
+            settle(() => reject(new Error(`Failed to load WASM script from ${wasmJsPath}`)));
+        };
+        document.head.appendChild(script);
+    });
+}
+
 /**
  * Load the WASM module factory in browser main thread and worker runtimes.
  * @returns {Promise<Function>} - The UHDREncoderModule factory function
@@ -86,66 +166,17 @@ async function loadWasmFactory() {
 
     const wasmJsPath = appendVersionQuery(`${resolveWasmBaseUrl()}assets/ultrahdr_wasm.js`);
     console.log('[WASM] Loading from:', wasmJsPath);
-    const scriptLoadTimeoutMs = 3_000;
 
     if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
-        return new Promise((resolve, reject) => {
-            let settled = false;
-            const timeoutId = setTimeout(() => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                reject(new Error(`Timed out loading WASM script from ${wasmJsPath}`));
-            }, scriptLoadTimeoutMs);
-
-            const settle = (callback) => {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                clearTimeout(timeoutId);
-                callback();
-            };
-
-            const existingScript = document.querySelector(`script[src="${wasmJsPath}"]`);
-            if (existingScript) {
-                const existingFactory = getGlobalWasmFactory();
-                if (existingFactory) {
-                    settle(() => resolve(existingFactory));
-                    return;
-                }
-                existingScript.addEventListener('load', () => {
-                    const loadedFactory = getGlobalWasmFactory();
-                    if (loadedFactory) {
-                        settle(() => resolve(loadedFactory));
-                    } else {
-                        settle(() => reject(new Error('UHDREncoderModule not found after script load')));
-                    }
-                }, { once: true });
-                existingScript.addEventListener('error', () => {
-                    settle(() => reject(new Error(`Failed to load WASM script from ${wasmJsPath}`)));
-                }, { once: true });
-                return;
+        try {
+            return await loadWasmFactoryViaScriptTag(wasmJsPath);
+        } catch (error) {
+            const message = String(error?.message || '');
+            if (/Timed out loading WASM script/i.test(message)) {
+                throw error;
             }
-
-            const script = document.createElement('script');
-            script.src = wasmJsPath;
-            script.async = true;
-            script.onload = () => {
-                console.log('[WASM] Script loaded from:', wasmJsPath);
-                const loadedFactory = getGlobalWasmFactory();
-                if (loadedFactory) {
-                    settle(() => resolve(loadedFactory));
-                } else {
-                    settle(() => reject(new Error('UHDREncoderModule not defined after loading script')));
-                }
-            };
-            script.onerror = () => {
-                settle(() => reject(new Error(`Failed to load WASM script from ${wasmJsPath}`)));
-            };
-            document.head.appendChild(script);
-        });
+            return loadWasmFactoryViaEval(wasmJsPath);
+        }
     }
 
     try {
@@ -177,11 +208,7 @@ async function loadWasmModule() {
 
         // Pre-fetch the WASM binary to avoid Emscripten's sync fetch error
         console.log('[WASM] Pre-fetching WASM binary...');
-        const wasmResponse = await fetch(wasmBinaryPath);
-        if (!wasmResponse.ok) {
-            throw new Error(`Failed to fetch WASM binary: ${wasmResponse.status} ${wasmResponse.statusText}`);
-        }
-        const wasmBinary = await wasmResponse.arrayBuffer();
+        const wasmBinary = await loadWasmBinaryWithOfflineFallback(wasmBinaryPath);
         console.log('[WASM] WASM binary fetched:', wasmBinary.byteLength, 'bytes');
 
 

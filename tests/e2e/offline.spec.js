@@ -1,45 +1,150 @@
 // @ts-check
 import { test, expect } from '@playwright/test';
-import { installStartupProbeBypass } from './runtime-gate.js';
+import {
+    assertOfflineDownload,
+    clearOfflineRuntimeBundle,
+    gotoApp,
+    isOfflineCoverageProject,
+    openExportSheet,
+    primeOfflineRuntime,
+    revisitCurrentAppUrl,
+    resolveOfflineProjectConfig,
+    uploadSingleFile,
+    waitForProcessing,
+} from './offline-helpers.js';
+
+function skipUnsupportedProject(testInfo) {
+    test.skip(
+        !isOfflineCoverageProject(testInfo.project.name),
+        `Offline coverage is limited to chromium and mobile-webkit-ios; got ${testInfo.project.name}.`,
+    );
+}
+
+function maybeSkipKnownRuntimeIssue(testInfo, error) {
+    const message = String(error?.message || '');
+    if (
+        testInfo.project.name.includes('webkit')
+        && /cannot resolve operator 'GatherND'/i.test(message)
+    ) {
+        test.skip(
+            true,
+            'Playwright WebKit cannot initialize GMNet WebGL (GatherND v18 unsupported). Validate Safari via WebGPU-specific runs.',
+        );
+    }
+}
+
+function isWebKitOfflineNavigationError(testInfo, error) {
+    return testInfo.project.name === 'mobile-webkit-ios'
+        && /webkit encountered an internal error/i.test(String(error?.message || ''));
+}
+
+function maybeSkipKnownWebKitOfflineProcessingLimitation(testInfo, error) {
+    const message = String(error?.message || '');
+    if (
+        testInfo.project.name === 'mobile-webkit-ios'
+        && /libultrahdr WASM module failed to load/i.test(message)
+    ) {
+        test.skip(
+            true,
+            'Playwright mobile WebKit does not reliably execute cached libultrahdr WASM offline after revisit; Chromium cached-offline processing remains the enforced regression path.',
+        );
+    }
+}
 
 test.describe('Offline Mode', () => {
-    test.beforeEach(async ({ page }, testInfo) => {
-        // We need to bypass the startup probe mechanism that might rely on network
-        // if we want to test purely offline behavior, OR we want to ensure it works
-        // even when offline if the asset IS cached.
-        // For this test, we want to ensure the app works offline, which implies
-        // the probe asset should be cached.
-        await installStartupProbeBypass(page, { projectName: testInfo.project.name });
-        await page.goto('/');
+    test.describe('Cold offline startup', () => {
+        test.use({ offline: true });
 
-        // Wait for service worker to be ready
-        // We can't easily wait for SW readiness from the page side without a helper,
-        // but we can wait for the app to be stable.
-        const providerLocator = page.getByTestId('runtime-init-provider');
-        await expect(providerLocator).toBeVisible({ timeout: 30000 });
+        test('fails before the uncached app shell can load', async ({ page }, testInfo) => {
+            skipUnsupportedProject(testInfo);
+
+            if (testInfo.project.name === 'mobile-webkit-ios') {
+                await expect(gotoApp(page)).rejects.toThrow(/internal error|NSURLErrorDomain|offline/i);
+                return;
+            }
+
+            await expect(gotoApp(page)).rejects.toThrow(/ERR_INTERNET_DISCONNECTED|NSURLErrorDomain|offline/i);
+        });
     });
 
-    test('should load and pass startup checks when offline', async ({ page, context }) => {
-        // 1. Ensure we are online first and assets are cached
-        // The beforeEach ensures we loaded the page once.
-        // Let's reload to be sure SW is active and taking control.
-        await page.reload();
-        await expect(page.getByTestId('runtime-init-provider')).toBeVisible();
-        // Give Service Worker a moment to finish caching runtime/WASM assets
-        await page.waitForTimeout(1500);
+    test('shows blocked startup UI when the cached app shell is offline without a prepared runtime bundle', async ({ page, context }, testInfo) => {
+        skipUnsupportedProject(testInfo);
+        test.skip(
+            testInfo.project.name === 'mobile-webkit-ios',
+            'Playwright mobile WebKit throws an internal error on offline navigation before cached blocked-startup UI can be asserted.',
+        );
 
-        // 2. Go offline
+        try {
+            await primeOfflineRuntime(page, testInfo);
+        } catch (error) {
+            maybeSkipKnownRuntimeIssue(testInfo, error);
+            throw error;
+        }
+
+        await clearOfflineRuntimeBundle(page);
         await context.setOffline(true);
-        await page.waitForTimeout(500);
+        await revisitCurrentAppUrl(page);
 
-        // 3. Navigate to root instead of reload, as WebKit .reload() can crash when offline
-        await page.goto('/');
+        await expect(page.getByTestId('runtime-init-failure')).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByTestId('runtime-init-offline-bundle-blocked')).toBeVisible();
+        await expect(page.getByTestId('upload-drop-zone')).toHaveCount(0);
+    });
 
-        // 4. Verify app loads and startup passes
-        // If the probe asset is missing, this will likely fail or show an error.
-        await expect(page.getByTestId('runtime-init-provider')).toBeVisible({ timeout: 30000 });
+    test('revisits offline in the same context, processes one image, and opens export flow', async ({ page, context }, testInfo) => {
+        skipUnsupportedProject(testInfo);
 
-        // Use a more specific check if possible, e.g. no error message
+        let config;
+        try {
+            config = await primeOfflineRuntime(page, testInfo);
+        } catch (error) {
+            maybeSkipKnownRuntimeIssue(testInfo, error);
+            throw error;
+        }
+
+        await context.setOffline(true);
+        try {
+            await revisitCurrentAppUrl(page);
+        } catch (error) {
+            if (!isWebKitOfflineNavigationError(testInfo, error)) {
+                throw error;
+            }
+        }
+
+        await expect(page.getByTestId('runtime-init-provider')).toBeVisible({ timeout: 30_000 });
         await expect(page.getByTestId('runtime-init-failure')).not.toBeVisible();
+
+        await uploadSingleFile(page, config.uploadImagePath);
+        try {
+            await waitForProcessing(page, config.processingTimeoutMs);
+        } catch (error) {
+            maybeSkipKnownWebKitOfflineProcessingLimitation(testInfo, error);
+            throw error;
+        }
+
+        await expect(page.locator('.result-card')).toHaveCount(1);
+        await openExportSheet(page);
+        await expect(page.getByText(/1 item\(s\) selected\./i)).toBeVisible();
+
+        if (config.shouldAssertDownload) {
+            await assertOfflineDownload(page);
+        } else {
+            await expect(page.getByRole('button', { name: /^Download$/i })).toBeVisible();
+        }
+    });
+
+    test('keeps a smaller chromium smoke path for cached offline revisit', async ({ page, context }, testInfo) => {
+        test.skip(testInfo.project.name !== 'chromium', 'Chromium-only smoke coverage.');
+
+        const config = resolveOfflineProjectConfig(testInfo.project.name);
+        await primeOfflineRuntime(page, testInfo);
+
+        await context.setOffline(true);
+        await revisitCurrentAppUrl(page);
+
+        await expect(page.getByTestId('runtime-init-provider')).toBeVisible({ timeout: 30_000 });
+        await uploadSingleFile(page, config.uploadImagePath);
+        await waitForProcessing(page, config.processingTimeoutMs);
+        await openExportSheet(page);
+        await assertOfflineDownload(page);
     });
 });

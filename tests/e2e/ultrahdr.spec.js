@@ -165,11 +165,11 @@ async function setStripExifToggle(page, enabled) {
 async function setJpegliToggle(page, enabled) {
     await page.waitForFunction(() =>
         Array.from(document.querySelectorAll('.switch-label'))
-            .some((el) => el.textContent?.includes('High-Quality JPEG Encoding'))
+            .some((el) => /High-(Quality|Efficiency) JPEG Encoding/.test(el.textContent || ''))
     );
     await page.evaluate((nextValue) => {
         const label = Array.from(document.querySelectorAll('.switch-label'))
-            .find((el) => el.textContent?.includes('High-Quality JPEG Encoding'));
+            .find((el) => /High-(Quality|Efficiency) JPEG Encoding/.test(el.textContent || ''));
         const container = label?.closest('.control-group.switch-group');
         const checkbox = container?.querySelector('input[type="checkbox"]');
         if (!checkbox) throw new Error('Jpegli toggle not found');
@@ -735,7 +735,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(hasGainMapXMP(jpegData)).toBe(true);
         });
 
-        test('should generate gain map at quarter-pixel resolution for processed SDR inputs', async ({ page, browserName }) => {
+        test('should preserve full gain-map resolution for processed SDR inputs', async ({ page, browserName }) => {
             test.setTimeout(180_000);
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-gm-scale-${browserName}-`));
             try {
@@ -751,8 +751,8 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 const outputSdrBitmap = await loadBitmap(outputJpegPath);
                 const outputGainMapBitmap = await loadBitmap(outputGainMapPath);
 
-                expect(outputGainMapBitmap.width).toBe(Math.max(1, Math.floor(outputSdrBitmap.width * 0.5)));
-                expect(outputGainMapBitmap.height).toBe(Math.max(1, Math.floor(outputSdrBitmap.height * 0.5)));
+                expect(outputGainMapBitmap.width).toBe(outputSdrBitmap.width);
+                expect(outputGainMapBitmap.height).toBe(outputSdrBitmap.height);
 
                 const gainMapStats = computeGrayscaleStats(outputGainMapBitmap);
                 expect(gainMapStats.dynamicRange).toBeGreaterThanOrEqual(2);

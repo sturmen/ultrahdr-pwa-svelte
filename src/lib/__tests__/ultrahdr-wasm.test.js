@@ -99,6 +99,96 @@ describe('WASM Encoder JavaScript Bindings', () => {
     vi.useRealTimers();
   });
 
+  it('falls back to fetch-and-eval when DOM script loading fails', async () => {
+    delete global.window.UHDREncoderModule;
+
+    const headAppendSpy = vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      setTimeout(() => node.onerror?.(new Error('script load failed')), 0);
+      return node;
+    });
+
+    global.fetch = vi.fn((url) => {
+      if (String(url).includes('ultrahdr_wasm.js')) {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              'globalThis.UHDREncoderModule = function UHDREncoderModule() {' +
+              'return Promise.resolve({' +
+              'HEAPU8: new Uint8Array(4096),' +
+              '_malloc: function(){ return 0; },' +
+              '_free: function(){}' +
+              '});' +
+              '};'
+            ),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+      });
+    });
+
+    const { isAvailable } = await import('../ultrahdr-wasm.js');
+    const available = await isAvailable();
+
+    expect(available).toBe(true);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/assets/ultrahdr_wasm.js?v=test-wasm-version'),
+      expect.objectContaining({ credentials: 'same-origin' }),
+    );
+
+    headAppendSpy.mockRestore();
+  });
+
+  it('loads the wasm binary from Cache Storage when offline fetch fails', async () => {
+    const mockModule = {
+      _malloc: vi.fn(),
+      _free: vi.fn(),
+      HEAPU8: new Uint8Array(1024),
+      buffer: new ArrayBuffer(1024),
+    };
+    let moduleFactoryOptions;
+
+    global.window.UHDREncoderModule = vi.fn((options) => {
+      moduleFactoryOptions = options;
+      return Promise.resolve(mockModule);
+    });
+
+    const cachedBinaryResponse = {
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(2048)),
+    };
+    global.caches = {
+      match: vi.fn(async (url) => {
+        if (String(url).includes('ultrahdr_wasm.wasm')) {
+          return cachedBinaryResponse;
+        }
+        return undefined;
+      }),
+    };
+    global.fetch = vi.fn((url) => {
+      if (String(url).includes('ultrahdr_wasm.wasm')) {
+        return Promise.reject(new Error('offline'));
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+      });
+    });
+
+    const { isAvailable } = await import('../ultrahdr-wasm.js');
+    const available = await isAvailable();
+
+    expect(available).toBe(true);
+    expect(global.caches.match).toHaveBeenCalledWith(
+      expect.stringContaining('/assets/ultrahdr_wasm.wasm?v=test-wasm-version'),
+    );
+    expect(moduleFactoryOptions?.wasmBinary).toBeInstanceOf(ArrayBuffer);
+    expect(moduleFactoryOptions?.wasmBinary?.byteLength).toBe(2048);
+
+    delete global.caches;
+  });
+
   it('loads WASM factory via eval fallback in worker-like runtime when DOM is unavailable', async () => {
     const originalDocument = global.document;
     const originalImportScripts = global.importScripts;
