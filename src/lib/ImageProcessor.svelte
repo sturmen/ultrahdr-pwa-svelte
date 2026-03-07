@@ -31,6 +31,7 @@
     resolveCheckpointingForRun,
     saveProcessingPreferences,
   } from "./processing-preferences.js";
+  import { classifyInputProcessingPath } from "./processing-core.js";
 
   export let files = [];
   export let launchSource = "regular";
@@ -114,12 +115,17 @@
   let backendRestartAwaitingPathDecision = false;
   let processingPathByQueueId = new Map();
   let persistTaskPending = false;
+  let pendingMobileInferenceFiles = [];
+  let mobileInferenceWarningOpen = false;
+  let mobileInferenceChallengeValue = "";
+  let mobileInferenceAcknowledgedForSession = false;
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
   const VIEWER_SWIPE_THRESHOLD_PX = 48;
   const VIEWER_VERTICAL_GUARD_PX = 80;
   const VIEWER_BOUNCE_RESET_MS = 180;
+  const MOBILE_INFERENCE_ACKNOWLEDGEMENT = "I acknowledge";
 
   const PROGRESS_STAGE_ORDER = [
     "wasm-load",
@@ -176,6 +182,7 @@
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
   $: showSettingsPanel = isDesktopLayout;
+  $: isSmartphone = capabilities.isAndroid || capabilities.isIOS;
   $: staleCount = queue.filter(
     (item) => item.status === QUEUE_ITEM_STATES.STALE,
   ).length;
@@ -1387,15 +1394,84 @@
     return true;
   }
 
+  function isMobileInferenceAcknowledgementValid(value) {
+    return (
+      typeof value === "string" &&
+      value.toLowerCase() === MOBILE_INFERENCE_ACKNOWLEDGEMENT.toLowerCase()
+    );
+  }
+
+  function closeMobileInferenceWarning() {
+    mobileInferenceWarningOpen = false;
+    mobileInferenceChallengeValue = "";
+  }
+
+  function cancelMobileInferenceWarning() {
+    pendingMobileInferenceFiles = [];
+    closeMobileInferenceWarning();
+  }
+
+  function proceedWithMobileInferenceWarning() {
+    if (!isMobileInferenceAcknowledgementValid(mobileInferenceChallengeValue)) {
+      return;
+    }
+    const pendingFiles = pendingMobileInferenceFiles;
+    pendingMobileInferenceFiles = [];
+    mobileInferenceAcknowledgedForSession = true;
+    closeMobileInferenceWarning();
+    enqueueFiles(pendingFiles);
+  }
+
+  async function gateAndEnqueueFiles(fileList) {
+    const newFiles = Array.from(fileList || []).filter(
+      (file) => file instanceof File,
+    );
+    if (newFiles.length === 0) return false;
+
+    if (!isSmartphone || mobileInferenceAcknowledgedForSession) {
+      return enqueueFiles(newFiles);
+    }
+
+    const classifications = await Promise.all(
+      newFiles.map((file) => classifyInputProcessingPath(file)),
+    );
+    const safeFiles = [];
+    const unsafeFiles = [];
+
+    classifications.forEach((classification, index) => {
+      const file = newFiles[index];
+      if (classification === "preserved" || classification === "hdr-intent") {
+        safeFiles.push(file);
+      } else {
+        unsafeFiles.push(file);
+      }
+    });
+
+    if (safeFiles.length > 0) {
+      enqueueFiles(safeFiles);
+    }
+
+    if (unsafeFiles.length > 0) {
+      pendingMobileInferenceFiles = [
+        ...pendingMobileInferenceFiles,
+        ...unsafeFiles,
+      ];
+      mobileInferenceWarningOpen = true;
+      mobileInferenceChallengeValue = "";
+    }
+
+    return safeFiles.length > 0 || unsafeFiles.length > 0;
+  }
+
   async function handleAddFiles(event) {
-    enqueueFiles(event?.target?.files);
+    await gateAndEnqueueFiles(event?.target?.files);
     if (event?.target) {
       event.target.value = "";
     }
   }
 
   async function handleDropZoneFiles(event) {
-    enqueueFiles(event?.detail);
+    await gateAndEnqueueFiles(event?.detail);
   }
 
   function toggleSelection(index) {
@@ -2447,6 +2523,63 @@
     </div>
   {/if}
 
+  {#if mobileInferenceWarningOpen}
+    <div class="blocking-modal-backdrop" aria-hidden="true"></div>
+    <div
+      class="blocking-modal-card"
+      data-testid="mobile-inference-warning-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mobile-inference-warning-title"
+      aria-describedby="mobile-inference-warning-description"
+    >
+      <h3 id="mobile-inference-warning-title">
+        Smartphone inference is unsupported
+      </h3>
+      <p
+        class="help-text blocking-modal-copy"
+        id="mobile-inference-warning-description"
+      >
+        This image needs AI inference, which is unsupported on smartphones.
+        Try this on a desktop browser instead.
+      </p>
+      <p class="help-text blocking-modal-copy">
+        Type "{MOBILE_INFERENCE_ACKNOWLEDGEMENT}" to proceed anyway.
+      </p>
+      <input
+        type="text"
+        class="blocking-modal-input"
+        data-testid="mobile-inference-warning-input"
+        bind:value={mobileInferenceChallengeValue}
+        aria-label="Type I acknowledge to proceed"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+      <div class="blocking-modal-actions">
+        <button
+          type="button"
+          class="secondary"
+          data-testid="mobile-inference-warning-cancel"
+          on:click={cancelMobileInferenceWarning}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="primary"
+          data-testid="mobile-inference-warning-proceed"
+          on:click={proceedWithMobileInferenceWarning}
+          disabled={!isMobileInferenceAcknowledgementValid(
+            mobileInferenceChallengeValue,
+          )}
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if openSheet !== "none"}
     <button
       class="sheet-backdrop"
@@ -3396,6 +3529,59 @@
     margin: 0;
     background: rgba(7, 11, 14, 0.28);
     z-index: 29;
+  }
+
+  .blocking-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(7, 11, 14, 0.55);
+    z-index: 34;
+  }
+
+  .blocking-modal-card {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(92vw, 420px);
+    padding: 1rem;
+    border-radius: 20px;
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-active) 98%, transparent);
+    box-shadow: var(--shadow-lg);
+    z-index: 35;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .blocking-modal-card h3 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .blocking-modal-copy {
+    margin: 0;
+  }
+
+  .blocking-modal-input {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.7rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-color) 94%, transparent);
+    color: var(--text-color);
+    font-size: 0.95rem;
+    box-sizing: border-box;
+  }
+
+  .blocking-modal-actions {
+    display: flex;
+    gap: 0.55rem;
+  }
+
+  .blocking-modal-actions button {
+    flex: 1;
   }
 
   .photo-viewer-modal {
