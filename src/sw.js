@@ -385,6 +385,17 @@ function redirectToApp(url, params = {}) {
     return Response.redirect(redirectUrl.href, 303);
 }
 
+function mapStatusMessage(error = null) {
+    return {
+        type: error?.name || 'Error',
+        code: error?.code || 'SW_BUNDLE_COMMAND_FAILED',
+        message: String(error?.message || error || 'Service worker command failed.'),
+        stackSnippet: typeof error?.stack === 'string'
+            ? error.stack.split('\n').slice(0, 6).join('\n')
+            : null,
+    };
+}
+
 self.addEventListener('message', (event) => {
     const message = event?.data;
     if (!message || typeof message !== 'object') {
@@ -429,9 +440,7 @@ self.addEventListener('message', (event) => {
                 type: `${messageType}_RESULT`,
                 messageId,
                 ok: false,
-                error: {
-                    message: String(error?.message || error),
-                },
+                error: mapStatusMessage(error),
             });
         }
     })());

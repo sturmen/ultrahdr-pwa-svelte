@@ -24,6 +24,14 @@ const CACHE_NAMES = buildRuntimeBundleCacheNames(
     : '',
 );
 
+function nowMs(runtime = globalThis) {
+  const performanceNow = runtime?.performance?.now;
+  if (typeof performanceNow === 'function') {
+    return Math.floor(performanceNow.call(runtime?.performance));
+  }
+  return Date.now();
+}
+
 function resolveBaseUrl() {
   const baseUrl = import.meta.env.BASE_URL || '/';
   return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
@@ -200,6 +208,104 @@ function buildDiagnosticsSummary({ missingAssets = [], mismatchedAssets = [], st
   };
 }
 
+function createAssetValidationSummary(missingAssets = [], mismatchedAssets = [], assetChecks = []) {
+  return {
+    missingAssetCount: missingAssets.length,
+    mismatchedAssetCount: mismatchedAssets.length,
+    missingAssetIds: missingAssets.map((asset) => asset.id),
+    mismatchedAssetIds: mismatchedAssets.map((asset) => asset.id),
+    assetChecks: Array.isArray(assetChecks) ? assetChecks : [],
+  };
+}
+
+async function validateAssetsFromManifest({
+  runtime = globalThis,
+  manifest,
+  cacheStorage,
+  hashBuffer,
+}) {
+  const missingAssets = [];
+  const mismatchedAssets = [];
+  const assetChecks = [];
+
+  for (const requiredAsset of manifest.requiredAssets) {
+    const checkStartedAtMs = nowMs(runtime);
+    const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES)
+      || requiredAsset.cacheName;
+    const cache = await cacheStorage.open(cacheName);
+    const assetUrl = resolveAssetUrl(requiredAsset.url);
+    const response = await cache.match(assetUrl);
+    if (!response) {
+      const durationMs = Math.max(0, nowMs(runtime) - checkStartedAtMs);
+      missingAssets.push({ id: requiredAsset.id, url: requiredAsset.url });
+      assetChecks.push({
+        id: requiredAsset.id,
+        url: requiredAsset.url,
+        durationMs,
+        matched: false,
+        reason: 'missing',
+      });
+      continue;
+    }
+
+    const bytes = await response.arrayBuffer();
+    const actualByteLength = Number.isFinite(Number(bytes?.byteLength)) ? bytes.byteLength : null;
+
+    if (
+      Number.isFinite(Number(requiredAsset.byteLength))
+      && Number(requiredAsset.byteLength) !== actualByteLength
+    ) {
+      const durationMs = Math.max(0, nowMs(runtime) - checkStartedAtMs);
+      mismatchedAssets.push({
+        id: requiredAsset.id,
+        url: requiredAsset.url,
+        reason: 'byteLength',
+      });
+      assetChecks.push({
+        id: requiredAsset.id,
+        url: requiredAsset.url,
+        durationMs,
+        matched: false,
+        reason: 'byteLength',
+        expectedByteLength: Number(requiredAsset.byteLength),
+        actualByteLength,
+      });
+      continue;
+    }
+
+    const digest = await hashBuffer(bytes, runtime);
+    if (digest !== requiredAsset.sha256) {
+      const durationMs = Math.max(0, nowMs(runtime) - checkStartedAtMs);
+      mismatchedAssets.push({
+        id: requiredAsset.id,
+        url: requiredAsset.url,
+        reason: 'sha256',
+      });
+      assetChecks.push({
+        id: requiredAsset.id,
+        url: requiredAsset.url,
+        durationMs,
+        matched: false,
+        reason: 'sha256',
+        expectedHash: requiredAsset.sha256,
+        actualHash: digest,
+      });
+      continue;
+    }
+
+    const durationMs = Math.max(0, nowMs(runtime) - checkStartedAtMs);
+    assetChecks.push({
+      id: requiredAsset.id,
+      url: requiredAsset.url,
+      durationMs,
+      matched: true,
+      byteLength: actualByteLength,
+    });
+  }
+
+  return { missingAssets, mismatchedAssets, assetChecks };
+}
+
 function resolveRuntimeStartupOnline(runtime = globalThis) {
   return runtime?.navigator?.onLine !== false;
 }
@@ -207,16 +313,22 @@ function resolveRuntimeStartupOnline(runtime = globalThis) {
 async function invokeServiceWorkerBundleCommand(runtime, type, timeoutMs = 20_000) {
   const serviceWorkerContainer = runtime?.navigator?.serviceWorker;
   let messageTarget = serviceWorkerContainer?.controller || null;
+  let commandSource = 'missing-target';
+  const normalizedTimeoutMs = Math.max(1, Math.floor(Number(timeoutMs) || 20_000));
 
   if (!messageTarget && serviceWorkerContainer?.ready) {
     try {
       const registration = await serviceWorkerContainer.ready;
       if (registration?.active && typeof registration.active.postMessage === 'function') {
         messageTarget = registration.active;
+        commandSource = 'ready-active';
       }
     } catch {
       messageTarget = null;
+      commandSource = 'ready-failed';
     }
+  } else if (messageTarget) {
+    commandSource = 'controller';
   }
 
   if (!messageTarget || typeof messageTarget.postMessage !== 'function') {
@@ -227,25 +339,84 @@ async function invokeServiceWorkerBundleCommand(runtime, type, timeoutMs = 20_00
   }
 
   const messageId = `${type}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  const startedAtMs = nowMs(runtime);
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
     const timeoutId = setTimeout(() => {
       channel.port1.onmessage = null;
-      reject(new Error(`Service worker bundle command timed out: ${type}`));
-    }, timeoutMs);
+      const timeoutError = new Error(
+        `Service worker bundle command timed out after ${normalizedTimeoutMs}ms: ${type}`,
+      );
+      timeoutError.name = 'ServiceWorkerBundleCommandTimeoutError';
+      timeoutError.code = 'RUNTIME_INIT_OFFLINE_BUNDLE_COMMAND_TIMEOUT';
+      timeoutError.swCommand = {
+        type,
+        messageId,
+        commandSource,
+        startedAtMs,
+        durationMs: normalizedTimeoutMs,
+      };
+      reject(timeoutError);
+    }, normalizedTimeoutMs);
 
     channel.port1.onmessage = (event) => {
       clearTimeout(timeoutId);
       const payload = event?.data;
+      const endedAtMs = nowMs(runtime);
+  const swCommand = {
+      type,
+      messageId,
+      commandSource,
+      startedAtMs,
+      durationMs: Math.max(0, endedAtMs - startedAtMs),
+      responseType: payload?.type || null,
+      responseOk: payload?.ok === true,
+    };
+
       if (!payload || payload.messageId !== messageId) {
         resolve(null);
         return;
       }
       if (payload.ok !== true) {
-        reject(new Error(payload?.error?.message || `Service worker bundle command failed: ${type}`));
+        const commandError = new Error(
+          payload?.error?.message || `Service worker bundle command failed: ${type}`,
+        );
+        commandError.swCommand = swCommand;
+        commandError.name = typeof payload?.error?.type === 'string'
+          ? String(payload.error.type)
+          : 'ServiceWorkerBundleCommandError';
+        commandError.code = typeof payload?.error?.code === 'string'
+          ? String(payload.error.code)
+          : 'RUNTIME_INIT_OFFLINE_BUNDLE_COMMAND_FAILED';
+        commandError.diagnostics = {
+          ...(
+            payload?.error?.diagnostics && typeof payload.error.diagnostics === 'object'
+              ? payload.error.diagnostics
+              : {}
+          ),
+          swCommand,
+          commandErrorMessage: payload?.error?.message || null,
+        };
+        commandError.stackSnippet = typeof payload?.error?.stackSnippet === 'string'
+          ? payload.error.stackSnippet
+          : null;
+        reject(commandError);
         return;
       }
-      resolve(payload.result || null);
+      const result = typeof payload.result === 'object' && payload.result !== null
+        ? { ...payload.result }
+        : payload.result;
+      if (result && typeof result === 'object') {
+        result.swCommand = swCommand;
+        const existingDiagnostics = result.diagnostics && typeof result.diagnostics === 'object'
+          ? result.diagnostics
+          : {};
+        result.diagnostics = {
+          ...existingDiagnostics,
+          swCommand,
+        };
+      }
+      resolve(result || null);
     };
 
     messageTarget.postMessage({ type, messageId }, [channel.port2]);
@@ -358,41 +529,24 @@ export async function validateBundle({
     return result;
   }
 
-  const missingAssets = [];
-  const mismatchedAssets = [];
-
-  for (const requiredAsset of resolvedManifest.requiredAssets) {
-    const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
-    const cache = await cacheStorage.open(cacheName);
-    const assetUrl = resolveAssetUrl(requiredAsset.url);
-    const response = await cache.match(assetUrl);
-    if (!response) {
-      missingAssets.push({ id: requiredAsset.id, url: requiredAsset.url });
-      continue;
-    }
-
-    const bytes = await response.arrayBuffer();
-    if (Number.isFinite(Number(requiredAsset.byteLength)) && Number(requiredAsset.byteLength) !== bytes.byteLength) {
-      mismatchedAssets.push({ id: requiredAsset.id, url: requiredAsset.url, reason: 'byteLength' });
-      continue;
-    }
-
-    const digest = await hashBuffer(bytes, runtime);
-    if (digest !== requiredAsset.sha256) {
-      mismatchedAssets.push({ id: requiredAsset.id, url: requiredAsset.url, reason: 'sha256' });
-    }
-  }
+  const { missingAssets, mismatchedAssets, assetChecks } = await validateAssetsFromManifest({
+    runtime,
+    manifest: resolvedManifest,
+    cacheStorage,
+    hashBuffer,
+  });
 
   const staleVersion = Boolean(
     readBundleRecord(runtime)?.bundleVersion
     && readBundleRecord(runtime)?.bundleVersion !== resolvedManifest.bundleVersion,
   );
 
-  const diagnostics = buildDiagnosticsSummary({
+  const diagnosticsWithChecks = createAssetValidationSummary(
     missingAssets,
     mismatchedAssets,
-    staleVersion,
-  });
+    assetChecks,
+  );
+  diagnosticsWithChecks.staleVersion = staleVersion;
 
   const ready = missingAssets.length === 0 && mismatchedAssets.length === 0;
   let state = BUNDLE_STATES.READY;
@@ -411,7 +565,7 @@ export async function validateBundle({
     bundleVersion: resolvedManifest.bundleVersion,
     validatedAtMs: Date.now(),
     manifestDigest: createManifestDigest(resolvedManifest),
-    diagnostics,
+    diagnostics: diagnosticsWithChecks,
   };
 
   const existingRecord = readBundleRecord(runtime);
@@ -422,7 +576,7 @@ export async function validateBundle({
     validatedAtMs: result.validatedAtMs,
     manifestDigest: result.manifestDigest,
     resolvedExecutionProviderHint: existingRecord?.resolvedExecutionProviderHint || null,
-    diagnosticsSummary: diagnostics,
+    diagnosticsSummary: diagnosticsWithChecks,
   }, runtime);
 
   emitBundleStatus(result);
@@ -486,15 +640,33 @@ async function prepareBundleInternal({
     return failedResult;
   }
 
+  const fetchAttempts = [];
+
   for (const requiredAsset of resolvedManifest.requiredAssets) {
+    const fetchStartedAtMs = nowMs(runtime);
     const assetUrl = resolveAssetUrl(requiredAsset.url);
     const response = await fetchFn.call(runtime, assetUrl, { credentials: 'same-origin' });
+    const requestDurationMs = Math.max(0, nowMs(runtime) - fetchStartedAtMs);
+    const contentLength = Number(response?.headers?.get?.('content-length'));
+    const responseSummary = {
+      id: requiredAsset.id,
+      url: requiredAsset.url,
+      requestedUrl: assetUrl,
+      status: response?.status || null,
+      statusText: response?.statusText || null,
+      requestDurationMs,
+      contentLength: Number.isFinite(contentLength) ? contentLength : null,
+      success: response?.ok === true,
+    };
+    fetchAttempts.push(responseSummary);
+
     if (!response?.ok) {
       const diagnostics = {
         ...buildDiagnosticsSummary({ staleVersion: false }),
         failedAssetId: requiredAsset.id,
         failedAssetUrl: requiredAsset.url,
         failedAssetStatus: response?.status || null,
+        fetchAttempts,
       };
       const failedResult = {
         ready: false,
@@ -518,12 +690,35 @@ async function prepareBundleInternal({
       return failedResult;
     }
 
+    const responseBody = await response.arrayBuffer();
+    responseSummary.byteLength = responseBody.byteLength;
+
     const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
     const cache = await cacheStorage.open(cacheName);
-    await cache.put(assetUrl, response.clone());
+    await cache.put(
+      assetUrl,
+      new Response(responseBody, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      }),
+    );
   }
 
-  return validateBundle({ runtime, manifest: resolvedManifest, hashBuffer });
+  const prepared = await validateBundle({
+    runtime,
+    manifest: resolvedManifest,
+    hashBuffer,
+  });
+
+  if (prepared && typeof prepared === 'object') {
+    prepared.diagnostics = {
+      ...prepared.diagnostics,
+      fetchAttempts,
+    };
+  }
+
+  return prepared;
 }
 
 export async function prepareBundle(options = {}) {

@@ -124,7 +124,13 @@
     });
   }
 
-  function buildRuntimeInitFailure(error) {
+  function buildRuntimeInitFailure(
+    error,
+    {
+      runtimeInitProgressTrace = null,
+      runtimeInitFailureHistory = null,
+    } = {},
+  ) {
     const stepId =
       typeof error?.stepId === "string" && error.stepId.length > 0
         ? error.stepId
@@ -146,6 +152,19 @@
       message: error?.message || userMessage,
       stackSnippet: error?.stackSnippet || withStackSnippet(error?.stack),
     };
+    const normalizedHistory = Array.isArray(runtimeInitFailureHistory)
+      ? runtimeInitFailureHistory.map((record) => (
+        record && typeof record === "object" ? { ...record } : record
+      ))
+      : null;
+
+    if (Array.isArray(runtimeInitProgressTrace) && runtimeInitProgressTrace.length > 0) {
+      diagnostics.runtimeInitProgressTrace = runtimeInitProgressTrace;
+    }
+    if (Array.isArray(runtimeInitFailureHistory)) {
+      diagnostics.runtimeInitFailureHistory = normalizedHistory;
+      diagnostics.runtimeInitFailureHistoryCount = normalizedHistory.length;
+    }
 
     return {
       stepId,
@@ -199,7 +218,16 @@
       if (appDisposed || runId !== runtimeInitRunId) {
         return false;
       }
-      runtimeInitFailure = buildRuntimeInitFailure(error);
+      const runtimeInitProgressTrace = typeof processingRuntime.getRuntimeInitProgressTrace === "function"
+        ? processingRuntime.getRuntimeInitProgressTrace()
+        : null;
+      const runtimeInitFailureHistory = typeof processingRuntime.getRuntimeInitFailureHistory === "function"
+        ? processingRuntime.getRuntimeInitFailureHistory()
+        : null;
+      runtimeInitFailure = buildRuntimeInitFailure(error, {
+        runtimeInitProgressTrace,
+        runtimeInitFailureHistory,
+      });
       runtimeInitState = "failed";
       runtimeInitMode = null;
       runtimeInitDegraded = false;

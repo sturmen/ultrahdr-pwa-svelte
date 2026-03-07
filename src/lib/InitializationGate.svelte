@@ -26,6 +26,17 @@
     if (!failure) {
       return null;
     }
+    const runtimeInitProgressTrace = Array.isArray(failure.runtimeInitProgressTrace)
+      ? failure.runtimeInitProgressTrace
+      : null;
+    const runtimeInitFailureHistory = Array.isArray(failure.runtimeInitFailureHistory)
+      ? failure.runtimeInitFailureHistory
+      : null;
+    const runtimeInitFailureHistoryCount = Number.isFinite(
+      Number(failure?.diagnostics?.runtimeInitFailureHistoryCount)
+    )
+      ? failure.diagnostics.runtimeInitFailureHistoryCount
+      : null;
     return {
       errorCode: failure.errorCode || null,
       stepId: failure.stepId || null,
@@ -33,6 +44,9 @@
       message: failure.message || null,
       userMessage: failure.userMessage || null,
       diagnostics: failure.diagnostics || null,
+      runtimeInitProgressTrace,
+      runtimeInitFailureHistory,
+      runtimeInitFailureHistoryCount,
     };
   }
 

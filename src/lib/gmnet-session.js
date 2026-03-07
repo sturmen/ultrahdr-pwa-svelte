@@ -331,6 +331,56 @@ function resolveExecutionProviders(runtime = globalThis) {
     return [];
 }
 
+function nowMs(runtime = globalThis) {
+    const performanceNow = runtime?.performance?.now;
+    if (typeof performanceNow === 'function') {
+        return Math.floor(performanceNow.call(runtime?.performance));
+    }
+    return Date.now();
+}
+
+function buildAssetDiagnostics({
+    assetLabel,
+    assetUrl,
+    startedAtMs,
+    endedAtMs,
+    fetchStatus,
+    byteLength,
+    contentType,
+    attemptIndex,
+}) {
+    const startedMs = Number.isFinite(Number(startedAtMs)) ? Math.floor(Number(startedAtMs)) : null;
+    const endedMs = Number.isFinite(Number(endedAtMs)) ? Math.floor(Number(endedAtMs)) : null;
+    const status = Number.isFinite(Number(fetchStatus)) ? Math.floor(Number(fetchStatus)) : null;
+    return {
+        assetLabel: typeof assetLabel === 'string' ? assetLabel : 'unknown',
+        assetUrl: typeof assetUrl === 'string' ? assetUrl : null,
+        startedAtMs: startedMs,
+        endedAtMs: endedMs,
+        durationMs: startedMs !== null && endedMs !== null
+            ? Math.max(0, endedMs - startedMs)
+            : null,
+        status,
+        byteLength: Number.isFinite(Number(byteLength)) ? Math.floor(Number(byteLength)) : null,
+        contentType: typeof contentType === 'string' ? contentType : null,
+        attemptIndex: Number.isFinite(Number(attemptIndex)) ? Math.floor(Number(attemptIndex)) : null,
+    };
+}
+
+function attachAssetDiagnostics(error = null, diagnostics = {}) {
+    if (!error || typeof error !== 'object') {
+        return error;
+    }
+    if (!error.diagnostics || typeof error.diagnostics !== 'object') {
+        error.diagnostics = {};
+    }
+    error.diagnostics = {
+        ...error.diagnostics,
+        ...diagnostics,
+    };
+    return error;
+}
+
 function normalizeExecutionProvider(value) {
     if (typeof value !== 'string') {
         return null;
@@ -339,47 +389,193 @@ function normalizeExecutionProvider(value) {
     return normalized || null;
 }
 
-async function loadBinaryAsset(runtime, assetUrl, assetLabel) {
+async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = null) {
     const fetchFn = runtime?.fetch || globalThis.fetch;
+    const startedAtMs = nowMs(runtime);
     if (typeof fetchFn !== 'function') {
-        throw new Error(`Fetch API is unavailable for ${assetLabel} loading.`);
+        const error = new Error(`Fetch API is unavailable for ${assetLabel} loading.`);
+        error.name = 'GmnetModelAssetFetchUnavailableError';
+        attachAssetDiagnostics(error, {
+            ...buildAssetDiagnostics({
+                assetLabel,
+                assetUrl,
+                startedAtMs,
+                attemptIndex,
+                endedAtMs: nowMs(runtime),
+            }),
+            errorContext: 'asset_fetch_unavailable',
+            errorMessage: `Fetch API is unavailable for ${assetLabel} loading.`,
+        });
+        throw error;
     }
 
-    const response = await fetchFn.call(runtime, assetUrl, { credentials: 'same-origin' });
+    let response;
+    try {
+        response = await fetchFn.call(runtime, assetUrl, { credentials: 'same-origin' });
+    } catch (cause) {
+        const endedAtMs = nowMs(runtime);
+        const error = new Error(cause?.message || `Failed to load ${assetLabel}.`);
+        error.name = 'GmnetModelAssetFetchFailedError';
+        error.cause = cause;
+        attachAssetDiagnostics(error, {
+            ...buildAssetDiagnostics({
+                assetLabel,
+                assetUrl,
+                startedAtMs,
+                endedAtMs,
+                attemptIndex,
+            }),
+            errorContext: 'asset_fetch_failed',
+            errorMessage: cause?.message || `Failed to load ${assetLabel}.`,
+        });
+        throw error;
+    }
+
     if (!response?.ok) {
-        throw new Error(
+        const endedAtMs = nowMs(runtime);
+        const error = new Error(
             `Failed to load ${assetLabel}: ${response?.status || 'unknown status'}.`
         );
+        error.name = 'GmnetModelAssetHttpError';
+        attachAssetDiagnostics(error, {
+            ...buildAssetDiagnostics({
+                assetLabel,
+                assetUrl,
+                startedAtMs,
+                endedAtMs,
+                attemptIndex,
+                fetchStatus: response.status,
+                contentType: response?.headers?.get?.('content-type'),
+            }),
+            errorContext: 'asset_http_error',
+            errorMessage: `Failed to load ${assetLabel}: ${response?.status || 'unknown status'}.`,
+        });
+        throw error;
     }
 
     if (typeof response.arrayBuffer !== 'function') {
-        throw new Error(`${assetLabel} response does not support arrayBuffer().`);
+        const endedAtMs = nowMs(runtime);
+        const error = new Error(`${assetLabel} response does not support arrayBuffer().`);
+        error.name = 'GmnetModelAssetResponseUnsupportedError';
+        attachAssetDiagnostics(error, {
+            ...buildAssetDiagnostics({
+                assetLabel,
+                assetUrl,
+                startedAtMs,
+                endedAtMs,
+                attemptIndex,
+                fetchStatus: response.status,
+                contentType: response?.headers?.get?.('content-type'),
+            }),
+            errorContext: 'asset_array_buffer_unavailable',
+            errorMessage: `${assetLabel} response does not support arrayBuffer().`,
+        });
+        throw error;
     }
 
-    const buffer = await response.arrayBuffer();
+    let buffer;
+    try {
+        buffer = await response.arrayBuffer();
+    } catch (cause) {
+        const endedAtMs = nowMs(runtime);
+        const error = new Error(cause?.message || `Failed to read ${assetLabel} payload.`);
+        error.name = 'GmnetModelAssetReadFailedError';
+        error.cause = cause;
+        attachAssetDiagnostics(error, {
+            ...buildAssetDiagnostics({
+                assetLabel,
+                assetUrl,
+                startedAtMs,
+                endedAtMs,
+                attemptIndex,
+                fetchStatus: response.status,
+                contentType: response?.headers?.get?.('content-type'),
+            }),
+            errorContext: 'asset_array_buffer_failed',
+            errorMessage: cause?.message || `Failed to read ${assetLabel} payload.`,
+        });
+        throw error;
+    }
     if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
-        throw new Error(`${assetLabel} response was empty.`);
+        const endedAtMs = nowMs(runtime);
+        const error = new Error(`${assetLabel} response was empty.`);
+        error.name = 'GmnetModelAssetEmptyResponseError';
+        attachAssetDiagnostics(error, {
+            ...buildAssetDiagnostics({
+                assetLabel,
+                assetUrl,
+                startedAtMs,
+                endedAtMs,
+                attemptIndex,
+                fetchStatus: response.status,
+                contentType: response?.headers?.get?.('content-type'),
+                byteLength: Number.isFinite(Number(buffer?.byteLength)) ? buffer.byteLength : 0,
+            }),
+            errorContext: 'asset_empty_payload',
+            errorMessage: `${assetLabel} response was empty.`,
+        });
+        throw error;
     }
 
-    return new Uint8Array(buffer);
+    const endedAtMs = nowMs(runtime);
+    return {
+        payload: new Uint8Array(buffer),
+        diagnostics: buildAssetDiagnostics({
+            assetLabel,
+            assetUrl,
+            startedAtMs,
+            endedAtMs,
+            attemptIndex,
+            fetchStatus: response.status,
+            contentType: response?.headers?.get?.('content-type'),
+            byteLength: buffer.byteLength,
+        }),
+    };
 }
 
-async function resolveModelAndExternalDataPayloads(runtime, provider, modelUrl, externalDataUrl) {
+async function resolveModelAndExternalDataPayloads(
+    runtime,
+    provider,
+    modelUrl,
+    externalDataUrl,
+    attemptIndex = null,
+) {
+    const modelLoadDiagnostics = [];
     if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
-        const modelPayload = await loadBinaryAsset(runtime, modelUrl, 'GMNet ONNX model');
+        const modelAsset = await loadBinaryAsset(
+            runtime,
+            modelUrl,
+            'GMNet ONNX model',
+            attemptIndex,
+        );
+        modelLoadDiagnostics.push(modelAsset.diagnostics);
         return {
-            modelPayload,
+            modelPayload: modelAsset.payload,
             externalDataPayload: null,
+            modelLoadDiagnostics,
             includeExternalData: false,
         };
     }
 
     if (provider === GMNET_WASM_EXECUTION_PROVIDER) {
-        const modelPayload = await loadBinaryAsset(runtime, modelUrl, 'GMNet ONNX model');
-        const externalDataPayload = await loadBinaryAsset(runtime, externalDataUrl, 'GMNet ONNX model external data');
+        const modelAsset = await loadBinaryAsset(
+            runtime,
+            modelUrl,
+            'GMNet ONNX model',
+            attemptIndex,
+        );
+        const externalDataAsset = await loadBinaryAsset(
+            runtime,
+            externalDataUrl,
+            'GMNet ONNX model external data',
+            attemptIndex,
+        );
+        modelLoadDiagnostics.push(modelAsset.diagnostics);
+        modelLoadDiagnostics.push(externalDataAsset.diagnostics);
         return {
-            modelPayload,
-            externalDataPayload,
+            modelPayload: modelAsset.payload,
+            externalDataPayload: externalDataAsset.payload,
+            modelLoadDiagnostics,
             includeExternalData: true,
         };
     }
@@ -387,6 +583,7 @@ async function resolveModelAndExternalDataPayloads(runtime, provider, modelUrl, 
     return {
         modelPayload: modelUrl,
         externalDataPayload: externalDataUrl,
+        modelLoadDiagnostics,
         includeExternalData: true,
     };
 }
@@ -747,6 +944,9 @@ export class GMNetInferenceSession {
 
     async init(modelVariant = DEFAULT_GMNET_MODEL_VARIANT, options = {}) {
         const normalizedVariant = normalizeModelVariant(modelVariant);
+        const attemptIndex = Number.isFinite(Number(options?.attemptIndex))
+            ? Math.floor(Number(options.attemptIndex))
+            : null;
         const requestedExecutionProvidersRaw = Array.isArray(options.forceExecutionProviders)
             && options.forceExecutionProviders.length > 0
             ? options.forceExecutionProviders
@@ -856,19 +1056,28 @@ export class GMNetInferenceSession {
             const localModelUrl = `${MODEL_BASE_PATH}${localModelFilename}?v=${version}`;
             const globalExternalDataUrl = `${MODEL_BASE_PATH}${variantConfig.globalDataFilename}?v=${version}`;
             const localExternalDataUrl = `${MODEL_BASE_PATH}${variantConfig.localDataFilename}?v=${version}`;
+            const modelLoadDiagnostics = [];
 
             const globalPayloads = await resolveModelAndExternalDataPayloads(
                 this.runtime,
                 requestedProvider,
                 globalModelUrl,
                 globalExternalDataUrl,
+                attemptIndex,
             );
             const localPayloads = await resolveModelAndExternalDataPayloads(
                 this.runtime,
                 requestedProvider,
                 localModelUrl,
                 localExternalDataUrl,
+                attemptIndex,
             );
+            if (Array.isArray(globalPayloads.modelLoadDiagnostics)) {
+                modelLoadDiagnostics.push(...globalPayloads.modelLoadDiagnostics);
+            }
+            if (Array.isArray(localPayloads.modelLoadDiagnostics)) {
+                modelLoadDiagnostics.push(...localPayloads.modelLoadDiagnostics);
+            }
             this.emit('progress', { loaded: 0, total: 2 });
             console.log(`[GMNet] Loading ${normalizedVariant} global model from ${globalModelUrl}...`);
             console.log(`[GMNet] Loading ${normalizedVariant} local model from ${localModelUrl}...`);
@@ -942,6 +1151,22 @@ export class GMNetInferenceSession {
 
         } catch (e) {
             console.error('[GMNet] init error:', e);
+            if (e && typeof e === 'object') {
+                const existingDiagnostics = e.diagnostics && typeof e.diagnostics === 'object'
+                    ? e.diagnostics
+                    : {};
+                e.diagnostics = {
+                    ...existingDiagnostics,
+                    requestedExecutionProviders,
+                    resolvedExecutionProvider: normalizeExecutionProvider(requestedProvider),
+                    modelVariant: normalizedVariant,
+                    modelLoadDiagnostics: modelLoadDiagnostics.map((diagnostic) => (
+                        diagnostic && typeof diagnostic === 'object'
+                            ? { ...diagnostic }
+                            : diagnostic
+                    )),
+                };
+            }
             this.emit('error', e);
             throw e;
         }

@@ -44,6 +44,7 @@ const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
 const WORKER_MESSAGE_ERROR = 'Processing worker returned an unexpected response.';
 const WORKER_STALL_ERROR = 'Processing worker stalled before WASM initialization completed.';
 const WORKER_WASM_LOAD_TIMEOUT_MS = 20_000;
+const RUNTIME_INIT_FAILURE_TRACE_KEY = 'ultrahdr:runtime-init-failures:v1';
 const INFERENCE_STAGE_NAME = 'generate-gain-map';
 const INFERENCE_HEARTBEAT_INTERVAL_MS = 5_000;
 const INFERENCE_START_NOTE = 'Starting inference...';
@@ -59,10 +60,119 @@ function createRuntimeContext() {
     workerClientPromise: null,
     workerClientCreationError: null,
     lastRuntimeInitProgressEvent: null,
+    runtimeInitProgressTrace: [],
     runtimeInitProgressListeners: new Set(),
     mainThreadRuntimePromise: null,
     mainThreadRuntimeError: null,
   };
+}
+
+function createRuntimeFailureTraceRecord({
+  error,
+  startupTrace = [],
+  runtime = globalThis,
+}) {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  return {
+    timestamp: Date.now(),
+    stepId: error.stepId || null,
+    errorCode: error.code || null,
+    userMessage: error.userMessage || error.message || null,
+    message: error.message || null,
+    stackSnippet: error.stackSnippet || null,
+    stack: error.stack || null,
+    url: runtime?.location?.href || null,
+    navigatorOnline: runtime?.navigator?.onLine,
+    diagnostics: error.diagnostics && typeof error.diagnostics === 'object'
+      ? { ...error.diagnostics }
+      : null,
+    runtimeInitTrace: Array.isArray(startupTrace) ? startupTrace : [],
+  };
+}
+
+function readRuntimeFailureTraceHistory(runtime = globalThis) {
+  const storage = runtime?.localStorage;
+  if (!storage || typeof storage.getItem !== 'function') {
+    return [];
+  }
+  try {
+    const raw = storage.getItem(RUNTIME_INIT_FAILURE_TRACE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+function writeRuntimeFailureTraceHistory(history, runtime = globalThis) {
+  const storage = runtime?.localStorage;
+  if (!storage || typeof storage.setItem !== 'function') {
+    return;
+  }
+  try {
+    storage.setItem(RUNTIME_INIT_FAILURE_TRACE_KEY, JSON.stringify(history));
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
+function storeRuntimeInitializationFailure({ error, startupTrace, runtime = globalThis }) {
+  const record = createRuntimeFailureTraceRecord({ error, startupTrace, runtime });
+  if (!record) {
+    return null;
+  }
+  const history = readRuntimeFailureTraceHistory(runtime);
+  history.push(record);
+  while (history.length > 20) {
+    history.shift();
+  }
+  writeRuntimeFailureTraceHistory(history, runtime);
+  return record;
+}
+
+function cloneRuntimeInitTraceEvent(event = null) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  return {
+    ...event,
+    diagnostics:
+      event.diagnostics && typeof event.diagnostics === 'object'
+        ? { ...event.diagnostics }
+        : event.diagnostics,
+  };
+}
+
+function cloneRuntimeInitFailureRecord(record = null) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  return {
+    ...record,
+    diagnostics:
+      record.diagnostics && typeof record.diagnostics === 'object'
+        ? { ...record.diagnostics }
+        : record.diagnostics,
+    runtimeInitTrace: Array.isArray(record.runtimeInitTrace)
+      ? record.runtimeInitTrace.map((event) => cloneRuntimeInitProgressEvent(event))
+      : [],
+  };
+}
+
+function cloneRuntimeInitFailureHistory(history = []) {
+  if (!Array.isArray(history)) {
+    return [];
+  }
+  return history.map((record) => cloneRuntimeInitFailureRecord(record));
 }
 
 function resolveRuntimeMode(resolvedExecutionProvider, workerBacked) {
@@ -172,6 +282,13 @@ function cloneRuntimeInitProgressEvent(eventDetail) {
 function publishRuntimeInitProgress(context, eventDetail) {
   const detail = cloneRuntimeInitProgressEvent(eventDetail);
   context.lastRuntimeInitProgressEvent = detail;
+  if (!Array.isArray(context.runtimeInitProgressTrace)) {
+    context.runtimeInitProgressTrace = [];
+  }
+  context.runtimeInitProgressTrace.push(detail);
+  while (context.runtimeInitProgressTrace.length > 120) {
+    context.runtimeInitProgressTrace.shift();
+  }
   for (const listener of context.runtimeInitProgressListeners) {
     try {
       listener(detail);
@@ -698,6 +815,7 @@ function resetRuntimeInitializationState(context) {
   context.mainThreadRuntimePromise = null;
   context.mainThreadRuntimeError = null;
   context.lastRuntimeInitProgressEvent = null;
+  context.runtimeInitProgressTrace = [];
 }
 
 async function initializeRuntimeInternal(context, options = {}) {
@@ -819,6 +937,31 @@ async function initializeRuntimeInternal(context, options = {}) {
       bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
       ...runtimeMetadata,
     };
+  } catch (error) {
+    if (error && typeof error === 'object') {
+      const runtimeInitProgressTrace = Array.isArray(context.runtimeInitProgressTrace)
+        ? context.runtimeInitProgressTrace.map((event) => cloneRuntimeInitProgressEvent(event))
+        : [];
+      const persistedRecord = storeRuntimeInitializationFailure({
+        error,
+        startupTrace: runtimeInitProgressTrace,
+        runtime: globalThis,
+      });
+      const runtimeInitFailureHistory = cloneRuntimeInitFailureHistory(
+        readRuntimeFailureTraceHistory(globalThis),
+      );
+      error.runtimeInitProgressTrace = runtimeInitProgressTrace;
+      error.runtimeInitFailureHistory = runtimeInitFailureHistory;
+      error.diagnostics = {
+        ...(error.diagnostics || {}),
+        runtimeInitProgressTrace,
+        runtimeInitFailureHistory,
+      };
+      if (persistedRecord) {
+        error.diagnostics.runtimeInitFailureHistoryRecordCount = runtimeInitFailureHistory.length;
+      }
+    }
+    throw error;
   } finally {
     if (onProgress) {
       context.runtimeInitProgressListeners.delete(onProgress);
@@ -1011,11 +1154,23 @@ export function createProcessingRuntime(dependencies = {}) {
     };
   }
 
+  function getRuntimeInitProgressTrace() {
+    return Array.isArray(runtimeContext.runtimeInitProgressTrace)
+      ? runtimeContext.runtimeInitProgressTrace.map((event) => cloneRuntimeInitProgressEvent(event))
+      : [];
+  }
+
+  function getRuntimeInitFailureHistory() {
+    return cloneRuntimeInitFailureHistory(readRuntimeFailureTraceHistory(globalThis));
+  }
+
   return {
     initialize,
     process,
     subscribe,
     getSnapshot,
+    getRuntimeInitProgressTrace,
+    getRuntimeInitFailureHistory,
     dispose,
   };
 

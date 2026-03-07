@@ -152,6 +152,14 @@ function toStackSnippet(stack) {
     .join('\n');
 }
 
+function nowMs(runtime = globalThis) {
+  const performanceNow = runtime?.performance?.now;
+  if (typeof performanceNow === 'function') {
+    return Math.floor(performanceNow.call(runtime?.performance));
+  }
+  return Date.now();
+}
+
 function collectRuntimeFacts(runtime = globalThis, extras = {}) {
   const navigatorRef = runtime?.navigator || {};
   return {
@@ -302,12 +310,20 @@ async function runStep({
   fn,
   timeoutMs = 0,
 }) {
-  emitStepProgress(onProgress, stepId, 'running', runningNote);
+  const startedAtMs = nowMs(runtime);
+  emitStepProgress(onProgress, stepId, 'running', runningNote, {
+    startedAtMs,
+  });
   try {
     const result = await runWithStepTimeout(fn, stepId, timeoutMs);
-    emitStepProgress(onProgress, stepId, 'passed', successNote || runningNote);
+    const durationMs = Math.max(0, nowMs(runtime) - startedAtMs);
+    emitStepProgress(onProgress, stepId, 'passed', successNote || runningNote, {
+      startedAtMs,
+      durationMs,
+    });
     return result;
   } catch (cause) {
+    const durationMs = Math.max(0, nowMs(runtime) - startedAtMs);
     const error = coerceInitializationError({
       stepId,
       cause,
@@ -317,7 +333,13 @@ async function runStep({
     });
     emitStepProgress(onProgress, stepId, 'failed', error.userMessage, {
       errorCode: error.code,
-      diagnostics: error.diagnostics,
+      diagnostics: {
+        ...error.diagnostics,
+        startedAtMs,
+        durationMs,
+      },
+      startedAtMs,
+      durationMs,
     });
     throw error;
   }
@@ -421,15 +443,22 @@ export async function initializeRuntime({
   );
 
   function normalizeAttemptFailure(error, provider) {
+    const normalizedStepId = typeof error?.stepId === 'string' ? error.stepId : null;
     const normalizedProvider = normalizeExecutionProvider(provider);
     return {
       provider: normalizedProvider || provider || null,
+      attemptIndex: Number.isFinite(Number(error?.attemptIndex)) ? Math.floor(Number(error.attemptIndex)) : null,
+      stepId: normalizedStepId,
       errorCode: typeof error?.code === 'string'
         ? error.code
         : RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
-      stepId: typeof error?.stepId === 'string' ? error.stepId : null,
+      errorName: typeof error?.name === 'string' ? error.name : 'Error',
       message: error?.message || 'Runtime initialization attempt failed.',
       userMessage: error?.userMessage || error?.message || 'Runtime initialization attempt failed.',
+      startedAtMs: Number.isFinite(Number(error?.startedAtMs)) ? Math.floor(Number(error.startedAtMs)) : null,
+      durationMs: Number.isFinite(Number(error?.durationMs)) ? Math.floor(Number(error.durationMs)) : null,
+      causeMessage: typeof error?.cause?.message === 'string' ? error.cause.message : null,
+      stackSnippet: typeof error?.stackSnippet === 'string' ? error.stackSnippet : null,
       resolvedExecutionProvider: normalizeExecutionProvider(
         error?.diagnostics?.resolvedExecutionProvider || error?.resolvedExecutionProvider || null,
       ),
@@ -581,6 +610,8 @@ export async function initializeRuntime({
 
   for (const provider of requestedExecutionProviders) {
     const providerRequest = [provider];
+    const attemptStartAtMs = nowMs(runtime);
+    const attemptIndex = attemptFailures.length + 1;
 
     try {
       await runStep({
@@ -596,6 +627,7 @@ export async function initializeRuntime({
           await session.init(modelVariant, {
             forceExecutionProviders: providerRequest,
             forceReload: true,
+            attemptIndex,
           });
         },
       });
@@ -756,6 +788,12 @@ export async function initializeRuntime({
         throw error;
       }
 
+      if (error && typeof error === 'object') {
+        const normalizedError = error;
+        normalizedError.startedAtMs = attemptStartAtMs;
+        normalizedError.durationMs = Math.max(0, nowMs(runtime) - attemptStartAtMs);
+        normalizedError.attemptIndex = attemptIndex;
+      }
       attemptFailures.push(normalizeAttemptFailure(error, provider));
       const isLastAttempt = attemptFailures.length >= requestedExecutionProviders.length;
       if (!isLastAttempt) {
