@@ -19,6 +19,23 @@ export const DEFAULT_PROCESSING_PREFERENCES = Object.freeze({
   rotation: 0,
 });
 
+function isSmartphoneRuntime(runtime = globalThis) {
+  const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+  const maxTouchPoints = Number(runtime?.navigator?.maxTouchPoints || 0);
+  return (
+    /android/.test(userAgent)
+    || /(iphone|ipad|ipod)/.test(userAgent)
+    || (/(macintosh|mac os x)/.test(userAgent) && maxTouchPoints > 1)
+  );
+}
+
+function getRuntimeDefaultPreferences(runtime = globalThis) {
+  return {
+    ...DEFAULT_PROCESSING_PREFERENCES,
+    useJpegli: !isSmartphoneRuntime(runtime),
+  };
+}
+
 function normalizeString(value) {
   if (typeof value !== 'string') {
     return null;
@@ -95,16 +112,17 @@ function isWebKitRuntime(runtime = globalThis) {
   return true;
 }
 
-export function normalizeProcessingPreferences(rawPreferences) {
+export function normalizeProcessingPreferences(rawPreferences, runtime = globalThis) {
   const raw = rawPreferences && typeof rawPreferences === 'object'
     ? rawPreferences
     : {};
+  const defaults = getRuntimeDefaultPreferences(runtime);
   return {
     backendPreference: normalizeBackendPreference(raw.backendPreference),
     gmnetCheckpointingPreference: normalizeCheckpointingPreference(raw.gmnetCheckpointingPreference),
     maxContentBoostStops: normalizeMaxContentBoostStops(raw.maxContentBoostStops),
     quality: normalizeQuality(raw.quality),
-    useJpegli: normalizeBoolean(raw.useJpegli, DEFAULT_PROCESSING_PREFERENCES.useJpegli),
+    useJpegli: normalizeBoolean(raw.useJpegli, defaults.useJpegli),
     discardGainMap: normalizeBoolean(raw.discardGainMap, DEFAULT_PROCESSING_PREFERENCES.discardGainMap),
     stripExif: normalizeBoolean(raw.stripExif, DEFAULT_PROCESSING_PREFERENCES.stripExif),
     keepScreenAwake: normalizeBoolean(raw.keepScreenAwake, DEFAULT_PROCESSING_PREFERENCES.keepScreenAwake),
@@ -138,16 +156,19 @@ export function loadProcessingPreferences(runtime = globalThis) {
   const storage = runtime?.localStorage || null;
   const rawNext = readStorageItem(storage, PROCESSING_PREFERENCES_STORAGE_KEY);
   if (typeof rawNext === 'string' && rawNext.trim().length > 0) {
-    try {
+      try {
       const parsed = JSON.parse(rawNext);
-      return normalizeProcessingPreferences(parsed);
+      return normalizeProcessingPreferences(parsed, runtime);
     } catch (_error) {
       // Continue to runtime/legacy fallbacks.
     }
   }
 
   if (runtime?.[PROCESSING_PREFERENCES_RUNTIME_KEY] && typeof runtime[PROCESSING_PREFERENCES_RUNTIME_KEY] === 'object') {
-    return normalizeProcessingPreferences(runtime[PROCESSING_PREFERENCES_RUNTIME_KEY]);
+    return normalizeProcessingPreferences(
+      runtime[PROCESSING_PREFERENCES_RUNTIME_KEY],
+      runtime,
+    );
   }
 
   const legacyStoragePreference = normalizeString(
@@ -159,16 +180,16 @@ export function loadProcessingPreferences(runtime = globalThis) {
   const legacyBackendPreference = legacyStoragePreference || legacyRuntimePreference;
   if (legacyBackendPreference) {
     return normalizeProcessingPreferences({
-      ...DEFAULT_PROCESSING_PREFERENCES,
+      ...getRuntimeDefaultPreferences(runtime),
       backendPreference: legacyBackendPreference,
-    });
+    }, runtime);
   }
 
-  return { ...DEFAULT_PROCESSING_PREFERENCES };
+  return getRuntimeDefaultPreferences(runtime);
 }
 
 export function saveProcessingPreferences(preferences, runtime = globalThis) {
-  const normalized = normalizeProcessingPreferences(preferences);
+  const normalized = normalizeProcessingPreferences(preferences, runtime);
   const serialized = JSON.stringify(normalized);
   const storage = runtime?.localStorage || null;
 

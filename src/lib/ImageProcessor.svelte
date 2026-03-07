@@ -1684,7 +1684,7 @@
   onMount(() => {
     let mediaQuery = null;
     let handleMediaChange = null;
-    applyPreferencesToState(loadProcessingPreferences());
+    applyPreferencesToState(loadProcessingPreferences(runtime || globalThis));
 
     if (
       typeof window !== "undefined" &&

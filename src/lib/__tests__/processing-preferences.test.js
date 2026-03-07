@@ -10,7 +10,15 @@ describe('processing-preferences', () => {
       normalizeProcessingPreferences,
     } = await import('../processing-preferences.js');
 
-    const normalized = normalizeProcessingPreferences({
+    const smartphoneRuntime = {
+      navigator: {
+        userAgent:
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)',
+      },
+    };
+
+    const normalized = normalizeProcessingPreferences(
+      {
       backendPreference: 'invalid-provider',
       gmnetCheckpointingPreference: 'invalid-mode',
       maxContentBoostStops: 'nan',
@@ -20,7 +28,9 @@ describe('processing-preferences', () => {
       stripExif: null,
       keepScreenAwake: undefined,
       rotation: 'invalid',
-    });
+      },
+      smartphoneRuntime,
+    );
 
     expect(normalized).toEqual(DEFAULT_PROCESSING_PREFERENCES);
   });
@@ -45,12 +55,21 @@ describe('processing-preferences', () => {
       loadProcessingPreferences,
     } = await import('../processing-preferences.js');
 
-    const noStorageRuntime = {};
+    const noStorageRuntime = {
+      navigator: {
+        userAgent:
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)',
+      },
+    };
     expect(loadProcessingPreferences(noStorageRuntime)).toEqual(
       DEFAULT_PROCESSING_PREFERENCES,
     );
 
     const invalidStorageRuntime = {
+      navigator: {
+        userAgent:
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)',
+      },
       localStorage: {
         getItem(key) {
           if (key === 'ultrahdr:processing-preferences:v1') {
@@ -63,6 +82,20 @@ describe('processing-preferences', () => {
     expect(loadProcessingPreferences(invalidStorageRuntime)).toEqual(
       DEFAULT_PROCESSING_PREFERENCES,
     );
+
+    const desktopRuntime = {
+      navigator: {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+      },
+      localStorage: {
+        getItem() {
+          return null;
+        },
+      },
+    };
+    const desktopDefaults = loadProcessingPreferences(desktopRuntime);
+    expect(desktopDefaults.useJpegli).toBe(true);
   });
 
   it('migrates legacy backend preference key when new key is absent', async () => {
@@ -72,6 +105,13 @@ describe('processing-preferences', () => {
       loadProcessingPreferences,
       normalizeProcessingPreferences,
     } = await import('../processing-preferences.js');
+
+    const desktopRuntime = {
+      navigator: {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+      },
+    };
 
     const runtime = {
       localStorage: {
@@ -90,7 +130,7 @@ describe('processing-preferences', () => {
     const loaded = loadProcessingPreferences(runtime);
     const expected = normalizeProcessingPreferences({
       backendPreference: 'webgl',
-    });
+    }, desktopRuntime);
     expect(loaded).toEqual(expected);
   });
 
