@@ -457,6 +457,42 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     progressGate.resolve();
   });
 
+  it('does not render GMNet runtime when stage is not ONNX inference', async () => {
+    const progressGate = createDeferred();
+
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
+      const baseEvent = {
+        elapsedMs: 12,
+        stageDurationsMs: {},
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        timestamp: Date.now(),
+      };
+
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'encode-ultrahdr',
+        stageProgress: 50,
+        note: 'Encoding output with runtime: webgl',
+        gmnetExecutionProvider: 'webgl',
+      });
+      await progressGate.promise;
+
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId('pipeline-execution-provider')).not.toBeInTheDocument();
+    progressGate.resolve();
+  });
+
   it('shows AI model updates inside pipeline-status with inline progress UI', async () => {
     const progressGate = createDeferred();
 
@@ -496,6 +532,42 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(within(pipelineStatus).getByTestId('pipeline-execution-provider')).toHaveTextContent(
       /gmnet runtime:\s*wasm/i,
     );
+    progressGate.resolve();
+  });
+
+  it('shows GMNet runtime: WebGPU during ONNX inference events', async () => {
+    const progressGate = createDeferred();
+
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
+      const baseEvent = {
+        elapsedMs: 12,
+        stageDurationsMs: {},
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        timestamp: Date.now(),
+      };
+
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'generate-gain-map',
+        stageProgress: 55,
+        note: 'Running ONNX inference',
+        gmnetExecutionProvider: 'webgpu',
+      });
+      await progressGate.promise;
+
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-execution-provider')).toHaveTextContent(
+        /gmnet runtime:\s*webgpu/i,
+      );
+    });
     progressGate.resolve();
   });
 

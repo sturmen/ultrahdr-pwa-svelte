@@ -483,13 +483,16 @@
     const note = String(event?.note || "");
     const fileIndex = Number(event?.fileIndex);
     const totalFiles = Number(event?.totalFiles);
+    const isInferenceStage = event?.stage === "generate-gain-map";
     const stageImpliesGenerated =
       event?.stage === "constrain-sdr-image" ||
       event?.stage === "prepare-gmnet-input" ||
       event?.stage === "generate-gain-map";
     const processingPath = normalizeProcessingPath(event?.processingPath);
     const executionProvider = resolveExecutionProviderFromEvent(event);
-    if (executionProvider) {
+    if (!isInferenceStage) {
+      pipelineExecutionProvider = null;
+    } else if (executionProvider) {
       pipelineExecutionProvider = executionProvider;
     }
 
@@ -538,7 +541,7 @@
       pipelineCurrentFileProgress = 0;
     }
 
-    if (event?.stage === "generate-gain-map") {
+    if (isInferenceStage) {
       if (phase === "stage-complete" || phase === "stage-error") {
         resetAiModelStatus();
       } else if (phase === "stage-progress") {
