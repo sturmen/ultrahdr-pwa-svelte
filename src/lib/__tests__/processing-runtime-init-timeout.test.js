@@ -65,6 +65,14 @@ describe('processing worker init timeout', () => {
     await vi.advanceTimersByTimeAsync(130_000);
     await expect(initPromise).rejects.toMatchObject({
       name: 'ProcessingWorkerInitTimeout',
+      diagnostics: {
+        workerInitTimeoutMs: 300_000,
+        runtimeCapabilities: {
+          hasWorker: true,
+          hasOffscreenCanvas: true,
+          hasCreateImageBitmap: true,
+        },
+      },
     });
   });
 });

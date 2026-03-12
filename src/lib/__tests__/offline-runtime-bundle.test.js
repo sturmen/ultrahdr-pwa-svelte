@@ -64,6 +64,14 @@ function createStorage() {
   };
 }
 
+class FakeMessageChannel {
+  constructor() {
+    this.port1 = { onmessage: null, _peer: null };
+    this.port2 = { onmessage: null, _peer: this.port1 };
+    this.port1._peer = this.port2;
+  }
+}
+
 describe('offline runtime bundle', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -205,14 +213,6 @@ describe('offline runtime bundle', () => {
       },
     }));
 
-    class FakeMessageChannel {
-      constructor() {
-        this.port1 = { onmessage: null, _peer: null };
-        this.port2 = { onmessage: null, _peer: this.port1 };
-        this.port1._peer = this.port2;
-      }
-    }
-
     const runtime = {
       navigator: {
         onLine: false,
@@ -256,6 +256,112 @@ describe('offline runtime bundle', () => {
       expect(result.blocked).toBe(false);
       expect(result.state).toBe(BUNDLE_STATES.READY);
       expect(result.bundleVersion).toBe('cached-ready-version');
+      expect(result.diagnostics).toMatchObject({
+        offlineFallbackUsed: true,
+        fallbackReason: 'service-worker-validation-not-ready',
+        serviceWorkerValidation: {
+          ready: false,
+          state: BUNDLE_STATES.EMPTY,
+          diagnostics: {
+            missingAssetCount: 1,
+          },
+        },
+      });
+    } finally {
+      globalThis.MessageChannel = originalMessageChannel;
+    }
+  });
+
+  it('preserves service-worker validation command failures when falling back to local cache validation', async () => {
+    const localStorage = createStorage();
+    const cacheStorage = new MemoryCacheStorage();
+    const candidateCacheNames = new Set([
+      'uhdr-ai-models-test',
+      buildRuntimeBundleCacheNames('dev-unversioned-app').aiModels,
+      buildRuntimeBundleCacheNames(import.meta.env.VITE_APP_ASSET_VERSION || '').aiModels,
+    ]);
+    const manifest = {
+      bundleVersion: '1|a|b',
+      requiredAssets: [
+        {
+          id: 'gmnet-smoke',
+          url: '/models/gmnet-smoke-128.png',
+          cacheName: 'uhdr-ai-models-test',
+          sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          byteLength: 4,
+          kind: 'smoke',
+        },
+      ],
+    };
+
+    for (const cacheName of candidateCacheNames) {
+      const cache = await cacheStorage.open(cacheName);
+      await cache.put(
+        '/models/gmnet-smoke-128.png',
+        new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+      );
+      await cache.put(
+        '/ultrahdr-pwa-svelte/models/gmnet-smoke-128.png',
+        new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+      );
+    }
+
+    const runtime = {
+      navigator: {
+        onLine: true,
+        serviceWorker: {
+          controller: {
+            postMessage: (message, ports) => {
+              setTimeout(() => {
+                ports[0]?._peer?.onmessage?.({
+                  data: {
+                    ok: false,
+                    messageId: message.messageId,
+                    error: {
+                      type: 'ServiceWorkerBundleCommandError',
+                      code: 'RUNTIME_INIT_OFFLINE_BUNDLE_COMMAND_FAILED',
+                      message: 'validate failed in service worker',
+                      diagnostics: {
+                        swState: 'redundant',
+                      },
+                    },
+                  },
+                });
+              }, 0);
+            },
+          },
+        },
+      },
+      localStorage,
+      caches: cacheStorage,
+      fetch: vi.fn(),
+      MessageChannel: FakeMessageChannel,
+    };
+
+    const originalMessageChannel = globalThis.MessageChannel;
+    globalThis.MessageChannel = FakeMessageChannel;
+
+    try {
+      const result = await validateBundle({
+        runtime,
+        manifest,
+        hashBuffer: async () => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      });
+
+      expect(result.ready).toBe(true);
+      expect(result.diagnostics).toMatchObject({
+        serviceWorkerValidationError: {
+          message: 'validate failed in service worker',
+          code: 'RUNTIME_INIT_OFFLINE_BUNDLE_COMMAND_FAILED',
+          diagnostics: {
+            swState: 'redundant',
+          },
+          swCommand: {
+            type: 'UHDR_VALIDATE_BUNDLE',
+            responseOk: false,
+          },
+        },
+      });
     } finally {
       globalThis.MessageChannel = originalMessageChannel;
     }

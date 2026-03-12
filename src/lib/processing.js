@@ -175,6 +175,32 @@ function cloneRuntimeInitFailureHistory(history = []) {
   return history.map((record) => cloneRuntimeInitFailureRecord(record));
 }
 
+function buildWorkerRuntimeCapabilities(runtime = globalThis) {
+  return {
+    hasWorker: typeof runtime?.Worker === 'function',
+    hasOffscreenCanvas: typeof runtime?.OffscreenCanvas !== 'undefined',
+    hasCreateImageBitmap: typeof runtime?.createImageBitmap === 'function',
+  };
+}
+
+function buildWorkerInitDiagnostics({
+  runtime = globalThis,
+  workerInitTimeoutMs = null,
+  runtimeInitOptions = null,
+  lastRuntimeInitProgressEvent = null,
+} = {}) {
+  return {
+    ...(Number.isFinite(Number(workerInitTimeoutMs))
+      ? { workerInitTimeoutMs: Math.floor(Number(workerInitTimeoutMs)) }
+      : {}),
+    runtimeCapabilities: buildWorkerRuntimeCapabilities(runtime),
+    runtimeInitOptions: runtimeInitOptions && typeof runtimeInitOptions === 'object'
+      ? { ...runtimeInitOptions }
+      : null,
+    lastRuntimeInitProgressEvent: cloneRuntimeInitProgressEvent(lastRuntimeInitProgressEvent),
+  };
+}
+
 function resolveRuntimeMode(resolvedExecutionProvider, workerBacked) {
   const provider = normalizeExecutionProvider(resolvedExecutionProvider);
   if (workerBacked) {
@@ -773,6 +799,7 @@ function initializeWorkerClient(context, initOptions = null) {
       ...(testRuntimeInitOptions || {}),
       ...explicitRuntimeInitOptions,
     });
+    const workerInitTimeoutMs = resolveWorkerInitTimeoutMs(globalThis);
     const hasRuntimeInitOptions = Object.keys(runtimeInitOptions).length > 0;
     worker.postMessage({
       type: 'init',
@@ -783,9 +810,18 @@ function initializeWorkerClient(context, initOptions = null) {
       if (!ready) {
         const timeoutError = new Error(WORKER_INIT_ERROR);
         timeoutError.name = 'ProcessingWorkerInitTimeout';
+        timeoutError.code = 'RUNTIME_INIT_WORKER_INIT_TIMEOUT';
+        timeoutError.stepId = 'onnx-load';
+        timeoutError.userMessage = 'Processing worker failed to initialize before startup timed out.';
+        timeoutError.diagnostics = buildWorkerInitDiagnostics({
+          runtime: globalThis,
+          workerInitTimeoutMs,
+          runtimeInitOptions,
+          lastRuntimeInitProgressEvent: context.lastRuntimeInitProgressEvent,
+        });
         rejectInitialization(timeoutError);
       }
-    }, resolveWorkerInitTimeoutMs(globalThis));
+    }, workerInitTimeoutMs);
   });
 }
 

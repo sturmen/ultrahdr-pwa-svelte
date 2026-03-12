@@ -208,6 +208,31 @@ function buildDiagnosticsSummary({ missingAssets = [], mismatchedAssets = [], st
   };
 }
 
+function cloneDiagnosticsObject(value) {
+  return value && typeof value === 'object' ? { ...value } : null;
+}
+
+function summarizeServiceWorkerCommandFailure(error) {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  return {
+    name: typeof error.name === 'string' ? error.name : 'Error',
+    code: typeof error.code === 'string' ? error.code : null,
+    message: typeof error.message === 'string' ? error.message : String(error),
+    stackSnippet: typeof error.stackSnippet === 'string' ? error.stackSnippet : null,
+    diagnostics: cloneDiagnosticsObject(error.diagnostics),
+    swCommand: cloneDiagnosticsObject(error.swCommand),
+  };
+}
+
+function mergeDiagnostics(baseDiagnostics, extraDiagnostics = null) {
+  const base = cloneDiagnosticsObject(baseDiagnostics) || {};
+  const extra = cloneDiagnosticsObject(extraDiagnostics);
+  return extra ? { ...base, ...extra } : base;
+}
+
 function createAssetValidationSummary(missingAssets = [], mismatchedAssets = [], assetChecks = []) {
   return {
     missingAssetCount: missingAssets.length,
@@ -479,6 +504,7 @@ export async function validateBundle({
   loadManifest = loadManifestDefault,
   hashBuffer = hashBufferDefault,
 } = {}) {
+  let serviceWorkerValidationError = null;
   try {
     const swResult = await invokeServiceWorkerBundleCommand(runtime, 'UHDR_VALIDATE_BUNDLE');
     if (swResult && typeof swResult === 'object' && typeof swResult.state === 'string') {
@@ -497,7 +523,8 @@ export async function validateBundle({
       emitBundleStatus(swResult);
       return swResult;
     }
-  } catch {
+  } catch (error) {
+    serviceWorkerValidationError = summarizeServiceWorkerCommandFailure(error);
     // Fall through to local validation path.
   }
 
@@ -507,7 +534,12 @@ export async function validateBundle({
 
   const cacheStorage = runtime?.caches || globalThis.caches;
   if (!cacheStorage || typeof cacheStorage.open !== 'function') {
-    const diagnostics = buildDiagnosticsSummary({ staleVersion: false });
+    const diagnostics = mergeDiagnostics(
+      buildDiagnosticsSummary({ staleVersion: false }),
+      serviceWorkerValidationError
+        ? { serviceWorkerValidationError }
+        : null,
+    );
     const result = {
       ready: false,
       state: BUNDLE_STATES.FAILED,
@@ -547,6 +579,9 @@ export async function validateBundle({
     assetChecks,
   );
   diagnosticsWithChecks.staleVersion = staleVersion;
+  if (serviceWorkerValidationError) {
+    diagnosticsWithChecks.serviceWorkerValidationError = serviceWorkerValidationError;
+  }
 
   const ready = missingAssets.length === 0 && mismatchedAssets.length === 0;
   let state = BUNDLE_STATES.READY;
@@ -590,6 +625,7 @@ async function prepareBundleInternal({
   loadManifest = loadManifestDefault,
   hashBuffer = hashBufferDefault,
   stateOverride = BUNDLE_STATES.PREPARING,
+  diagnosticsAugmentations = null,
 } = {}) {
   const resolvedManifest = validateManifest(
     manifest || (await loadManifest({ runtime })),
@@ -617,7 +653,10 @@ async function prepareBundleInternal({
   const fetchFn = runtime?.fetch || globalThis.fetch;
   const cacheStorage = runtime?.caches || globalThis.caches;
   if (typeof fetchFn !== 'function' || !cacheStorage || typeof cacheStorage.open !== 'function') {
-    const diagnostics = buildDiagnosticsSummary({ staleVersion: false });
+    const diagnostics = mergeDiagnostics(
+      buildDiagnosticsSummary({ staleVersion: false }),
+      diagnosticsAugmentations,
+    );
     const failedResult = {
       ready: false,
       state: BUNDLE_STATES.FAILED,
@@ -661,13 +700,13 @@ async function prepareBundleInternal({
     fetchAttempts.push(responseSummary);
 
     if (!response?.ok) {
-      const diagnostics = {
+      const diagnostics = mergeDiagnostics({
         ...buildDiagnosticsSummary({ staleVersion: false }),
         failedAssetId: requiredAsset.id,
         failedAssetUrl: requiredAsset.url,
         failedAssetStatus: response?.status || null,
         fetchAttempts,
-      };
+      }, diagnosticsAugmentations);
       const failedResult = {
         ready: false,
         state: BUNDLE_STATES.FAILED,
@@ -712,10 +751,10 @@ async function prepareBundleInternal({
   });
 
   if (prepared && typeof prepared === 'object') {
-    prepared.diagnostics = {
+    prepared.diagnostics = mergeDiagnostics({
       ...prepared.diagnostics,
       fetchAttempts,
-    };
+    }, diagnosticsAugmentations);
   }
 
   return prepared;
@@ -749,7 +788,14 @@ export async function prepareBundle(options = {}) {
         emitBundleStatus(swResult);
         return swResult;
       }
-    } catch {
+    } catch (error) {
+      const serviceWorkerPrepareError = summarizeServiceWorkerCommandFailure(error);
+      return prepareBundleInternal({
+        ...options,
+        diagnosticsAugmentations: serviceWorkerPrepareError
+          ? { serviceWorkerPrepareError }
+          : null,
+      });
       // Fall through to local preparation path.
     }
 
@@ -780,7 +826,16 @@ export async function repairBundle(options = {}) {
       emitBundleStatus(swResult);
       return swResult;
     }
-  } catch {
+  } catch (error) {
+    const serviceWorkerRepairError = summarizeServiceWorkerCommandFailure(error);
+    return prepareBundleInternal({
+      ...options,
+      force: true,
+      stateOverride: BUNDLE_STATES.REPAIRING,
+      diagnosticsAugmentations: serviceWorkerRepairError
+        ? { serviceWorkerRepairError }
+        : null,
+    });
     // Fall through to local repair path.
   }
 
@@ -821,6 +876,7 @@ export async function ensureBundleReady({
 
     if (!online) {
       if (record?.ready === true) {
+        let serviceWorkerValidationError = null;
         try {
           const swValidation = await invokeServiceWorkerBundleCommand(runtime, 'UHDR_VALIDATE_BUNDLE');
           if (swValidation?.ready === true && typeof swValidation === 'object') {
@@ -829,7 +885,29 @@ export async function ensureBundleReady({
               blocked: swValidation.ready !== true,
             };
           }
-        } catch {
+          const readyResult = {
+            ready: true,
+            blocked: false,
+            state: record.state || BUNDLE_STATES.READY,
+            bundleVersion: record.bundleVersion || null,
+            validatedAtMs: record.validatedAtMs || null,
+            diagnostics: mergeDiagnostics(record.diagnosticsSummary, {
+              offlineFallbackUsed: true,
+              fallbackReason: 'service-worker-validation-not-ready',
+              serviceWorkerValidation: {
+                ready: swValidation?.ready === true,
+                state: typeof swValidation?.state === 'string' ? swValidation.state : null,
+                bundleVersion: swValidation?.bundleVersion || null,
+                validatedAtMs: swValidation?.validatedAtMs || null,
+                diagnostics: cloneDiagnosticsObject(swValidation?.diagnostics),
+                swCommand: cloneDiagnosticsObject(swValidation?.swCommand),
+              },
+            }),
+          };
+          emitBundleStatus(readyResult);
+          return readyResult;
+        } catch (error) {
+          serviceWorkerValidationError = summarizeServiceWorkerCommandFailure(error);
           // Fall back to the last known readiness record when offline.
         }
 
@@ -839,7 +917,13 @@ export async function ensureBundleReady({
           state: record.state || BUNDLE_STATES.READY,
           bundleVersion: record.bundleVersion || null,
           validatedAtMs: record.validatedAtMs || null,
-          diagnostics: record.diagnosticsSummary || null,
+          diagnostics: mergeDiagnostics(record.diagnosticsSummary, {
+            offlineFallbackUsed: true,
+            fallbackReason: 'service-worker-validation-error',
+            ...(serviceWorkerValidationError
+              ? { serviceWorkerValidationError }
+              : {}),
+          }),
         };
         emitBundleStatus(readyResult);
         return readyResult;
