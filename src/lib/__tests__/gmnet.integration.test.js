@@ -29,11 +29,16 @@ const VARIANT_FILES = {
   },
 };
 const LEGACY_FILES = ['gmnet.onnx', 'gmnet.onnx.data'];
+const QUIET_NODE_ORT_SESSION_OPTIONS = Object.freeze({
+  logSeverityLevel: 3,
+  logVerbosityLevel: 0,
+});
 
 async function validateGlobalModelRuntime(modelPath, modelDataPath, externalDataPath) {
   const externalDataBuffer = fs.readFileSync(modelDataPath);
   const session = await ort.InferenceSession.create(modelPath, {
     externalData: [{ path: externalDataPath, data: externalDataBuffer }],
+    ...QUIET_NODE_ORT_SESSION_OPTIONS,
   });
   expect(session.inputNames).toEqual(['global_input']);
   expect(session.outputNames).toEqual(['wker', 'wchn', 'qmax']);
@@ -75,6 +80,7 @@ async function validateLocalModelRuntime(modelPath, modelDataPath, externalDataP
   const externalDataBuffer = fs.readFileSync(modelDataPath);
   const session = await ort.InferenceSession.create(modelPath, {
     externalData: [{ path: externalDataPath, data: externalDataBuffer }],
+    ...QUIET_NODE_ORT_SESSION_OPTIONS,
   });
   expect(session.inputNames).toEqual(['local_input', 'wker', 'wchn']);
   expect(session.outputNames).toEqual(['ingm']);
@@ -97,7 +103,7 @@ async function validateLocalModelRuntime(modelPath, modelDataPath, externalDataP
 }
 
 async function validateGlobalInlineModelRuntime(modelPath) {
-  const session = await ort.InferenceSession.create(modelPath);
+  const session = await ort.InferenceSession.create(modelPath, QUIET_NODE_ORT_SESSION_OPTIONS);
   expect(session.inputNames).toEqual(['global_input']);
   expect(session.outputNames).toEqual(['wker', 'wchn', 'qmax']);
 
@@ -106,7 +112,7 @@ async function validateGlobalInlineModelRuntime(modelPath) {
 }
 
 async function validateLocalInlineModelRuntime(modelPath) {
-  const session = await ort.InferenceSession.create(modelPath);
+  const session = await ort.InferenceSession.create(modelPath, QUIET_NODE_ORT_SESSION_OPTIONS);
   expect(session.inputNames).toEqual(['local_input', 'wker', 'wchn']);
   expect(session.outputNames).toEqual(['ingm']);
 

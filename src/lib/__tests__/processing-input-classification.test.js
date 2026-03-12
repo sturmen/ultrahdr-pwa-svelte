@@ -53,6 +53,14 @@ function makeFile(name, type, bytes = [1, 2, 3, 4]) {
   return new File([new Uint8Array(bytes)], name, { type });
 }
 
+function makeImageDataLike(rgba) {
+  return {
+    data: new Uint8ClampedArray(rgba),
+    width: 1,
+    height: 1,
+  };
+}
+
 describe('classifyInputProcessingPath', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,8 +90,8 @@ describe('classifyInputProcessingPath', () => {
   it('classifies HEIC input with native gain map as preserved', async () => {
     const { classifyInputProcessingPath } = await import('../processing-core.js');
     processHeicMock.mockResolvedValue({
-      sdr: new ImageData(new Uint8ClampedArray([0, 0, 0, 255]), 1, 1),
-      gainMap: new ImageData(new Uint8ClampedArray([255, 255, 255, 255]), 1, 1),
+      sdr: makeImageDataLike([0, 0, 0, 255]),
+      gainMap: makeImageDataLike([255, 255, 255, 255]),
       name: 'test_hdr_heif_gainmap.HEIC',
     });
 
@@ -97,13 +105,13 @@ describe('classifyInputProcessingPath', () => {
     processHeifHdrMock.mockResolvedValue({
       kind: 'hdr-intent-heif',
       hdrIntent: {
-        data: new Uint8Array([255, 3, 0, 0]),
+        data: new Uint8Array([0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c]),
         width: 1,
         height: 1,
-        strideBytes: 4,
-        format: 'rgba1010102',
+        strideBytes: 8,
+        format: 'rgbaf16',
         cg: 'bt2100',
-        ct: 'pq',
+        ct: 'linear',
         range: 'full',
       },
       sourceExifBytes: null,

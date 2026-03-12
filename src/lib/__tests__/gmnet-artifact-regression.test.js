@@ -10,6 +10,10 @@ const MODELS_ROOT = path.resolve(__dirname, '../../../public/models');
 const FIXTURE_PATH = path.resolve(__dirname, './fixtures/gmnet-artifact-baseline.v1.json');
 const MAX_ABS_TOLERANCE = 1e-4;
 const MEAN_ABS_TOLERANCE = 1e-6;
+const QUIET_NODE_ORT_SESSION_OPTIONS = Object.freeze({
+  logSeverityLevel: 3,
+  logVerbosityLevel: 0,
+});
 
 const VARIANT_FILES = {
   realworld: {
@@ -106,9 +110,11 @@ async function loadDynamicSessions(variantFiles) {
 
   const globalSession = await ort.InferenceSession.create(globalModelPath, {
     externalData: [{ path: variantFiles.globalData, data: globalExternalData }],
+    ...QUIET_NODE_ORT_SESSION_OPTIONS,
   });
   const localSession = await ort.InferenceSession.create(localModelPath, {
     externalData: [{ path: variantFiles.localData, data: localExternalData }],
+    ...QUIET_NODE_ORT_SESSION_OPTIONS,
   });
 
   return { globalSession, localSession };
@@ -117,8 +123,8 @@ async function loadDynamicSessions(variantFiles) {
 async function loadWebglInlineSessions(variantFiles) {
   const globalInlinePath = path.join(MODELS_ROOT, variantFiles.globalInlineModel);
   const localWebglPath = path.join(MODELS_ROOT, variantFiles.localWebglModel);
-  const globalSession = await ort.InferenceSession.create(globalInlinePath);
-  const localSession = await ort.InferenceSession.create(localWebglPath);
+  const globalSession = await ort.InferenceSession.create(globalInlinePath, QUIET_NODE_ORT_SESSION_OPTIONS);
+  const localSession = await ort.InferenceSession.create(localWebglPath, QUIET_NODE_ORT_SESSION_OPTIONS);
   return { globalSession, localSession };
 }
 
@@ -194,4 +200,3 @@ describe('GMNet artifact regression gate', () => {
     }
   });
 });
-

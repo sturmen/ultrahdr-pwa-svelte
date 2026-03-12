@@ -6,7 +6,111 @@ console.log('=== SETUP FILE LOADED ===');
 
 // Mock browser APIs that may not be available in JSDOM
 import pkg from 'canvas';
-const { createCanvas, ImageData: CanvasImageData } = pkg;
+const { createCanvas } = pkg;
+
+function resolveImageDataConstructor() {
+  if (typeof globalThis.ImageData === 'function') {
+    return globalThis.ImageData;
+  }
+
+  if (typeof window !== 'undefined' && typeof window.ImageData === 'function') {
+    return window.ImageData;
+  }
+
+  if (typeof pkg.ImageData === 'function') {
+    return pkg.ImageData;
+  }
+
+  const canvas = createCanvas(1, 1);
+  const context = canvas.getContext('2d');
+  const imageData = context?.createImageData?.(1, 1);
+  if (imageData?.constructor && typeof imageData.constructor === 'function') {
+    return imageData.constructor;
+  }
+
+  class ImageDataShim {
+    constructor(data, width, height) {
+      this.data = data;
+      this.width = width;
+      this.height = height;
+    }
+  }
+
+  return ImageDataShim;
+}
+
+function installImageDataConstructor(ImageDataCtor) {
+  if (typeof globalThis !== 'undefined') {
+    Object.defineProperty(globalThis, 'ImageData', {
+      configurable: true,
+      writable: true,
+      value: ImageDataCtor,
+    });
+  }
+
+  if (typeof window !== 'undefined') {
+    Object.defineProperty(window, 'ImageData', {
+      configurable: true,
+      writable: true,
+      value: ImageDataCtor,
+    });
+  }
+
+  if (typeof global !== 'undefined') {
+    Object.defineProperty(global, 'ImageData', {
+      configurable: true,
+      writable: true,
+      value: ImageDataCtor,
+    });
+  }
+}
+
+function createMemoryStorage() {
+  const storage = new Map();
+  return {
+    getItem(key) {
+      return storage.has(String(key)) ? storage.get(String(key)) : null;
+    },
+    setItem(key, value) {
+      storage.set(String(key), String(value));
+    },
+    removeItem(key) {
+      storage.delete(String(key));
+    },
+    clear() {
+      storage.clear();
+    },
+    key(index) {
+      return Array.from(storage.keys())[index] ?? null;
+    },
+    get length() {
+      return storage.size;
+    },
+  };
+}
+
+function installSafeStorage(name, storage) {
+  if (typeof globalThis !== 'undefined') {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      writable: true,
+      value: storage,
+    });
+  }
+
+  if (typeof window !== 'undefined') {
+    Object.defineProperty(window, name, {
+      configurable: true,
+      writable: true,
+      value: storage,
+    });
+  }
+}
+
+const CanvasImageData = resolveImageDataConstructor();
+installImageDataConstructor(CanvasImageData);
+installSafeStorage('localStorage', createMemoryStorage());
+installSafeStorage('sessionStorage', createMemoryStorage());
 
 global.URL.createObjectURL = vi.fn((blob) => {
   return 'mock-object-url';
@@ -20,12 +124,6 @@ global.createImageBitmap = vi.fn(async (blob) => {
   canvas.close = () => { };
   return canvas;
 });
-
-if (typeof window !== 'undefined') {
-  window.ImageData = CanvasImageData;
-} else {
-  global.ImageData = CanvasImageData;
-}
 
 // Mock navigator
 if (typeof navigator === 'undefined') {

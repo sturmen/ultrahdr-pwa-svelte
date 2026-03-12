@@ -473,7 +473,7 @@ export class UHDREncoder {
         const ctCode = ctCodeMap[ct];
         const rangeCode = rangeCodeMap[range];
 
-        if (!Number.isInteger(formatCode) || format !== 'rgba1010102') {
+        if (!Number.isInteger(formatCode) || (format !== 'rgba1010102' && format !== 'rgbaf16')) {
             throw new Error(`Unsupported HDR intent format for WASM encoder: ${format}`);
         }
         if (!Number.isInteger(cgCode) || !Number.isInteger(ctCode) || !Number.isInteger(rangeCode)) {
@@ -770,17 +770,22 @@ export class UHDREncoder {
      */
     _allocateImageData(data, width, height, stride, label) {
         const Module = getWasmModule();
+        const hasImageDataConstructor = typeof ImageData !== 'undefined';
 
         // Calculate size
+        let bytesPerPixel = width > 0 && stride > 0
+            ? Math.max(1, Math.floor(stride / width))
+            : 4;
         const pixelCount = width * height;
-        let bytesPerPixel = 4; // Default RGBA8888
-        if (data instanceof Uint8Array && data.length > 0) {
+        if (data instanceof Uint8Array && data.length > 0 && (!stride || stride <= 0)) {
             if (data.length === pixelCount) {
                 bytesPerPixel = 1; // Grayscale
             } else if (data.length === pixelCount * 3) {
                 bytesPerPixel = 3; // RGB888
+            } else if (data.length === pixelCount * 8) {
+                bytesPerPixel = 8; // RGBA f16
             }
-        } else if (data instanceof ImageData) {
+        } else if (hasImageDataConstructor && data instanceof ImageData) {
             bytesPerPixel = 4;
         }
 
@@ -808,7 +813,7 @@ export class UHDREncoder {
         // Copy data to WASM memory
         const heap = new Uint8Array(Module.HEAPU8.buffer);
 
-        if (data instanceof ImageData) {
+        if (hasImageDataConstructor && data instanceof ImageData) {
             const src = new Uint8Array(data.data.buffer);
             for (let y = 0; y < height; y++) {
                 const srcStart = y * width * 4; // ImageData is always RGBA

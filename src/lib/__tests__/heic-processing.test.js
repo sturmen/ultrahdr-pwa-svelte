@@ -6,9 +6,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // Shared mocks to allow override in tests
 const decodeMock = vi.fn();
 const displayMock = vi.fn((imageData, callback) => callback(true));
+const processHeifHdrMock = vi.hoisted(() => vi.fn());
 
 // Mock libheif before importing
-vi.mock('libheif-js/libheif-wasm/libheif', () => {
+vi.mock('../libheif-browser.js', () => {
   const mockHeif = {
     HeifDecoder: vi.fn().mockImplementation(function () {
       this.decode = decodeMock;
@@ -30,6 +31,10 @@ vi.mock('libheif-js/libheif-wasm/libheif', () => {
     default: vi.fn().mockResolvedValue(mockHeif),
   };
 });
+
+vi.mock('../heif-hdr-processing.js', () => ({
+  processHeifHdr: processHeifHdrMock,
+}));
 
 describe('heic-processing.js', () => {
   let originalFetch;
@@ -88,6 +93,40 @@ describe('heic-processing.js', () => {
       const result = await processHeic(mockFile, options);
 
       expect(result).toBeInstanceOf(File);
+    });
+
+    it('returns hdr-intent-heif for raw HDR HEIC inputs without a native SDR intent', async () => {
+      const hdrBytes = new Uint8Array([
+        0, 0, 0, 12, 0x63, 0x6f, 0x6c, 0x72,
+        0x6e, 0x63, 0x6c, 0x78,
+        0x00, 0x09,
+        0x00, 0x10,
+        0x00, 0x09,
+        0x80,
+      ]);
+      const mockFile = new File([hdrBytes], 'test.heic', { type: 'image/heic' });
+      mockFile.arrayBuffer = vi.fn(() => Promise.resolve(hdrBytes.buffer.slice(0)));
+      processHeifHdrMock.mockResolvedValue({
+        kind: 'hdr-intent-heif',
+        hdrIntent: {
+          data: new Uint8Array([0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c]),
+          width: 1,
+          height: 1,
+          strideBytes: 8,
+          format: 'rgbaf16',
+          cg: 'bt2100',
+          ct: 'linear',
+          range: 'full',
+        },
+        sourceExifBytes: null,
+      });
+
+      const { processHeic } = await import('../heic-processing.js');
+      const result = await processHeic(mockFile);
+
+      expect(processHeifHdrMock).toHaveBeenCalledTimes(1);
+      expect(result?.kind).toBe('hdr-intent-heif');
+      expect(result?.hdrIntent?.format).toBe('rgbaf16');
     });
 
     it('should handle error when no images found', async () => {

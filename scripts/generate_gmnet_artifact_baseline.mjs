@@ -142,6 +142,11 @@ function deriveGainMapBytes(ingmTensor, qmaxTensor) {
   return bytes;
 }
 
+const QUIET_NODE_ORT_SESSION_OPTIONS = Object.freeze({
+  logSeverityLevel: 3,
+  logVerbosityLevel: 0,
+});
+
 async function loadDynamicSessions(files) {
   const globalPath = path.join(modelsRoot, files.globalModel);
   const localPath = path.join(modelsRoot, files.localModel);
@@ -152,9 +157,11 @@ async function loadDynamicSessions(files) {
 
   const globalSession = await ort.InferenceSession.create(globalPath, {
     externalData: [{ path: files.globalData, data: globalData }],
+    ...QUIET_NODE_ORT_SESSION_OPTIONS,
   });
   const localSession = await ort.InferenceSession.create(localPath, {
     externalData: [{ path: files.localData, data: localData }],
+    ...QUIET_NODE_ORT_SESSION_OPTIONS,
   });
 
   return { globalSession, localSession };
@@ -163,8 +170,8 @@ async function loadDynamicSessions(files) {
 async function loadWebglInlineSessions(files) {
   const globalPath = path.join(modelsRoot, files.globalInlineModel);
   const localPath = path.join(modelsRoot, files.localWebglModel);
-  const globalSession = await ort.InferenceSession.create(globalPath);
-  const localSession = await ort.InferenceSession.create(localPath);
+  const globalSession = await ort.InferenceSession.create(globalPath, QUIET_NODE_ORT_SESSION_OPTIONS);
+  const localSession = await ort.InferenceSession.create(localPath, QUIET_NODE_ORT_SESSION_OPTIONS);
   return { globalSession, localSession };
 }
 
@@ -255,4 +262,3 @@ main().catch((error) => {
   process.stderr.write(`[Baseline] failed: ${error?.stack || error}\n`);
   process.exit(1);
 });
-

@@ -24,7 +24,8 @@ function createOrtMock() {
 }
 
 vi.mock('onnxruntime-web/webgpu', () => createOrtMock());
-vi.mock('onnxruntime-web/all', () => createOrtMock());
+vi.mock('onnxruntime-web/webgl', () => createOrtMock());
+vi.mock('onnxruntime-web/wasm', () => createOrtMock());
 
 function makeImageData(width, height, value = 128) {
   const pixels = new Uint8ClampedArray(width * height * 4);

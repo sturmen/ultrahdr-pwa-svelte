@@ -51,8 +51,24 @@ const DEFAULT_PROBE_TIMEOUT_MS = 12_000;
 const PROBE_MIN_DYNAMIC_RANGE = 2;
 const PROBE_MIN_STD_DEV = 0.25;
 const PROBE_STATE_STORAGE_KEY = 'ultrahdr:probe-state:v1';
-let ortAllModulePromise = null;
+let ortWebGlModulePromise = null;
+let ortWasmModulePromise = null;
 const configuredOrtModules = new WeakSet();
+
+function appendAssetVersionQuery(url) {
+    const appAssetVersion = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
+        ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
+        : '';
+    if (!appAssetVersion) {
+        return url;
+    }
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(appAssetVersion)}`;
+}
+
+function resolveWebglRuntimeModuleUrl() {
+    return appendAssetVersionQuery(`${resolveOrtAssetBasePath()}ort.webgl.min.mjs`);
+}
 
 export class ProbeStateManager {
     constructor({ storage = null } = {}) {
@@ -232,18 +248,33 @@ function configureOrtRuntime(ortModule, runtime = globalThis) {
     configuredOrtModules.add(ortModule);
 }
 
-async function loadOrtAllModule(runtime = globalThis) {
-    if (!ortAllModulePromise) {
-        ortAllModulePromise = import('onnxruntime-web/all');
+async function loadOrtWebGlModule(runtime = globalThis) {
+    if (!ortWebGlModulePromise) {
+        const testSpecifier = ['onnxruntime-web', 'webgl'].join('/');
+        ortWebGlModulePromise = import.meta.env?.VITEST
+            ? import(testSpecifier)
+            : import(/* @vite-ignore */ resolveWebglRuntimeModuleUrl());
     }
-    const ortAllModule = await ortAllModulePromise;
-    configureOrtRuntime(ortAllModule, runtime);
-    return ortAllModule;
+    const ortWebGlModule = await ortWebGlModulePromise;
+    configureOrtRuntime(ortWebGlModule, runtime);
+    return ortWebGlModule;
+}
+
+async function loadOrtWasmModule(runtime = globalThis) {
+    if (!ortWasmModulePromise) {
+        ortWasmModulePromise = import('onnxruntime-web/wasm');
+    }
+    const ortWasmModule = await ortWasmModulePromise;
+    configureOrtRuntime(ortWasmModule, runtime);
+    return ortWasmModule;
 }
 
 async function resolveOrtModuleForProvider(provider, runtime = globalThis) {
-    if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER || provider === GMNET_WASM_EXECUTION_PROVIDER) {
-        return loadOrtAllModule(runtime);
+    if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
+        return loadOrtWebGlModule(runtime);
+    }
+    if (provider === GMNET_WASM_EXECUTION_PROVIDER) {
+        return loadOrtWasmModule(runtime);
     }
     configureOrtRuntime(ortWebGpu, runtime);
     return ortWebGpu;

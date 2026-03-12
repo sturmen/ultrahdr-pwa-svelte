@@ -627,7 +627,6 @@ export async function initializeRuntime({
           await session.init(modelVariant, {
             forceExecutionProviders: providerRequest,
             forceReload: true,
-            attemptIndex,
           });
         },
       });

@@ -247,7 +247,8 @@ EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_intent_image(uhdr_wasm_encoder_t enc,
   WasmEncoderState *state = static_cast<WasmEncoderState *>(enc);
   uhdr_img_fmt_t input_fmt = static_cast<uhdr_img_fmt_t>(fmt);
 
-  if (input_fmt != UHDR_IMG_FMT_32bppRGBA1010102) {
+  if (input_fmt != UHDR_IMG_FMT_32bppRGBA1010102 &&
+      input_fmt != UHDR_IMG_FMT_64bppRGBAHalfFloat) {
     std::strncpy(state->error_message,
                  "unsupported HDR intent format for wasm wrapper",
                  sizeof(state->error_message));
@@ -255,7 +256,7 @@ EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_intent_image(uhdr_wasm_encoder_t enc,
   }
 
   if (stride == 0) {
-    stride = width * 4; // RGBA1010102 is 4 bytes per pixel
+    stride = width * (input_fmt == UHDR_IMG_FMT_64bppRGBAHalfFloat ? 8 : 4);
   }
 
   uhdr_raw_image_t img = {};
@@ -266,7 +267,8 @@ EMSCRIPTEN_KEEPALIVE int wasm_enc_set_hdr_intent_image(uhdr_wasm_encoder_t enc,
   img.w = static_cast<unsigned int>(width);
   img.h = static_cast<unsigned int>(height);
   img.planes[0] = const_cast<uint8_t *>(data);
-  img.stride[0] = static_cast<unsigned int>(stride / 4);
+  img.stride[0] = static_cast<unsigned int>(
+      stride / (input_fmt == UHDR_IMG_FMT_64bppRGBAHalfFloat ? 8 : 4));
 
   uhdr_error_info_t status =
       uhdr_enc_set_raw_image(state->enc, &img, UHDR_HDR_IMG);

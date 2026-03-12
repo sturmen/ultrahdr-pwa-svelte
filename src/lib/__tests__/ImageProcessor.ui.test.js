@@ -55,10 +55,10 @@ function setUserAgent(userAgent) {
 function createRuntime() {
   return {
     process: runtimeProcessMock,
-    subscribe: vi.fn(() => () => {}),
+    subscribe: vi.fn(() => () => { }),
     getSnapshot: vi.fn(() => ({ status: 'idle', runtime: null, error: null, progress: null })),
     initialize: vi.fn(async () => ({ ready: true })),
-    dispose: vi.fn(async () => {}),
+    dispose: vi.fn(async () => { }),
   };
 }
 
@@ -76,11 +76,11 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     delete window.__ULTRAHDR_BACKEND_PREFERENCE;
     Object.defineProperty(window.navigator, 'setAppBadge', {
       configurable: true,
-      value: vi.fn(async () => {}),
+      value: vi.fn(async () => { }),
     });
     Object.defineProperty(window.navigator, 'clearAppBadge', {
       configurable: true,
-      value: vi.fn(async () => {}),
+      value: vi.fn(async () => { }),
     });
   });
 
@@ -444,7 +444,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(screen.getByTestId('pipeline-progress')).toBeInTheDocument();
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Encoding gain map/i)).toBeInTheDocument();
     });
 
     expect(screen.getByText(/Encoding gain map/i)).toBeInTheDocument();
@@ -522,7 +523,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
+      const pipelineStatus = screen.getByTestId('pipeline-status');
+      expect(within(pipelineStatus).getByText(/Downloading AI Model/i)).toBeInTheDocument();
     });
 
     const pipelineStatus = screen.getByTestId('pipeline-status');
@@ -571,6 +573,73 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     progressGate.resolve();
   });
 
+  it('only displays GMNet runtime during inference stage even when provided as a prop', async () => {
+    const progressGate = createDeferred();
+
+    vi.mocked(runtimeProcessMock).mockImplementationOnce(async (_file, options = {}) => {
+      const baseEvent = {
+        elapsedMs: 10,
+        stageDurationsMs: {},
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'test.jpg',
+        timestamp: Date.now(),
+      };
+
+      // 1. Early stage - should NOT show runtime
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'preprocess-file',
+        stageProgress: 10,
+        note: 'Preprocessing',
+      });
+
+      // Allow the UI to update and for us to check it
+      await new Promise(r => setTimeout(r, 0));
+
+      // 2. Inference stage - should show runtime
+      options.onProgress?.({
+        ...baseEvent,
+        phase: 'stage-progress',
+        stage: 'generate-gain-map',
+        stageProgress: 10,
+        note: 'Running inference',
+        gmnetExecutionProvider: 'webgpu',
+      });
+
+      await progressGate.promise;
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    renderProcessor({
+      files: makeFiles(1),
+      runtimeExecutionProvider: 'webgpu'
+    });
+
+    // Wait for processing to start and reach the first stage
+    await waitFor(() => {
+      expect(screen.getByText(/Preprocessing/i)).toBeInTheDocument();
+    });
+
+    // VERIFY: Runtime label should NOT be visible during preprocessing
+    expect(screen.queryByTestId('pipeline-execution-provider')).not.toBeInTheDocument();
+
+    // Now let it proceed to inference
+    // (In this mock implementation, it will proceed automatically after the first await above,
+    // but we need to wait for the UI to catch up)
+    await waitFor(() => {
+      expect(screen.getByText(/Running inference/i)).toBeInTheDocument();
+    });
+
+    // VERIFY: Runtime label should BE visible during inference
+    expect(screen.getByTestId('pipeline-execution-provider')).toHaveTextContent(
+      /gmnet runtime:\s*webgpu/i,
+    );
+
+    progressGate.resolve();
+  });
+
   it('renders checkpoint memory mode telemetry when checkpointed progress metadata is emitted', async () => {
     const progressGate = createDeferred();
 
@@ -599,7 +668,9 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
-      expect(screen.getByTestId('pipeline-status')).toBeInTheDocument();
+      expect(screen.getByTestId('pipeline-memory-mode')).toHaveTextContent(
+        /memory mode:\s*checkpointed/i,
+      );
     });
 
     expect(screen.getByTestId('pipeline-memory-mode')).toHaveTextContent(

@@ -113,6 +113,9 @@ export default defineConfig({
     'import.meta.env.VITE_APP_ASSET_VERSION': JSON.stringify(resolvedAppAssetVersion),
     'import.meta.env.VITE_WASM_ASSET_VERSION': JSON.stringify(resolvedWasmAssetVersion),
   },
+  resolve: {
+    conditions: ['onnxruntime-web-use-extern-wasm', 'browser', 'module', 'import'],
+  },
   base: process.env.NODE_ENV === 'production' ? '/ultrahdr-pwa-svelte/' : '/',
   plugins: [
     svelte(),
@@ -187,7 +190,15 @@ export default defineConfig({
           dest: 'assets'
         },
         {
+          src: 'node_modules/libheif-js/libheif-wasm/libheif-bundle.mjs',
+          dest: 'assets'
+        },
+        {
           src: 'node_modules/onnxruntime-web/dist/*.wasm',
+          dest: 'assets'
+        },
+        {
+          src: 'node_modules/onnxruntime-web/dist/ort.webgl.min.mjs',
           dest: 'assets'
         },
         {
@@ -199,6 +210,27 @@ export default defineConfig({
   ],
   optimizeDeps: {
     exclude: ['@monogrid/gainmap-js/libultrahdr']
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/onnxruntime-web/')) {
+            if (id.includes('/dist/ort.webgpu') || id.includes('/lib/backend-webgpu') || id.includes('/lib/wasm/jsep')) {
+              return 'ort-webgpu-runtime'
+            }
+            if (id.includes('/dist/ort.wasm') || id.includes('/lib/wasm/')) {
+              return 'ort-wasm-runtime'
+            }
+            return 'ort-runtime'
+          }
+          if (id.includes('node_modules/')) {
+            return 'vendor'
+          }
+          return undefined
+        }
+      }
+    }
   },
   worker: {
     format: 'es'

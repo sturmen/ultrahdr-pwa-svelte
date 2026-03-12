@@ -4,11 +4,13 @@
 import { describe, it, expect } from 'vitest';
 
 describe('Debug canvas', () => {
-  it('should import canvas', async () => {
+  it('derives a working ImageData constructor for tests', async () => {
     const canvas = await import('canvas');
-    console.log('canvas module:', Object.keys(canvas));
-    console.log('ImageData:', canvas.ImageData);
-    expect(typeof canvas.ImageData).toBe('function');
+    const derived = canvas.createCanvas(1, 1).getContext('2d').createImageData(1, 1);
+
+    expect(typeof derived.constructor).toBe('function');
+    expect(typeof globalThis.ImageData).toBe('function');
+    expect(new globalThis.ImageData(new Uint8ClampedArray(4), 1, 1)).toBeInstanceOf(derived.constructor);
   });
   
   it('should have window available', () => {

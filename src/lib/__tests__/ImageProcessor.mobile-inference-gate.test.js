@@ -24,8 +24,8 @@ const capabilitiesState = vi.hoisted(() => ({
   isIOS: false,
 }));
 
-vi.mock('../processing-core.js', async () => {
-  const actual = await vi.importActual('../processing-core.js');
+vi.mock('../processing-path.js', async () => {
+  const actual = await vi.importActual('../processing-path.js');
   return {
     ...actual,
     classifyInputProcessingPath: classifyInputProcessingPathMock,
@@ -143,7 +143,9 @@ describe('ImageProcessor smartphone inference warning gate', () => {
 
     await addFiles([makeFile('unsafe.jpg')]);
 
-    expect(screen.getByTestId('mobile-inference-warning-dialog')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-inference-warning-dialog')).toBeInTheDocument();
+    });
     expect(runtimeProcessMock).not.toHaveBeenCalled();
 
     const input = screen.getByTestId('mobile-inference-warning-input');
@@ -177,7 +179,9 @@ describe('ImageProcessor smartphone inference warning gate', () => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
     expect(runtimeProcessMock.mock.calls[0][0].name).toBe('safe.heic');
-    expect(screen.getByTestId('mobile-inference-warning-dialog')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-inference-warning-dialog')).toBeInTheDocument();
+    });
 
     await fireEvent.input(screen.getByTestId('mobile-inference-warning-input'), {
       target: { value: 'I acknowledge' },
@@ -196,6 +200,9 @@ describe('ImageProcessor smartphone inference warning gate', () => {
 
     await addFiles([makeFile('unsafe.jpg')]);
 
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-inference-warning-input')).toBeInTheDocument();
+    });
     const input = screen.getByTestId('mobile-inference-warning-input');
     const proceed = screen.getByTestId('mobile-inference-warning-proceed');
 
@@ -222,6 +229,10 @@ describe('ImageProcessor smartphone inference warning gate', () => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-inference-warning-cancel')).toBeInTheDocument();
+    });
+
     await fireEvent.click(screen.getByTestId('mobile-inference-warning-cancel'));
 
     await waitFor(() => {
@@ -236,6 +247,9 @@ describe('ImageProcessor smartphone inference warning gate', () => {
     const firstRender = renderProcessor();
 
     await addFiles([makeFile('unsafe-a.jpg')]);
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-inference-warning-input')).toBeInTheDocument();
+    });
     await fireEvent.input(screen.getByTestId('mobile-inference-warning-input'), {
       target: { value: 'I acknowledge' },
     });
@@ -260,7 +274,9 @@ describe('ImageProcessor smartphone inference warning gate', () => {
       expect(secondRender.container.querySelector('#add-files')).toBeTruthy();
     });
     await addFiles([makeFile('unsafe-c.jpg')], secondRender.container);
-    expect(screen.getByTestId('mobile-inference-warning-dialog')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-inference-warning-dialog')).toBeInTheDocument();
+    });
     expect(runtimeProcessMock).not.toHaveBeenCalled();
   });
 });

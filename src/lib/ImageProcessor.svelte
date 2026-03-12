@@ -31,7 +31,7 @@
     resolveCheckpointingForRun,
     saveProcessingPreferences,
   } from "./processing-preferences.js";
-  import { classifyInputProcessingPath } from "./processing-core.js";
+  import { classifyInputProcessingPath } from "./processing-path.js";
 
   export let files = [];
   export let launchSource = "regular";
@@ -228,14 +228,6 @@
     queueCompletedCount > 0;
   $: showPipelineStatusCard =
     processing || latestPipelineEvent || showPipelineCompleteSummary;
-  $: {
-    const normalizedRuntimeProvider = normalizeExecutionProvider(
-      runtimeExecutionProvider,
-    );
-    if (!pipelineExecutionProvider && normalizedRuntimeProvider) {
-      pipelineExecutionProvider = normalizedRuntimeProvider;
-    }
-  }
   $: if (showStalePrompt && staleCount === 0) {
     showStalePrompt = false;
   }
@@ -356,7 +348,9 @@
   }
 
   function persistCurrentProcessingPreferences() {
-    const normalized = saveProcessingPreferences(snapshotProcessingPreferences());
+    const normalized = saveProcessingPreferences(
+      snapshotProcessingPreferences(),
+    );
     applyPreferencesToState(normalized);
     return normalized;
   }
@@ -501,6 +495,10 @@
       pipelineExecutionProvider = null;
     } else if (executionProvider) {
       pipelineExecutionProvider = executionProvider;
+    } else if (!pipelineExecutionProvider) {
+      pipelineExecutionProvider = normalizeExecutionProvider(
+        runtimeExecutionProvider,
+      );
     }
 
     if (phase === "pipeline-start") {
@@ -742,14 +740,8 @@
   function handleViewerTouchEnd(event) {
     if (viewerTouchStartX === null || viewerTouchStartY === null) return;
     const touch = event?.changedTouches?.[0];
-    const endX =
-      touch?.clientX ??
-      viewerTouchCurrentX ??
-      viewerTouchStartX;
-    const endY =
-      touch?.clientY ??
-      viewerTouchCurrentY ??
-      viewerTouchStartY;
+    const endX = touch?.clientX ?? viewerTouchCurrentX ?? viewerTouchStartX;
+    const endY = touch?.clientY ?? viewerTouchCurrentY ?? viewerTouchStartY;
     const deltaX = endX - viewerTouchStartX;
     const deltaY = endY - viewerTouchStartY;
 
@@ -1684,7 +1676,7 @@
   onMount(() => {
     let mediaQuery = null;
     let handleMediaChange = null;
-    applyPreferencesToState(loadProcessingPreferences(runtime || globalThis));
+    applyPreferencesToState(loadProcessingPreferences(globalThis));
 
     if (
       typeof window !== "undefined" &&
@@ -1847,7 +1839,6 @@
           id="panel-convert"
           aria-label="Convert controls"
         >
-
           <div class="control-group" data-testid="quick-controls">
             <label for="boost">HDR Strength (Max Content Boost Stops)</label>
             <div class="range-wrapper">
@@ -2035,8 +2026,7 @@
                   </p>
                 {/if}
 
-                {#if Number.isFinite(latestPipelineEvent?.gmnetCheckpointTilesCompleted) &&
-                Number.isFinite(latestPipelineEvent?.gmnetCheckpointTilesTotal)}
+                {#if Number.isFinite(latestPipelineEvent?.gmnetCheckpointTilesCompleted) && Number.isFinite(latestPipelineEvent?.gmnetCheckpointTilesTotal)}
                   <p
                     class="help-text"
                     data-testid="pipeline-checkpoint-progress"
@@ -2044,7 +2034,9 @@
                     Checkpoint progress: {Math.max(
                       0,
                       Math.floor(
-                        Number(latestPipelineEvent.gmnetCheckpointTilesCompleted),
+                        Number(
+                          latestPipelineEvent.gmnetCheckpointTilesCompleted,
+                        ),
                       ),
                     )}/{Math.max(
                       0,
@@ -2056,7 +2048,10 @@
                 {/if}
 
                 {#if latestPipelineEvent?.gmnetCheckpointResumed === true}
-                  <p class="help-text" data-testid="pipeline-checkpoint-resumed">
+                  <p
+                    class="help-text"
+                    data-testid="pipeline-checkpoint-resumed"
+                  >
                     Resumed from checkpoint
                   </p>
                 {/if}
@@ -2540,8 +2535,8 @@
         class="help-text blocking-modal-copy"
         id="mobile-inference-warning-description"
       >
-        This image needs AI inference, which is unsupported on smartphones.
-        Try this on a desktop browser instead.
+        This image needs AI inference, which is unsupported on smartphones. Try
+        this on a desktop browser instead.
       </p>
       <p class="help-text blocking-modal-copy">
         Type "{MOBILE_INFERENCE_ACKNOWLEDGEMENT}" to proceed anyway.
@@ -2749,7 +2744,6 @@
       </div>
     </div>
   {/if}
-
 </div>
 
 <style>
@@ -3315,24 +3309,32 @@
       border-color 0.15s ease,
       background-color 0.15s ease,
       box-shadow 0.15s ease;
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--surface-raised) 90%, transparent),
-        color-mix(in srgb, var(--surface-raised) 74%, transparent)
-      );
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-raised) 90%, transparent),
+      color-mix(in srgb, var(--surface-raised) 74%, transparent)
+    );
     box-shadow: none;
   }
 
   .result-card:hover {
     transform: translateY(-1px);
-    border-color: color-mix(in srgb, var(--primary-color) 22%, var(--border-subtle));
+    border-color: color-mix(
+      in srgb,
+      var(--primary-color) 22%,
+      var(--border-subtle)
+    );
   }
 
   .result-card.selected {
     border-color: var(--primary-color);
-    background-color: color-mix(in srgb, var(--surface-interactive) 78%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 18%, transparent);
+    background-color: color-mix(
+      in srgb,
+      var(--surface-interactive) 78%,
+      transparent
+    );
+    box-shadow: 0 0 0 1px
+      color-mix(in srgb, var(--primary-color) 18%, transparent);
   }
 
   .result-card.stale {

@@ -14,6 +14,20 @@ const encoderSpies = vi.hoisted(() => ({
 }));
 const processHeifHdrMock = vi.hoisted(() => vi.fn());
 
+function makeExifPayloadWithOrientation(orientation) {
+  return new Uint8Array([
+    0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+    0x49, 0x49, 0x2a, 0x00,
+    0x08, 0x00, 0x00, 0x00,
+    0x01, 0x00,
+    0x12, 0x01,
+    0x03, 0x00,
+    0x01, 0x00, 0x00, 0x00,
+    orientation & 0xff, (orientation >> 8) & 0xff, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+  ]);
+}
+
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
     async generate() {
@@ -83,13 +97,13 @@ describe('processImage HDR-intent HEIF branch', () => {
     processHeifHdrMock.mockResolvedValue({
       kind: 'hdr-intent-heif',
       hdrIntent: {
-        data: new Uint8Array([255, 3, 0, 0]),
+        data: new Uint8Array([0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c]),
         width: 1,
         height: 1,
-        strideBytes: 4,
-        format: 'rgba1010102',
+        strideBytes: 8,
+        format: 'rgbaf16',
         cg: 'bt2100',
-        ct: 'pq',
+        ct: 'linear',
         range: 'full',
       },
       sourceExifBytes: null,
@@ -104,7 +118,52 @@ describe('processImage HDR-intent HEIF branch', () => {
     expect(output.type).toBe('image/jpeg');
     expect(processHeifHdrMock).toHaveBeenCalledTimes(1);
     expect(encoderSpies.setHDRIntentImage).toHaveBeenCalledTimes(1);
+    expect(encoderSpies.setHDRIntentImage).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      1,
+      1,
+      expect.objectContaining({
+        strideBytes: 8,
+        format: 'rgbaf16',
+        cg: 'bt2100',
+        ct: 'linear',
+        range: 'full',
+      }),
+    );
     expect(gmnetCalls).toHaveLength(0);
+  });
+
+  it('forwards raw HDR source EXIF with orientation normalized to 1', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'test_hdr_no_gain_map.HIF', { type: 'image/heif' });
+    const sourceExifBytes = makeExifPayloadWithOrientation(6);
+
+    processHeifHdrMock.mockResolvedValue({
+      kind: 'hdr-intent-heif',
+      hdrIntent: {
+        data: new Uint8Array([0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c]),
+        width: 1,
+        height: 1,
+        strideBytes: 8,
+        format: 'rgbaf16',
+        cg: 'bt2100',
+        ct: 'linear',
+        range: 'full',
+      },
+      sourceExifBytes,
+    });
+
+    await processImage(file, {
+      stripExif: false,
+      discardGainMap: false,
+    });
+
+    expect(encoderSpies.setExifData).toHaveBeenCalledTimes(1);
+    const [normalizedExif] = encoderSpies.setExifData.mock.calls[0];
+    expect(normalizedExif).toBeInstanceOf(Uint8Array);
+    expect(normalizedExif).not.toEqual(sourceExifBytes);
+    expect(normalizedExif[24]).toBe(1);
+    expect(normalizedExif[25]).toBe(0);
   });
 
   it('fails fast when runtime HDR-intent decode is unavailable', async () => {
@@ -118,4 +177,3 @@ describe('processImage HDR-intent HEIF branch', () => {
     })).rejects.toThrow(/10-bit HDR Rec\.2020 PQ decode unavailable/i);
   });
 });
-

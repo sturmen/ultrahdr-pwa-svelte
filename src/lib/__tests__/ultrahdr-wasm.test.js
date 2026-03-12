@@ -408,4 +408,37 @@ describe('UHDREncoder Class', () => {
       1  // UHDR_CR_FULL_RANGE
     );
   });
+
+  it('should map HDR-intent image metadata to API-0 RGBAHalfFloat BT2100/LINEAR/FULL arguments', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    // Two pixels packed RGBA f16 LE
+    const packed = new Uint8Array([
+      0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c,
+      0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x00, 0x3c,
+    ]);
+    mockModule._malloc.mockReturnValueOnce(0x2400);
+
+    encoder.setHDRIntentImage(packed, 2, 1, {
+      strideBytes: 16,
+      format: 'rgbaf16',
+      cg: 'bt2100',
+      ct: 'linear',
+      range: 'full',
+    });
+
+    expect(mockModule._wasm_enc_set_hdr_intent_image).toHaveBeenCalledWith(
+      mockEncoderHandle,
+      0x2400,
+      2,
+      1,
+      64,
+      4, // UHDR_IMG_FMT_64bppRGBAHalfFloat
+      2, // UHDR_CG_BT_2100
+      0, // UHDR_CT_LINEAR
+      1, // UHDR_CR_FULL_RANGE
+    );
+  });
 });

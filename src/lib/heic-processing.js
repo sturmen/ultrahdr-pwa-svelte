@@ -1,5 +1,6 @@
-import libheifFactory from 'libheif-js/libheif-wasm/libheif.js';
+import libheifFactory from './libheif-browser.js';
 import { canvasToBlob, createCanvasWithContext } from './canvas-runtime.js';
+import { processHeifHdr } from './heif-hdr-processing.js';
 
 let libheif = null;
 const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
@@ -42,10 +43,34 @@ async function initLibHeif() {
     return libheif;
 }
 
+function findNclxColorInfo(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length < 12) {
+        return null;
+    }
+    for (let i = 0; i <= bytes.length - 11; i++) {
+        if (
+            bytes[i] === 0x6e && bytes[i + 1] === 0x63 &&
+            bytes[i + 2] === 0x6c && bytes[i + 3] === 0x78
+        ) {
+            return {
+                primaries: (bytes[i + 4] << 8) | bytes[i + 5],
+                transfer: (bytes[i + 6] << 8) | bytes[i + 7],
+            };
+        }
+    }
+    return null;
+}
+
+function isSupportedRawHdrHeif(bytes) {
+    const nclx = findNclxColorInfo(bytes);
+    return !!nclx && nclx.primaries === 9 && (nclx.transfer === 16 || nclx.transfer === 18);
+}
+
 export async function processHeic(file, options = { quality: 0.95, discardGainMap: false }) {
     console.log('[HEIC] Processing HEIC file:', file.name);
     const heif = await initLibHeif();
     const arrayBuffer = await file.arrayBuffer();
+    const sourceBytes = new Uint8Array(arrayBuffer);
     const gainMapHeadroom = _extractHdrGainMapHeadroomFromArrayBuffer(arrayBuffer);
     if (gainMapHeadroom !== null) {
         console.log(`[HEIC] Detected HDR gain-map headroom from source metadata: ${gainMapHeadroom}`);
@@ -135,6 +160,11 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
             gainMapHeadroom,
             name: file.name
         };
+    }
+
+    if (isSupportedRawHdrHeif(sourceBytes)) {
+        console.log('[HEIC] No native gain map found and HDR metadata detected. Routing through raw HDR intent pipeline.');
+        return processHeifHdr(file);
     }
 
     console.log('[HEIC] No gain map found (or discarded), falling back to ITM');

@@ -11,7 +11,8 @@ export default defineConfig({
     ),
   },
   resolve: {
-    conditions: ['browser'],
+    conditions: ['browser', 'import'],
+    mainFields: ['browser', 'module', 'main'],
     alias: {
       'virtual:pwa-register': '/src/test/mocks/pwa-register.js',
     },
@@ -44,7 +45,7 @@ export default defineConfig({
       ],
     },
     transformMode: {
-      web: [/\.[jt]sx?$/],
+      web: [/\.[jt]sx?$/, /\.svelte$/],
     },
   },
 });
