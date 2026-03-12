@@ -31,7 +31,10 @@
     resolveCheckpointingForRun,
     saveProcessingPreferences,
   } from "./processing-preferences.js";
-  import { classifyInputProcessingPath } from "./processing-path.js";
+  import {
+    classifyInputProcessingPath,
+    probeInputProcessingPathFromHeaders,
+  } from "./processing-path.js";
 
   export let files = [];
   export let launchSource = "regular";
@@ -125,7 +128,8 @@
   const VIEWER_SWIPE_THRESHOLD_PX = 48;
   const VIEWER_VERTICAL_GUARD_PX = 80;
   const VIEWER_BOUNCE_RESET_MS = 180;
-  const MOBILE_INFERENCE_ACKNOWLEDGEMENT = "I acknowledge";
+  const MOBILE_INFERENCE_ACKNOWLEDGEMENT =
+    "I will also try Chrome on Windows or macOS";
 
   const PROGRESS_STAGE_ORDER = [
     "wasm-load",
@@ -182,7 +186,8 @@
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
   $: showSettingsPanel = isDesktopLayout;
-  $: isSmartphone = capabilities.isAndroid || capabilities.isIOS;
+  $: shouldRestrictInferenceBrowser =
+    !isSupportedDesktopChromeBrowser(capabilities);
   $: staleCount = queue.filter(
     (item) => item.status === QUEUE_ITEM_STATES.STALE,
   ).length;
@@ -307,6 +312,23 @@
     }
     const normalized = value.trim().toLowerCase();
     return normalized || null;
+  }
+
+  function isSupportedDesktopChromeBrowser(inputCapabilities) {
+    const userAgent = String(inputCapabilities?.userAgent || "").toLowerCase();
+    const isMobileOs = inputCapabilities?.isAndroid || inputCapabilities?.isIOS;
+    const isDesktopPlatform =
+      !isMobileOs &&
+      !/android|iphone|ipad|ipod|mobile/.test(userAgent);
+    const isChromeOrChromium =
+      userAgent.includes("chromium") || userAgent.includes("chrome/");
+    const isExcludedChromiumVariant =
+      userAgent.includes("edg/") ||
+      userAgent.includes("edgios") ||
+      userAgent.includes("opr/") ||
+      userAgent.includes("opera");
+
+    return isDesktopPlatform && isChromeOrChromium && !isExcludedChromiumVariant;
   }
 
   function normalizeProcessingPath(value) {
@@ -1389,7 +1411,8 @@
   function isMobileInferenceAcknowledgementValid(value) {
     return (
       typeof value === "string" &&
-      value.toLowerCase() === MOBILE_INFERENCE_ACKNOWLEDGEMENT.toLowerCase()
+      value.trim().toLowerCase() ===
+        MOBILE_INFERENCE_ACKNOWLEDGEMENT.toLowerCase()
     );
   }
 
@@ -1414,25 +1437,34 @@
     enqueueFiles(pendingFiles);
   }
 
+  async function classifyInputProcessingPathForGate(file) {
+    const headerProbeClassification =
+      await probeInputProcessingPathFromHeaders(file);
+    if (headerProbeClassification !== "unknown") {
+      return headerProbeClassification;
+    }
+    return classifyInputProcessingPath(file);
+  }
+
   async function gateAndEnqueueFiles(fileList) {
     const newFiles = Array.from(fileList || []).filter(
       (file) => file instanceof File,
     );
     if (newFiles.length === 0) return false;
 
-    if (!isSmartphone || mobileInferenceAcknowledgedForSession) {
+    if (!shouldRestrictInferenceBrowser || mobileInferenceAcknowledgedForSession) {
       return enqueueFiles(newFiles);
     }
 
     const classifications = await Promise.all(
-      newFiles.map((file) => classifyInputProcessingPath(file)),
+      newFiles.map((file) => classifyInputProcessingPathForGate(file)),
     );
     const safeFiles = [];
     const unsafeFiles = [];
 
     classifications.forEach((classification, index) => {
       const file = newFiles[index];
-      if (classification === "preserved" || classification === "hdr-intent") {
+      if (classification === "preserved") {
         safeFiles.push(file);
       } else {
         unsafeFiles.push(file);
@@ -2529,14 +2561,14 @@
       aria-describedby="mobile-inference-warning-description"
     >
       <h3 id="mobile-inference-warning-title">
-        Smartphone inference is unsupported
+        This browser has severe memory limitations
       </h3>
       <p
         class="help-text blocking-modal-copy"
         id="mobile-inference-warning-description"
       >
-        This image needs AI inference, which is unsupported on smartphones. Try
-        this on a desktop browser instead.
+        This webapp may require more memory than your browser permits. Please
+        try Chrome on Windows or macOS.
       </p>
       <p class="help-text blocking-modal-copy">
         Type "{MOBILE_INFERENCE_ACKNOWLEDGEMENT}" to proceed anyway.
@@ -2546,7 +2578,7 @@
         class="blocking-modal-input"
         data-testid="mobile-inference-warning-input"
         bind:value={mobileInferenceChallengeValue}
-        aria-label="Type I acknowledge to proceed"
+        aria-label="Type the browser warning acknowledgement to proceed"
         autocomplete="off"
         autocapitalize="off"
         spellcheck="false"

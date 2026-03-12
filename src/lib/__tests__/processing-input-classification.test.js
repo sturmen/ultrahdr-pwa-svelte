@@ -1,6 +1,8 @@
 /**
  * @vitest-environment jsdom
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const processHeicMock = vi.hoisted(() => vi.fn(async (file) => file));
@@ -23,9 +25,13 @@ vi.mock('../tiff-processing.js', () => ({
   processTiff: processTiffMock,
 }));
 
-vi.mock('../input-exif.js', () => ({
-  extractExifApp1PayloadFromInput: vi.fn(() => null),
-}));
+vi.mock('../input-exif.js', async () => {
+  const actual = await vi.importActual('../input-exif.js');
+  return {
+    ...actual,
+    extractExifApp1PayloadFromInput: vi.fn(() => null),
+  };
+});
 
 vi.mock('../ultrahdr-wasm.js', () => ({
   isWasmLoaded: vi.fn(() => true),
@@ -51,6 +57,12 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 
 function makeFile(name, type, bytes = [1, 2, 3, 4]) {
   return new File([new Uint8Array(bytes)], name, { type });
+}
+
+function loadMediaFile(relativePath, type) {
+  const absolutePath = path.resolve(relativePath);
+  const bytes = fs.readFileSync(absolutePath);
+  return new File([bytes], path.basename(relativePath), { type });
 }
 
 function makeImageDataLike(rgba) {
@@ -134,5 +146,72 @@ describe('classifyInputProcessingPath', () => {
     await expect(
       Promise.all(cases.map((file) => classifyInputProcessingPath(file))),
     ).resolves.toEqual(['generated', 'generated', 'generated', 'generated']);
+  });
+});
+
+describe('probeInputProcessingPathFromHeaders', () => {
+  it('classifies HIF HDR headers as hdr-intent without decoding image planes', async () => {
+    const { probeInputProcessingPathFromHeaders } = await import('../processing-core.js');
+
+    await expect(
+      probeInputProcessingPathFromHeaders(
+        loadMediaFile('media/test_hdr_no_gain_map.HIF', 'image/heif'),
+      ),
+    ).resolves.toBe('hdr-intent');
+  });
+
+  it('classifies HEIC headers with native gain-map markers as preserved', async () => {
+    const { probeInputProcessingPathFromHeaders } = await import('../processing-core.js');
+
+    await expect(
+      probeInputProcessingPathFromHeaders(
+        loadMediaFile('media/test_hdr_heif_gainmap.HEIC', 'image/heic'),
+      ),
+    ).resolves.toBe('preserved');
+  });
+
+  it('classifies SDR HEIC headers without gain-map markers as generated', async () => {
+    const { probeInputProcessingPathFromHeaders } = await import('../processing-core.js');
+    const sdrHeic = makeFile('plain.heic', 'image/heic', [
+      0x00, 0x00, 0x00, 0x18,
+      0x66, 0x74, 0x79, 0x70,
+      0x6d, 0x69, 0x66, 0x31,
+      0x00, 0x00, 0x00, 0x00,
+      0x6d, 0x69, 0x66, 0x31,
+      0x68, 0x65, 0x69, 0x63,
+      0x00, 0x00, 0x00, 0x15,
+      0x63, 0x6f, 0x6c, 0x72,
+      0x6e, 0x63, 0x6c, 0x78,
+      0x00, 0x01, 0x00, 0x01,
+      0x00, 0x01, 0x80,
+    ]);
+
+    await expect(
+      probeInputProcessingPathFromHeaders(sdrHeic),
+    ).resolves.toBe('generated');
+  });
+
+  it('returns unknown for HEIF-family files without decisive header markers', async () => {
+    const { probeInputProcessingPathFromHeaders } = await import('../processing-core.js');
+    const ambiguousHeif = makeFile('ambiguous.heif', 'image/heif', [
+      0x00, 0x00, 0x00, 0x18,
+      0x66, 0x74, 0x79, 0x70,
+      0x6d, 0x69, 0x66, 0x31,
+      0x00, 0x00, 0x00, 0x00,
+      0x6d, 0x69, 0x66, 0x31,
+      0x68, 0x65, 0x69, 0x63,
+    ]);
+
+    await expect(
+      probeInputProcessingPathFromHeaders(ambiguousHeif),
+    ).resolves.toBe('unknown');
+  });
+
+  it('returns unknown for malformed truncated HEIF headers', async () => {
+    const { probeInputProcessingPathFromHeaders } = await import('../processing-core.js');
+
+    await expect(
+      probeInputProcessingPathFromHeaders(makeFile('broken.hif', 'image/heif', [0x00, 0x00, 0x00])),
+    ).resolves.toBe('unknown');
   });
 });

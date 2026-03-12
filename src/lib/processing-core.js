@@ -558,7 +558,10 @@ export async function isUhdrImageWithDecoderFallback(fileBuffer) {
     return hasHdrGainMapXmpMarkers(fileBuffer);
 }
 
-export { classifyInputProcessingPath } from './processing-path.js';
+export {
+    classifyInputProcessingPath,
+    probeInputProcessingPathFromHeaders,
+} from './processing-path.js';
 
 function buildGainMapMetadata(maxContentBoost) {
     const safeMaxContentBoost = Number.isFinite(maxContentBoost) && maxContentBoost > 0

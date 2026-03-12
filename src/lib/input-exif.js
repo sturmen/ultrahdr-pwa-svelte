@@ -136,6 +136,29 @@ function isHeifInput(mimeType, extension) {
     );
 }
 
+function hasAsciiMarker(bytes, marker) {
+    if (!(bytes instanceof Uint8Array) || typeof marker !== 'string' || marker.length === 0) {
+        return false;
+    }
+    const markerBytes = new Uint8Array(marker.length);
+    for (let i = 0; i < marker.length; i++) {
+        markerBytes[i] = marker.charCodeAt(i);
+    }
+    for (let offset = 0; offset <= bytes.length - markerBytes.length; offset++) {
+        let matches = true;
+        for (let i = 0; i < markerBytes.length; i++) {
+            if (bytes[offset + i] !== markerBytes[i]) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function isTiffInput(mimeType, extension) {
     return mimeType === 'image/tiff' || extension === '.tif' || extension === '.tiff';
 }
@@ -354,6 +377,68 @@ function forEachIsoBox(bytes, start, end, callback) {
         }
         offset = boxEnd;
     }
+}
+
+function readFirstHeifNclxInfo(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length < 11) {
+        return null;
+    }
+    for (let offset = 0; offset <= bytes.length - 11; offset++) {
+        if (readTypeString(bytes, offset) !== 'nclx') {
+            continue;
+        }
+        return {
+            primaries: readUInt16(bytes, offset + 4, false),
+            transfer: readUInt16(bytes, offset + 6, false),
+            matrix: readUInt16(bytes, offset + 8, false),
+            fullRange: (bytes[offset + 10] & 0x80) !== 0,
+        };
+    }
+    return null;
+}
+
+function isSupportedHdrNclxInfo(info) {
+    return !!info && info.primaries === 9 && (info.transfer === 16 || info.transfer === 18);
+}
+
+export function probeHeifProcessingPathFromHeaders(bytes, fileName = '', mimeType = '') {
+    const input = toUint8Array(bytes);
+    if (!input || input.length < 8) {
+        return 'unknown';
+    }
+
+    const extension = getExtension(fileName);
+    const mime = String(mimeType || '').toLowerCase();
+    if (!isHeifInput(mime, extension)) {
+        return 'unknown';
+    }
+
+    let hasFtypBox = false;
+    forEachIsoBox(input, 0, input.length, (topBox) => {
+        if (topBox.type === 'ftyp') {
+            hasFtypBox = true;
+        }
+    });
+    if (!hasFtypBox) {
+        return 'unknown';
+    }
+
+    if (
+        hasAsciiMarker(input, 'urn:com:apple:photo:2020:aux:hdrgainmap') ||
+        hasAsciiMarker(input, 'HDRGainMapHeadroom')
+    ) {
+        return 'preserved';
+    }
+
+    const nclxInfo = readFirstHeifNclxInfo(input);
+    if (isSupportedHdrNclxInfo(nclxInfo)) {
+        return 'hdr-intent';
+    }
+    if (nclxInfo) {
+        return 'generated';
+    }
+
+    return 'unknown';
 }
 
 function parseInfeBox(bytes, box) {

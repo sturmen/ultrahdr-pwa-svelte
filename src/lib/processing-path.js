@@ -1,3 +1,5 @@
+import { probeHeifProcessingPathFromHeaders } from './input-exif.js';
+
 async function getProcessHeic() {
   const module = await import('./heic-processing.js');
   return module.processHeic;
@@ -16,6 +18,32 @@ async function getProcessTiff() {
 async function isUhdrImageWithDecoderFallback(fileBuffer) {
   const module = await import('./processing-core.js');
   return module.isUhdrImageWithDecoderFallback(fileBuffer);
+}
+
+function isHeifFamilyFile(file) {
+  const fileName = String(file?.name || '').toLowerCase();
+  return (
+    file?.type === 'image/heic' ||
+    file?.type === 'image/heif' ||
+    fileName.endsWith('.heic') ||
+    fileName.endsWith('.heif') ||
+    fileName.endsWith('.hif')
+  );
+}
+
+export async function probeInputProcessingPathFromHeaders(file) {
+  if (!(file instanceof Blob) || !isHeifFamilyFile(file)) {
+    return 'unknown';
+  }
+
+  const headerBytes = new Uint8Array(
+    await file.slice(0, 256 * 1024).arrayBuffer(),
+  );
+  return probeHeifProcessingPathFromHeaders(
+    headerBytes,
+    file?.name || '',
+    file?.type || '',
+  );
 }
 
 export async function classifyInputProcessingPath(file, options = {}) {

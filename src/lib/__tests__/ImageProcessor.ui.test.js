@@ -118,6 +118,9 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   });
 
   it('processes files selected from empty-gallery drop zone', async () => {
+    setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    );
     renderProcessor({ files: [] });
 
     await fireEvent.click(screen.getByTestId('tab-results'));
