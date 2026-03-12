@@ -233,6 +233,13 @@ function mergeDiagnostics(baseDiagnostics, extraDiagnostics = null) {
   return extra ? { ...base, ...extra } : base;
 }
 
+function createOfflineBundleDecision(mode, extras = {}) {
+  return {
+    mode,
+    ...extras,
+  };
+}
+
 function createAssetValidationSummary(missingAssets = [], mismatchedAssets = [], assetChecks = []) {
   return {
     missingAssetCount: missingAssets.length,
@@ -868,6 +875,7 @@ export async function ensureBundleReady({
         validatedAtMs: null,
         diagnostics: {
           reason: 'cache-storage-unavailable',
+          offlineBundleDecision: createOfflineBundleDecision('cache-storage-unavailable'),
         },
       };
       emitBundleStatus(unsupportedResult);
@@ -883,6 +891,12 @@ export async function ensureBundleReady({
             return {
               ...swValidation,
               blocked: swValidation.ready !== true,
+              diagnostics: mergeDiagnostics(swValidation.diagnostics, {
+                offlineBundleDecision: createOfflineBundleDecision('service-worker-validated', {
+                  ready: true,
+                  state: swValidation.state || null,
+                }),
+              }),
             };
           }
           const readyResult = {
@@ -902,6 +916,9 @@ export async function ensureBundleReady({
                 diagnostics: cloneDiagnosticsObject(swValidation?.diagnostics),
                 swCommand: cloneDiagnosticsObject(swValidation?.swCommand),
               },
+              offlineBundleDecision: createOfflineBundleDecision('cached-ready-record', {
+                fallbackReason: 'service-worker-validation-not-ready',
+              }),
             }),
           };
           emitBundleStatus(readyResult);
@@ -923,6 +940,9 @@ export async function ensureBundleReady({
             ...(serviceWorkerValidationError
               ? { serviceWorkerValidationError }
               : {}),
+            offlineBundleDecision: createOfflineBundleDecision('cached-ready-record', {
+              fallbackReason: 'service-worker-validation-error',
+            }),
           }),
         };
         emitBundleStatus(readyResult);
@@ -938,6 +958,7 @@ export async function ensureBundleReady({
         validatedAtMs: record?.validatedAtMs || null,
         diagnostics: record?.diagnosticsSummary || {
           reason: 'offline-without-ready-bundle',
+          offlineBundleDecision: createOfflineBundleDecision('blocked-offline-without-ready-bundle'),
         },
       };
       emitBundleStatus(blockedResult);

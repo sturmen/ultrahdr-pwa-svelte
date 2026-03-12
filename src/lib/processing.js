@@ -183,6 +183,29 @@ function buildWorkerRuntimeCapabilities(runtime = globalThis) {
   };
 }
 
+function isWebKitRuntime(runtime = globalThis) {
+  const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+  if (!userAgent.includes('applewebkit')) {
+    return false;
+  }
+  return !userAgent.includes('chrome')
+    && !userAgent.includes('chromium')
+    && !userAgent.includes('crios')
+    && !userAgent.includes('fxios')
+    && !userAgent.includes('edgios');
+}
+
+function isIPhoneWebKitRuntime(runtime = globalThis) {
+  const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
+  const platform = String(runtime?.navigator?.platform || '').toLowerCase();
+  return isWebKitRuntime(runtime) && (
+    userAgent.includes('iphone')
+    || platform.includes('iphone')
+    || userAgent.includes('ipod')
+    || platform.includes('ipod')
+  );
+}
+
 function buildWorkerInitDiagnostics({
   runtime = globalThis,
   workerInitTimeoutMs = null,
@@ -408,7 +431,16 @@ async function loadMainThreadProcessImage() {
 }
 
 async function ensureMainThreadRuntimeInitialized(context, initOptions = {}) {
-  void initOptions;
+  const runtimeInitOptions = sanitizeRuntimeInitOptions(initOptions);
+  const forcedExecutionProviders = Array.isArray(runtimeInitOptions.forceExecutionProviders)
+    ? runtimeInitOptions.forceExecutionProviders
+      .map((provider) => normalizeExecutionProvider(provider))
+      .filter(Boolean)
+    : [];
+  const requestedExecutionProviders = forcedExecutionProviders.length > 0
+    ? forcedExecutionProviders
+    : ['wasm'];
+  const resolvedExecutionProvider = requestedExecutionProviders[0] || 'wasm';
   if (context.mainThreadRuntimeError) {
     throw context.mainThreadRuntimeError;
   }
@@ -418,8 +450,10 @@ async function ensureMainThreadRuntimeInitialized(context, initOptions = {}) {
   }
 
   context.mainThreadRuntimePromise = Promise.resolve({
-    requestedExecutionProviders: ['wasm'],
-    resolvedExecutionProvider: 'wasm',
+    requestedExecutionProviders,
+    resolvedExecutionProvider,
+    forcedExecutionProviders: forcedExecutionProviders.length > 0 ? forcedExecutionProviders : null,
+    preferCompatibilityStartup: runtimeInitOptions.preferCompatibilityStartup === true,
     runtimeDegraded: true,
   }).catch((error) => {
     context.mainThreadRuntimePromise = null;
@@ -860,9 +894,23 @@ async function initializeRuntimeInternal(context, options = {}) {
   const startupCapabilityCacheTtlMs = normalizeStartupCapabilityCacheTtlMs(
     options?.startupCapabilityCacheTtlMs,
   );
-  const runtimeInitOptions = sanitizeRuntimeInitOptions({
+  const allowMainThreadFallback = isMainThreadFallbackEnabled(options);
+  const requestedRuntimeInitOptions = sanitizeRuntimeInitOptions({
     ...(options?.runtimeInitOptions || {}),
     ...(options?.allowWasmOnly === false ? { allowWasmOnly: false } : {}),
+  });
+  const offlineStartup = globalThis?.navigator?.onLine === false;
+  const preferOfflineCompatibilityStartup = offlineStartup
+    && allowMainThreadFallback
+    && isIPhoneWebKitRuntime(globalThis);
+  const runtimeInitOptions = sanitizeRuntimeInitOptions({
+    ...requestedRuntimeInitOptions,
+    ...(preferOfflineCompatibilityStartup
+      ? {
+        preferCompatibilityStartup: true,
+        forceExecutionProviders: ['wasm'],
+      }
+      : {}),
   });
   const startupCapabilityContext = getStartupCapabilityCacheContext(globalThis);
   if (!Array.isArray(runtimeInitOptions.smokeBypassProviders) || runtimeInitOptions.smokeBypassProviders.length === 0) {
@@ -874,13 +922,34 @@ async function initializeRuntimeInternal(context, options = {}) {
       runtimeInitOptions.smokeBypassProviders = [startupCache.provider];
     }
   }
-  const allowMainThreadFallback = isMainThreadFallbackEnabled(options);
   const workerSupported = canUseProcessingWorker();
-  const initPath = decideInitializationPath({
-    workerSupported,
-    allowMainThreadFallback,
-  });
+  const forcedExecutionProviders = Array.isArray(runtimeInitOptions.forceExecutionProviders)
+    ? runtimeInitOptions.forceExecutionProviders
+      .map((provider) => normalizeExecutionProvider(provider))
+      .filter(Boolean)
+    : [];
+  const workerBypassedReason = preferOfflineCompatibilityStartup
+    ? 'offline-iphone-webkit-compatibility-startup'
+    : null;
+  const initPath = preferOfflineCompatibilityStartup
+    ? 'main-thread'
+    : decideInitializationPath({
+      workerSupported,
+      allowMainThreadFallback,
+    });
+  let startupPath = initPath === 'worker'
+    ? 'worker'
+    : preferOfflineCompatibilityStartup
+      ? 'main-thread-offline-compat'
+      : 'main-thread';
   const bundleReadiness = await ensureBundleReady({ runtime: globalThis });
+  const offlineBundleDecision = {
+    ready: bundleReadiness?.ready === true,
+    blocked: bundleReadiness?.blocked === true,
+    state: bundleReadiness?.state || null,
+    bundleVersion: bundleReadiness?.bundleVersion || null,
+    diagnostics: bundleReadiness?.diagnostics || null,
+  };
 
   if (!bundleReadiness?.ready) {
     const blocked = bundleReadiness?.blocked === true;
@@ -898,10 +967,15 @@ async function initializeRuntimeInternal(context, options = {}) {
       ? 'Offline startup is blocked until the runtime bundle is prepared online.'
       : 'Runtime bundle preparation failed. Retry initialization while online.';
     error.diagnostics = {
+      offlineStartup,
+      startupPath,
+      workerBypassedReason,
+      forcedExecutionProviders,
       bundleState: bundleReadiness?.state || null,
       bundleVersion: bundleReadiness?.bundleVersion || null,
       bundleValidatedAtMs: bundleReadiness?.validatedAtMs || null,
       bundleDiagnostics: bundleReadiness?.diagnostics || null,
+      offlineBundleDecision,
     };
     throw error;
   }
@@ -932,27 +1006,60 @@ async function initializeRuntimeInternal(context, options = {}) {
 
   try {
     if (initPath === 'worker') {
-      const client = await getWorkerClient(context, runtimeInitOptions);
-      const runtimeMetadata = client?.runtime && typeof client.runtime === 'object'
-        ? { ...client.runtime }
-        : {};
-      writeStartupCapabilityCache(
-        runtimeMetadata.resolvedExecutionProvider,
-        globalThis,
-        {
-          ttlMs: startupCapabilityCacheTtlMs,
-          context: startupCapabilityContext,
-        },
-      );
-      await setBundleProviderHint(runtimeMetadata.resolvedExecutionProvider, globalThis);
-      return {
-        ready: true,
-        runtimeMode: resolveRuntimeMode(runtimeMetadata.resolvedExecutionProvider, true),
-        bundleState: bundleReadiness.state || null,
-        bundleVersion: bundleReadiness.bundleVersion || null,
-        bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
-        ...runtimeMetadata,
-      };
+      try {
+        const client = await getWorkerClient(context, runtimeInitOptions);
+        const runtimeMetadata = client?.runtime && typeof client.runtime === 'object'
+          ? { ...client.runtime }
+          : {};
+        writeStartupCapabilityCache(
+          runtimeMetadata.resolvedExecutionProvider,
+          globalThis,
+          {
+            ttlMs: startupCapabilityCacheTtlMs,
+            context: startupCapabilityContext,
+          },
+        );
+        await setBundleProviderHint(runtimeMetadata.resolvedExecutionProvider, globalThis);
+        return {
+          ready: true,
+          runtimeMode: resolveRuntimeMode(runtimeMetadata.resolvedExecutionProvider, true),
+          offlineStartup,
+          startupPath,
+          workerBypassedReason,
+          forcedExecutionProviders,
+          bundleState: bundleReadiness.state || null,
+          bundleVersion: bundleReadiness.bundleVersion || null,
+          bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
+          ...runtimeMetadata,
+        };
+      } catch (error) {
+        if (
+          offlineStartup
+          && decideWorkerFallback({ allowMainThreadFallback, error }) === 'fallback'
+        ) {
+          const fallbackRuntimeOptions = sanitizeRuntimeInitOptions({
+            ...runtimeInitOptions,
+            preferCompatibilityStartup: true,
+            forceExecutionProviders: ['wasm'],
+          });
+          const runtimeMetadata = await ensureMainThreadRuntimeInitialized(context, fallbackRuntimeOptions);
+          startupPath = 'main-thread-offline-worker-fallback';
+          await setBundleProviderHint(runtimeMetadata?.resolvedExecutionProvider, globalThis);
+          return {
+            ready: true,
+            runtimeMode: resolveRuntimeMode(runtimeMetadata?.resolvedExecutionProvider, false),
+            offlineStartup,
+            startupPath,
+            workerBypassedReason: 'offline-worker-init-fallback',
+            forcedExecutionProviders: ['wasm'],
+            bundleState: bundleReadiness.state || null,
+            bundleVersion: bundleReadiness.bundleVersion || null,
+            bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
+            ...runtimeMetadata,
+          };
+        }
+        throw error;
+      }
     }
 
     const runtimeMetadata = await ensureMainThreadRuntimeInitialized(context, runtimeInitOptions);
@@ -968,6 +1075,10 @@ async function initializeRuntimeInternal(context, options = {}) {
     return {
       ready: true,
       runtimeMode: resolveRuntimeMode(runtimeMetadata?.resolvedExecutionProvider, false),
+      offlineStartup,
+      startupPath,
+      workerBypassedReason,
+      forcedExecutionProviders,
       bundleState: bundleReadiness.state || null,
       bundleVersion: bundleReadiness.bundleVersion || null,
       bundleValidatedAtMs: bundleReadiness.validatedAtMs || null,
@@ -990,6 +1101,13 @@ async function initializeRuntimeInternal(context, options = {}) {
       error.runtimeInitFailureHistory = runtimeInitFailureHistory;
       error.diagnostics = {
         ...(error.diagnostics || {}),
+        offlineStartup,
+        startupPath,
+        workerBypassedReason,
+        forcedExecutionProviders,
+        offlineBundleDecision,
+        bundleState: bundleReadiness?.state || null,
+        bundleVersion: bundleReadiness?.bundleVersion || null,
         runtimeInitProgressTrace,
         runtimeInitFailureHistory,
       };

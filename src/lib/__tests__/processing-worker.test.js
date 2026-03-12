@@ -6,6 +6,10 @@ import {
   PIPELINE_HISTORY_KEY,
   PIPELINE_STATE_KEY,
 } from '../pipeline-telemetry.js';
+import {
+  BUNDLE_STATES,
+  OFFLINE_BUNDLE_STORAGE_KEY,
+} from '../offline-runtime-bundle.js';
 import { createRuntimeFixture } from './fixtures/createRuntimeFixture.js';
 
 const processImageCoreMock = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/jpeg' }));
@@ -111,7 +115,23 @@ describe('processing worker wrapper', () => {
   const originalWorker = globalThis.Worker;
   const originalOffscreenCanvas = globalThis.OffscreenCanvas;
   const originalCreateImageBitmap = globalThis.createImageBitmap;
+  const originalCaches = globalThis.caches;
   const originalUserAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent');
+  const originalOnLineDescriptor = Object.getOwnPropertyDescriptor(window.navigator, 'onLine');
+
+  function setUserAgent(value) {
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value,
+    });
+  }
+
+  function setOnline(value) {
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value,
+    });
+  }
 
   beforeEach(() => {
     vi.resetModules();
@@ -122,17 +142,44 @@ describe('processing worker wrapper', () => {
     MockWorker.onCancel = null;
     delete window[PIPELINE_STATE_KEY];
     delete window[PIPELINE_HISTORY_KEY];
+    setOnline(true);
   });
 
   afterEach(() => {
     globalThis.Worker = originalWorker;
     globalThis.OffscreenCanvas = originalOffscreenCanvas;
     globalThis.createImageBitmap = originalCreateImageBitmap;
+    globalThis.caches = originalCaches;
     if (originalUserAgentDescriptor) {
       Object.defineProperty(window.navigator, 'userAgent', originalUserAgentDescriptor);
     }
+    if (originalOnLineDescriptor) {
+      Object.defineProperty(window.navigator, 'onLine', originalOnLineDescriptor);
+    }
     vi.useRealTimers();
   });
+
+  function installOfflineReadyBundleRecord() {
+    const storage = window.localStorage;
+    storage.clear();
+    storage.setItem(OFFLINE_BUNDLE_STORAGE_KEY, JSON.stringify({
+      bundleVersion: 'cached-ready-version',
+      ready: true,
+      state: BUNDLE_STATES.READY,
+      validatedAtMs: 1234,
+      manifestDigest: 'fnv32:12345678',
+      diagnosticsSummary: {
+        missingAssetCount: 0,
+        mismatchedAssetCount: 0,
+      },
+    }));
+    globalThis.caches = {
+      open: vi.fn(async () => ({
+        match: vi.fn(async () => undefined),
+        put: vi.fn(async () => undefined),
+      })),
+    };
+  }
 
   it('falls back to main-thread processing when worker runtime is unavailable', async () => {
     globalThis.Worker = undefined;
@@ -286,6 +333,57 @@ describe('processing worker wrapper', () => {
         ready: true,
         resolvedExecutionProvider: 'wasm',
         runtimeMode: 'main-thread-wasm',
+      }),
+    );
+  });
+
+  it('initializes directly in main-thread wasm mode for offline iPhone Safari', async () => {
+    globalThis.Worker = MockWorker;
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+    installOfflineReadyBundleRecord();
+    setOnline(false);
+    setUserAgent(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3 Mobile/15E148 Safari/604.1',
+    );
+
+    const { initialize } = await createRuntimeFixture();
+    const result = await initialize();
+
+    expect(MockWorker.instances).toHaveLength(0);
+    expect(result).toEqual(
+      expect.objectContaining({
+        ready: true,
+        resolvedExecutionProvider: 'wasm',
+        runtimeMode: 'main-thread-wasm',
+        runtimeDegraded: true,
+      }),
+    );
+  });
+
+  it('retries startup on the main thread after offline worker init failure', async () => {
+    globalThis.Worker = class BrokenWorker {
+      constructor() {
+        throw new Error('worker init broke');
+      }
+    };
+    globalThis.OffscreenCanvas = class OffscreenCanvas {};
+    globalThis.createImageBitmap = vi.fn();
+    installOfflineReadyBundleRecord();
+    setOnline(false);
+    setUserAgent(
+      'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36',
+    );
+
+    const { initialize } = await createRuntimeFixture();
+    const result = await initialize();
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ready: true,
+        resolvedExecutionProvider: 'wasm',
+        runtimeMode: 'main-thread-wasm',
+        runtimeDegraded: true,
       }),
     );
   });

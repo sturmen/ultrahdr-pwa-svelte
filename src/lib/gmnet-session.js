@@ -280,6 +280,18 @@ async function resolveOrtModuleForProvider(provider, runtime = globalThis) {
     return ortWebGpu;
 }
 
+export async function preloadGmnetRuntimeDependencies({
+    runtime = globalThis,
+    provider = REQUIRED_GMNET_EXECUTION_PROVIDER,
+} = {}) {
+    const normalizedProvider = normalizeExecutionProvider(provider);
+    if (!SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(normalizedProvider)) {
+        throw new Error(`Unsupported GMNet execution provider: ${String(provider)}`);
+    }
+    await resolveOrtModuleForProvider(normalizedProvider, runtime);
+    return { provider: normalizedProvider };
+}
+
 configureOrtRuntime(ortWebGpu);
 
 export const DEFAULT_GMNET_MODEL_VARIANT = 'realworld';
@@ -1070,7 +1082,7 @@ export class GMNetInferenceSession {
             return;
         }
         console.log('[GMNet] Initializing session...');
-
+        const modelLoadDiagnostics = [];
         try {
             // Note: service worker handles caching.
             // We append version query param from env.
@@ -1087,8 +1099,6 @@ export class GMNetInferenceSession {
             const localModelUrl = `${MODEL_BASE_PATH}${localModelFilename}?v=${version}`;
             const globalExternalDataUrl = `${MODEL_BASE_PATH}${variantConfig.globalDataFilename}?v=${version}`;
             const localExternalDataUrl = `${MODEL_BASE_PATH}${variantConfig.localDataFilename}?v=${version}`;
-            const modelLoadDiagnostics = [];
-
             const globalPayloads = await resolveModelAndExternalDataPayloads(
                 this.runtime,
                 requestedProvider,

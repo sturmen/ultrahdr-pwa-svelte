@@ -196,6 +196,10 @@ describe('offline runtime bundle', () => {
     expect(result.blocked).toBe(false);
     expect(result.state).toBe(BUNDLE_STATES.READY);
     expect(result.bundleVersion).toBe('cached-ready-version');
+    expect(result.diagnostics).toMatchObject({
+      offlineFallbackUsed: true,
+      fallbackReason: 'service-worker-validation-not-ready',
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 

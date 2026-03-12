@@ -3,6 +3,7 @@ import {
   GMNET_FALLBACK_EXECUTION_PROVIDER,
   GMNetInferenceSession,
   GMNET_WASM_EXECUTION_PROVIDER,
+  preloadGmnetRuntimeDependencies,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.js';
 import {
@@ -413,6 +414,8 @@ export async function initializeRuntime({
   smokeAssetPath = DEFAULT_SMOKE_ASSET_PATH,
   forceSmokeFailure = false,
   allowWasmOnly = true,
+  forceExecutionProviders = [],
+  preferCompatibilityStartup = false,
   smokeBypassProviders = [],
   modelVariant = DEFAULT_GMNET_MODEL_VARIANT,
   gmnetCapabilityHintsByProvider = {},
@@ -426,6 +429,8 @@ export async function initializeRuntime({
   const loadSmokeImageDataImpl = typeof loadSmokeImageData === 'function'
     ? loadSmokeImageData
     : (context) => loadSmokeImageDataDefault(context);
+  const offlineStartup = runtime?.navigator?.onLine === false;
+  const forcedExecutionProviders = normalizeExecutionProviderList(forceExecutionProviders);
   let requestedExecutionProviders = [];
   const attemptFailures = [];
   let resolvedExecutionProvider = null;
@@ -540,6 +545,27 @@ export async function initializeRuntime({
       if (!session || typeof session.init !== 'function' || typeof session.run !== 'function') {
         throw new Error('GMNet session factory returned an invalid session.');
       }
+      if (forcedExecutionProviders.length > 0) {
+        try {
+          for (const provider of forcedExecutionProviders) {
+            await preloadGmnetRuntimeDependencies({ runtime, provider });
+          }
+        } catch (cause) {
+          throw createInitializationError({
+            errorCode: RUNTIME_INIT_ERROR_CODES.ONNX_FAILED,
+            stepId: 'onnx-load',
+            message: cause?.message || 'Unable to preload ONNX runtime dependencies.',
+            userMessage: 'Unable to load ONNX runtime dependencies.',
+            diagnostics: {
+              forcedExecutionProviders,
+              offlineStartup,
+              preferCompatibilityStartup,
+            },
+            cause,
+            runtime,
+          });
+        }
+      }
     },
   });
 
@@ -552,6 +578,10 @@ export async function initializeRuntime({
     errorCode: RUNTIME_INIT_ERROR_CODES.NO_COMPATIBLE_GPU_PROVIDER,
     userMessage: 'No compatible GPU runtime is available in this environment.',
     fn: async () => {
+      if (forcedExecutionProviders.length > 0) {
+        return forcedExecutionProviders;
+      }
+
       const providers = [];
       const webgpuIssues = [];
 
@@ -599,6 +629,9 @@ export async function initializeRuntime({
                 message: 'WebGL runtime is unavailable in this environment.',
               },
             ],
+            forcedExecutionProviders,
+            offlineStartup,
+            preferCompatibilityStartup,
           },
           runtime,
         });
@@ -811,6 +844,9 @@ export async function initializeRuntime({
               error?.diagnostics?.resolvedExecutionProvider || resolvedExecutionProvider,
             ),
             attemptFailures,
+            forcedExecutionProviders,
+            offlineStartup,
+            preferCompatibilityStartup,
           },
           cause: error,
           runtime,
@@ -822,6 +858,9 @@ export async function initializeRuntime({
           ...(error.diagnostics || {}),
           requestedExecutionProviders,
           attemptFailures,
+          forcedExecutionProviders,
+          offlineStartup,
+          preferCompatibilityStartup,
         };
       }
 
@@ -838,6 +877,9 @@ export async function initializeRuntime({
       diagnostics: {
         requestedExecutionProviders,
         attemptFailures,
+        forcedExecutionProviders,
+        offlineStartup,
+        preferCompatibilityStartup,
       },
       runtime,
     });
@@ -860,5 +902,8 @@ export async function initializeRuntime({
     gmnetCapability,
     smokeAssetUrl,
     attemptFailures,
+    forcedExecutionProviders,
+    offlineStartup,
+    preferCompatibilityStartup,
   };
 }

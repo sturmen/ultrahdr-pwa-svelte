@@ -44,6 +44,10 @@ export function sanitizeRuntimeInitOptions(rawOptions) {
 
   const normalized = {};
 
+  if (rawOptions.preferCompatibilityStartup === true) {
+    normalized.preferCompatibilityStartup = true;
+  }
+
   if (typeof rawOptions.smokeAssetPath === 'string') {
     const smokeAssetPath = rawOptions.smokeAssetPath.trim();
     if (smokeAssetPath.length > 0) {
