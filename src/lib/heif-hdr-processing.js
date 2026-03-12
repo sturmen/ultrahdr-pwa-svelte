@@ -35,6 +35,71 @@ function findNclxColorInfo(bytes) {
     return null;
 }
 
+function findAsciiBoxOffsets(bytes, boxType) {
+    const offsets = [];
+    if (!(bytes instanceof Uint8Array) || typeof boxType !== 'string' || boxType.length !== 4) {
+        return offsets;
+    }
+    const needle = [
+        boxType.charCodeAt(0),
+        boxType.charCodeAt(1),
+        boxType.charCodeAt(2),
+        boxType.charCodeAt(3),
+    ];
+    for (let i = 4; i <= bytes.length - 5; i++) {
+        if (
+            bytes[i] === needle[0]
+            && bytes[i + 1] === needle[1]
+            && bytes[i + 2] === needle[2]
+            && bytes[i + 3] === needle[3]
+        ) {
+            offsets.push(i - 4);
+        }
+    }
+    return offsets;
+}
+
+function parseHeifContainerTransformInfo(bytes) {
+    const info = {
+        hasRotation: false,
+        rotationQuarterTurns: 0,
+        hasMirror: false,
+    };
+    if (!(bytes instanceof Uint8Array) || bytes.length < 9) {
+        return info;
+    }
+
+    for (const boxOffset of findAsciiBoxOffsets(bytes, 'irot')) {
+        const boxSize = (
+            (bytes[boxOffset] << 24)
+            | (bytes[boxOffset + 1] << 16)
+            | (bytes[boxOffset + 2] << 8)
+            | bytes[boxOffset + 3]
+        ) >>> 0;
+        if (boxSize >= 9 && boxOffset + 8 < bytes.length) {
+            const quarterTurns = bytes[boxOffset + 8] & 0x03;
+            if (quarterTurns !== 0) {
+                info.hasRotation = true;
+                info.rotationQuarterTurns = quarterTurns;
+            }
+        }
+    }
+
+    for (const boxOffset of findAsciiBoxOffsets(bytes, 'imir')) {
+        const boxSize = (
+            (bytes[boxOffset] << 24)
+            | (bytes[boxOffset + 1] << 16)
+            | (bytes[boxOffset + 2] << 8)
+            | bytes[boxOffset + 3]
+        ) >>> 0;
+        if (boxSize >= 9 && boxOffset + 8 < bytes.length) {
+            info.hasMirror = true;
+        }
+    }
+
+    return info;
+}
+
 const HEIF_TRANSFER_PQ = 16;
 const HEIF_TRANSFER_HLG = 18;
 const HDR_LINEAR_EXPOSURE_SCALE = 1.0;
@@ -251,7 +316,11 @@ export async function processHeifHdr(file) {
         file.name || '',
         file.type || 'image/heif'
     );
-    const orientation = sourceExifBytes instanceof Uint8Array ? extractExifOrientation(sourceExifBytes) : 1;
+    const exifOrientation = sourceExifBytes instanceof Uint8Array ? extractExifOrientation(sourceExifBytes) : 1;
+    const containerTransform = parseHeifContainerTransformInfo(buffer);
+    const orientation = (containerTransform.hasRotation || containerTransform.hasMirror)
+        ? 1
+        : exifOrientation;
 
     const decoder = new heif.HeifDecoder();
     const images = decoder.decode(buffer.buffer);

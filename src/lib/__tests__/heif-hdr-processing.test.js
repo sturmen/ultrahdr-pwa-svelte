@@ -83,12 +83,20 @@ function makeHdrNclxBuffer({
   matrix = 9,
   fullRange = true,
   includeExif = false,
+  irotValue = null,
+  includeImir = false,
 } = {}) {
   const exif = includeExif
     ? [
         0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0x49, 0x49,
         0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
       ]
+    : [];
+  const irot = irotValue === null
+    ? []
+    : [0x00, 0x00, 0x00, 0x09, 0x69, 0x72, 0x6f, 0x74, irotValue & 0xff];
+  const imir = includeImir
+    ? [0x00, 0x00, 0x00, 0x09, 0x69, 0x6d, 0x69, 0x72, 0x00]
     : [];
   return new Uint8Array([
     0, 0, 0, 12, 0x63, 0x6f, 0x6c, 0x72,
@@ -97,6 +105,8 @@ function makeHdrNclxBuffer({
     (transfer >> 8) & 0xff, transfer & 0xff,
     (matrix >> 8) & 0xff, matrix & 0xff,
     fullRange ? 0x80 : 0x00,
+    ...irot,
+    ...imir,
     ...exif,
   ]);
 }
@@ -344,6 +354,94 @@ describe('heif-hdr-processing.js', () => {
       makeInterleaved16BitRgba(2, 1, [
         [1000, 0, 0, 65535],
         [2000, 0, 0, 65535],
+      ]),
+    );
+
+    const result = await processHeifHdr(file);
+
+    const leftPixel = readHalfFloatPixel(result.hdrIntent.data, 0);
+    const rightPixel = readHalfFloatPixel(result.hdrIntent.data, 1);
+    expect(leftPixel.r).toBeGreaterThan(rightPixel.r);
+  });
+
+  it('does not apply EXIF rotation a second time when HEIF irot metadata is present', async () => {
+    const { processHeifHdr } = await import('../heif-hdr-processing.js');
+    const source = makeHdrNclxBuffer({ transfer: 16, irotValue: 3 });
+    const file = new File([source], 'test_hdr_no_gain_map_90cw.HIF', { type: 'image/heif' });
+    file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+    extractExifApp1PayloadFromInputMock.mockReturnValue(makeExifPayloadWithOrientation(6));
+
+    decodeMock.mockReturnValueOnce([
+      {
+        get_width: () => 1,
+        get_height: () => 2,
+        handle: { id: 1 },
+      },
+    ]);
+    decodeMock.mockReturnValueOnce(
+      makeInterleaved16BitRgba(1, 2, [
+        [1000, 0, 0, 65535],
+        [2000, 0, 0, 65535],
+      ]),
+    );
+
+    const result = await processHeifHdr(file);
+
+    expect(result.hdrIntent.width).toBe(1);
+    expect(result.hdrIntent.height).toBe(2);
+    const topPixel = readHalfFloatPixel(result.hdrIntent.data, 0);
+    const bottomPixel = readHalfFloatPixel(result.hdrIntent.data, 1);
+    expect(bottomPixel.r).toBeGreaterThan(topPixel.r);
+  });
+
+  it('does not apply EXIF rotation a second time when HEIF irot=90 metadata is present', async () => {
+    const { processHeifHdr } = await import('../heif-hdr-processing.js');
+    const source = makeHdrNclxBuffer({ transfer: 16, irotValue: 1 });
+    const file = new File([source], 'test_hdr_no_gain_map_270cw.HIF', { type: 'image/heif' });
+    file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+    extractExifApp1PayloadFromInputMock.mockReturnValue(makeExifPayloadWithOrientation(8));
+
+    decodeMock.mockReturnValueOnce([
+      {
+        get_width: () => 1,
+        get_height: () => 2,
+        handle: { id: 1 },
+      },
+    ]);
+    decodeMock.mockReturnValueOnce(
+      makeInterleaved16BitRgba(1, 2, [
+        [1000, 0, 0, 65535],
+        [2000, 0, 0, 65535],
+      ]),
+    );
+
+    const result = await processHeifHdr(file);
+
+    expect(result.hdrIntent.width).toBe(1);
+    expect(result.hdrIntent.height).toBe(2);
+    const topPixel = readHalfFloatPixel(result.hdrIntent.data, 0);
+    const bottomPixel = readHalfFloatPixel(result.hdrIntent.data, 1);
+    expect(bottomPixel.r).toBeGreaterThan(topPixel.r);
+  });
+
+  it('treats HEIF imir metadata as an already-applied presentation transform', async () => {
+    const { processHeifHdr } = await import('../heif-hdr-processing.js');
+    const source = makeHdrNclxBuffer({ transfer: 16, includeImir: true });
+    const file = new File([source], 'mirrored-container.HIF', { type: 'image/heif' });
+    file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+    extractExifApp1PayloadFromInputMock.mockReturnValue(makeExifPayloadWithOrientation(2));
+
+    decodeMock.mockReturnValueOnce([
+      {
+        get_width: () => 2,
+        get_height: () => 1,
+        handle: { id: 1 },
+      },
+    ]);
+    decodeMock.mockReturnValueOnce(
+      makeInterleaved16BitRgba(2, 1, [
+        [2000, 0, 0, 65535],
+        [1000, 0, 0, 65535],
       ]),
     );
 
