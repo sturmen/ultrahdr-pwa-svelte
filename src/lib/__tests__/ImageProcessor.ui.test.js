@@ -1074,12 +1074,17 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
-    const firstOptions = vi.mocked(runtimeProcessMock).mock.calls[0][1];
-    expect(firstOptions.maxContentBoost).toBeCloseTo(2 ** 2.3, 6);
-
     await fireEvent.click(screen.getByTestId('tab-convert'));
+    const slider = screen.getByLabelText(/max content boost/i);
+    expect(slider).toHaveAttribute('min', '0');
+    expect(slider).toHaveAttribute('max', '5');
+    expect(slider).toHaveValue('3');
+
+    const firstOptions = vi.mocked(runtimeProcessMock).mock.calls[0][1];
+    expect(firstOptions.maxContentBoost).toBeCloseTo(2 ** 3.0, 6);
+
     await fireEvent.input(screen.getByLabelText(/max content boost/i), {
-      target: { value: '4.0' },
+      target: { value: '5.0' },
     });
 
     await waitFor(() => {
@@ -1093,7 +1098,54 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     const secondOptions = vi.mocked(runtimeProcessMock).mock.calls[1][1];
-    expect(secondOptions.maxContentBoost).toBeCloseTo(2 ** 4, 6);
+    expect(secondOptions.maxContentBoost).toBeCloseTo(2 ** 5, 6);
+  });
+
+  it('resets HDR strength back to the shared default on discard all', async () => {
+    window.confirm = vi.fn(() => true);
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+    await fireEvent.input(screen.getByLabelText(/max content boost/i), {
+      target: { value: '5.0' },
+    });
+    expect(screen.getByLabelText(/max content boost/i)).toHaveValue('5.0');
+
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    await fireEvent.click(screen.getByRole('button', { name: /^discard all$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/max content boost/i)).toHaveValue('3');
+    });
+  });
+
+  it('shows that preserved gain maps ignore HDR strength until discarded', async () => {
+    const runtime = createRuntime();
+    runtime.process = vi.fn(async (_file, options = {}) => {
+      options.onProgress?.({
+        phase: 'pipeline-complete',
+        stage: 'finalize-preserved',
+        processingPath: 'preserved',
+        elapsedMs: 5,
+        stageDurationsMs: { 'finalize-preserved': 5 },
+        timestamp: Date.now(),
+      });
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, { props: { runtime, files: makeFiles(1) } });
+
+    await waitFor(() => {
+      expect(runtime.process).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+    expect(screen.getByText(/preserved gain maps keep their source metadata/i)).toBeInTheDocument();
+    expect(screen.getByText(/hdr strength only applies when generating a new gain map or after discarding/i)).toBeInTheDocument();
   });
 
   it('reprocesses selected stale results directly from the results toolbar', async () => {

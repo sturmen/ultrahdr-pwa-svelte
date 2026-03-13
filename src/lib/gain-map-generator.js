@@ -6,8 +6,8 @@ import {
 } from './gmnet-session.js';
 import { GMNetCheckpointStore } from './gmnet-checkpoint-store.js';
 import { IMAGE_MAX_LONG_EDGE } from './constants.js';
+import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
 
-const DEFAULT_MAX_CONTENT_BOOST = 2.3;
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const WEBGL_FALLBACK_RETRY_NOTE = 'WebGPU produced an invalid gain map; retrying with WebGL.';
 const WEBGL_FALLBACK_ERROR_RETRY_NOTE = 'WebGPU inference failed; retrying with WebGL.';

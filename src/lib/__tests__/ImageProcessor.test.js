@@ -2,11 +2,15 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi } from 'vitest';
+import {
+  DEFAULT_MAX_CONTENT_BOOST_STOPS,
+  MAX_MAX_CONTENT_BOOST_STOPS,
+  MIN_MAX_CONTENT_BOOST_STOPS,
+} from '../max-content-boost.js';
 
 describe('ImageProcessor - Settings defaults', () => {
-  it('should have default maxContentBoost of 2.3', () => {
-    const maxContentBoost = 2.3;
-    expect(maxContentBoost).toBe(2.3);
+  it('should have default maxContentBoost of 3.0', () => {
+    expect(DEFAULT_MAX_CONTENT_BOOST_STOPS).toBe(3.0);
   });
 
   it('should have default rotation of 0', () => {
@@ -31,10 +35,10 @@ describe('ImageProcessor - Settings defaults', () => {
 });
 
 describe('ImageProcessor - Settings ranges', () => {
-  it('should have maxContentBoost range 1.0 to 4.0', () => {
-    const min = 1.0;
-    const max = 4.0;
-    expect(min).toBeLessThan(max);
+  it('should have maxContentBoost stop range 0.0 to 5.0', () => {
+    expect(MIN_MAX_CONTENT_BOOST_STOPS).toBe(0);
+    expect(MAX_MAX_CONTENT_BOOST_STOPS).toBe(5);
+    expect(MIN_MAX_CONTENT_BOOST_STOPS).toBeLessThan(MAX_MAX_CONTENT_BOOST_STOPS);
   });
 
   it('should have quality options of 1.0, 0.95, 0.75, 0.5', () => {

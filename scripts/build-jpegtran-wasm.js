@@ -68,7 +68,7 @@ export function buildJpegtranWasm() {
     try {
         const envPrefix = `EM_CACHE="${emCachePath}" EMCC_SKIP_SANITY_CHECK=1`;
         execSync(
-            `${envPrefix} emcmake cmake "${WASM_DIR}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5`,
+            `${envPrefix} emcmake cmake -Wno-dev "${WASM_DIR}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5`,
             execOptions
         );
         execSync(`${envPrefix} emmake make -j4`, execOptions);
@@ -80,7 +80,7 @@ export function buildJpegtranWasm() {
             const retryPrefix = `EM_CACHE="${emCachePath}"`;
             console.log('Retrying jpegtran WASM build after clearing emscripten cache...');
             execSync(
-                `${retryPrefix} emcmake cmake "${WASM_DIR}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5`,
+                `${retryPrefix} emcmake cmake -Wno-dev "${WASM_DIR}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5`,
                 retryExecOptions
             );
             execSync(`${retryPrefix} emmake make -j4`, retryExecOptions);

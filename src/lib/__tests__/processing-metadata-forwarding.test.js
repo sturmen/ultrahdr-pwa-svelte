@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_MAX_CONTENT_BOOST } from '../max-content-boost.js';
 
 const { encoderSpies, forwardedMetadata } = vi.hoisted(() => ({
   encoderSpies: {
@@ -135,6 +136,90 @@ describe('processImage metadata forwarding', () => {
         gainMapMax: [9.9, 9.9, 9.9],
         hdrCapacityMax: 9.9,
         gamma: [1.1, 1.1, 1.1],
+      }),
+    );
+  });
+
+  it('preserves imported gain-map metadata unchanged for preserved HEIC inputs', async () => {
+    const { processHeic } = await import('../heic-processing.js');
+    const preservedMetadata = {
+      gainMapMin: [1.2, 1.2, 1.2],
+      gainMapMax: [12.3, 12.3, 12.3],
+      gamma: [1.05, 1.05, 1.05],
+      offsetSdr: [0.03, 0.03, 0.03],
+      offsetHdr: [0.04, 0.04, 0.04],
+      hdrCapacityMin: 1.1,
+      hdrCapacityMax: 12.3,
+    };
+    processHeic.mockResolvedValueOnce({
+      kind: 'preserved-heic',
+      sdr: new ImageData(new Uint8ClampedArray(4), 1, 1),
+      gainMap: new ImageData(new Uint8ClampedArray(4), 1, 1),
+      gainMapMetadata: preservedMetadata,
+      name: 'input.heic',
+    });
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'input.heic', { type: 'image/heic' });
+
+    await processImage(file, {
+      maxContentBoost: 32,
+      stripExif: true,
+      discardGainMap: false,
+    });
+
+    expect(encoderSpies.setCompressedGainMapImage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining(preservedMetadata),
+    );
+  });
+
+  it('falls back to synthesized metadata from imported gain-map headroom when full metadata is absent', async () => {
+    const { processHeic } = await import('../heic-processing.js');
+    processHeic.mockResolvedValueOnce({
+      kind: 'preserved-heic',
+      sdr: new ImageData(new Uint8ClampedArray(4), 1, 1),
+      gainMap: new ImageData(new Uint8ClampedArray(4), 1, 1),
+      gainMapHeadroom: 6.5,
+      name: 'input.heic',
+    });
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'input.heic', { type: 'image/heic' });
+
+    await processImage(file, {
+      maxContentBoost: 32,
+      stripExif: true,
+      discardGainMap: false,
+    });
+
+    expect(encoderSpies.setCompressedGainMapImage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        gainMapMax: [6.5, 6.5, 6.5],
+        hdrCapacityMax: 6.5,
+      }),
+    );
+  });
+
+  it('uses generated metadata when a preserved HEIC gain map is discarded', async () => {
+    const { processHeic } = await import('../heic-processing.js');
+    processHeic.mockResolvedValueOnce(new File([new Uint8Array([1, 2, 3, 4])], 'input.png', { type: 'image/png' }));
+
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'input.heic', { type: 'image/heic' });
+
+    await processImage(file, {
+      maxContentBoost: DEFAULT_MAX_CONTENT_BOOST,
+      stripExif: true,
+      discardGainMap: true,
+    });
+
+    expect(encoderSpies.setCompressedGainMapImage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        gainMapMax: [9.9, 9.9, 9.9],
+        hdrCapacityMax: 9.9,
       }),
     );
   });

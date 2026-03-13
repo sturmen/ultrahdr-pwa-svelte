@@ -4,6 +4,12 @@
   import { getCapabilities } from "./capabilities.js";
   import JSZip from "jszip";
   import {
+    clampMaxContentBoostStops,
+    convertStopsToMaxContentBoost,
+    DEFAULT_MAX_CONTENT_BOOST_STOPS,
+    MAX_CONTENT_BOOST_STOPS_RANGE,
+  } from "./max-content-boost.js";
+  import {
     buildShareFiles,
     getSelectedResults,
     releaseResultUrls,
@@ -42,7 +48,8 @@
   export let runtime = null;
   export let runtimeExecutionProvider = null;
 
-  let maxContentBoostStops = 2.3;
+  let maxContentBoostStops = DEFAULT_MAX_CONTENT_BOOST_STOPS;
+
   let rotation = 0;
   let quality = 0.95;
   let discardGainMap = false;
@@ -206,6 +213,10 @@
     workflowState === WORKFLOW_STATES.PROCESSING_PAUSING;
   $: canResumeQueue = workflowState === WORKFLOW_STATES.PROCESSING_PAUSED;
   $: canCancelCurrent = processing && currentQueueId !== null;
+  $: showPreservedGainMapNotice =
+    !discardGainMap &&
+    (currentProcessingPath === "preserved" ||
+      lastCompletedProcessingPath === "preserved");
   $: queueControlVisibility = canPauseQueue
     ? "pause"
     : canResumeQueue
@@ -799,15 +810,6 @@
     if (queueControlVisibility === "resume") {
       resumeQueue();
     }
-  }
-
-  function convertStopsToMaxContentBoost(stops) {
-    const numericStops = Number(stops);
-    if (!Number.isFinite(numericStops)) {
-      return 2 ** 2.3;
-    }
-    const clampedStops = Math.max(0, Math.min(4, numericStops));
-    return 2 ** clampedStops;
   }
 
   function buildProcessingOptions(abortSignal, fileIndex, totalFiles, queueId) {
@@ -1654,7 +1656,7 @@
     emphasizeShareOut = false;
 
     rotation = 0;
-    maxContentBoostStops = 2.3;
+    maxContentBoostStops = DEFAULT_MAX_CONTENT_BOOST_STOPS;
     quality = 0.95;
     discardGainMap = false;
     stripExif = false;
@@ -1877,14 +1879,24 @@
               <input
                 type="range"
                 id="boost"
-                min="0.0"
-                max="4.0"
-                step="0.1"
+                min={MAX_CONTENT_BOOST_STOPS_RANGE.min}
+                max={MAX_CONTENT_BOOST_STOPS_RANGE.max}
+                step={MAX_CONTENT_BOOST_STOPS_RANGE.step}
                 bind:value={maxContentBoostStops}
-                on:input={handleSettingChange}
+                on:input={(event) => {
+                  maxContentBoostStops = clampMaxContentBoostStops(event?.target?.value);
+                  handleSettingChange();
+                }}
               />
               <span class="value">{maxContentBoostStops.toFixed(1)} stops</span>
             </div>
+            {#if showPreservedGainMapNotice}
+              <p class="hint preserved-gainmap-note">
+                Preserved gain maps keep their source metadata. HDR strength only
+                applies when generating a new gain map or after discarding the
+                imported gain map.
+              </p>
+            {/if}
           </div>
 
           <div class="control-group horizontal">

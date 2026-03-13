@@ -95,6 +95,22 @@ describe('heic-processing.js', () => {
       expect(result).toBeInstanceOf(File);
     });
 
+    it('extracts full preserved gain-map metadata from embedded HDR gain-map XMP', async () => {
+      const xmp = `<?xpacket begin=""?><x:xmpmeta><rdf:RDF><rdf:Description hdrgm:Version="1"><hdrgm:GainMapMin><rdf:Seq><rdf:li>1</rdf:li><rdf:li>1</rdf:li><rdf:li>1</rdf:li></rdf:Seq></hdrgm:GainMapMin><hdrgm:GainMapMax><rdf:Seq><rdf:li>7.5</rdf:li><rdf:li>7.5</rdf:li><rdf:li>7.5</rdf:li></rdf:Seq></hdrgm:GainMapMax><hdrgm:Gamma><rdf:Seq><rdf:li>1.2</rdf:li><rdf:li>1.2</rdf:li><rdf:li>1.2</rdf:li></rdf:Seq></hdrgm:Gamma><rdf:Description hdrgm:OffsetSDR="0.125" hdrgm:OffsetHDR="0.25" hdrgm:HDRCapacityMin="1" hdrgm:HDRCapacityMax="7.5" /></rdf:Description></rdf:RDF></x:xmpmeta>`;
+      const { parseHdrGainMapMetadataFromText } = await import('../gain-map-metadata.js');
+      const result = parseHdrGainMapMetadataFromText(`heic-prefix ${xmp} heic-suffix`);
+
+      expect(result).toMatchObject({
+        gainMapMin: [1, 1, 1],
+        gainMapMax: [7.5, 7.5, 7.5],
+        gamma: [1.2, 1.2, 1.2],
+        offsetSdr: [0.125, 0.125, 0.125],
+        offsetHdr: [0.25, 0.25, 0.25],
+        hdrCapacityMin: 1,
+        hdrCapacityMax: 7.5,
+      });
+    });
+
     it('returns hdr-intent-heif for raw HDR HEIC inputs without a native SDR intent', async () => {
       const hdrBytes = new Uint8Array([
         0, 0, 0, 12, 0x63, 0x6f, 0x6c, 0x72,

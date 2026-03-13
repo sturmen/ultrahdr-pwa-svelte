@@ -118,10 +118,10 @@ function buildWasm() {
 
     // Configure with emcmake. UHDR_BUILD_DEPS=1 ensures libultrahdr builds jpeg deps
     // under Emscripten instead of relying on host sysroot JPEG availability.
-    runCommand(`emcmake cmake -DCMAKE_BUILD_TYPE=Release -DUHDR_BUILD_DEPS=1 ..`, { cwd: buildDir });
+    runCommand(`emcmake cmake -Wno-dev -DCMAKE_BUILD_TYPE=Release -DUHDR_BUILD_DEPS=1 ..`, { cwd: buildDir });
 
     // Build
-    runCommand(`emmake make -j4`, { cwd: buildDir });
+    runCommand(`emmake make -j1`, { cwd: buildDir });
 
     console.log('\n=== Building Jpegli WASM module ===');
     buildJpegliWasm();

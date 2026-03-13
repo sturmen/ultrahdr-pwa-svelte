@@ -96,8 +96,9 @@ describe('GMNet-only gain map generation', () => {
     expect(result.gainMapImageData.width).toBe(2);
     expect(result.gainMapImageData.height).toBe(2);
     expect(result.gainMapImageData.data.length).toBe(16);
-    expect(result.metadata.gainMapMax).toEqual([2.3, 2.3, 2.3]);
-    expect(result.metadata.hdrCapacityMax).toBe(2.3);
+    expect(result.metadata.gainMapMax).toEqual([8.0, 8.0, 8.0]);
+    expect(result.metadata.hdrCapacityMax).toBe(8.0);
+
     expect(runMock).toHaveBeenCalledTimes(1);
   });
 

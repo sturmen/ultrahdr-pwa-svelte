@@ -44,7 +44,7 @@ describe('processing-preferences', () => {
       rotation: -450,
     });
 
-    expect(normalized.maxContentBoostStops).toBe(4);
+    expect(normalized.maxContentBoostStops).toBe(5);
     expect(normalized.quality).toBe(1.0);
     expect(normalized.rotation).toBe(270);
   });

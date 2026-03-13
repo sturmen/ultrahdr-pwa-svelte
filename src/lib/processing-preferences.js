@@ -1,4 +1,9 @@
+import {
+  clampMaxContentBoostStops,
+  DEFAULT_MAX_CONTENT_BOOST_STOPS,
+} from './max-content-boost.js';
 export const PROCESSING_PREFERENCES_STORAGE_KEY = 'ultrahdr:processing-preferences:v1';
+
 export const LEGACY_BACKEND_PREFERENCE_STORAGE_KEY = 'ultrahdr:backend-preference:v1';
 const LEGACY_BACKEND_PREFERENCE_GLOBAL_KEY = '__ULTRAHDR_BACKEND_PREFERENCE';
 const PROCESSING_PREFERENCES_RUNTIME_KEY = '__ULTRAHDR_PROCESSING_PREFERENCES';
@@ -10,7 +15,8 @@ const SUPPORTED_QUALITY_VALUES = Object.freeze([1.0, 0.95, 0.75, 0.5]);
 export const DEFAULT_PROCESSING_PREFERENCES = Object.freeze({
   backendPreference: 'auto',
   gmnetCheckpointingPreference: 'auto',
-  maxContentBoostStops: 2.3,
+  maxContentBoostStops: DEFAULT_MAX_CONTENT_BOOST_STOPS,
+
   quality: 0.95,
   useJpegli: false,
   discardGainMap: false,
@@ -61,11 +67,7 @@ function normalizeCheckpointingPreference(value) {
 }
 
 function normalizeMaxContentBoostStops(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return DEFAULT_PROCESSING_PREFERENCES.maxContentBoostStops;
-  }
-  return Math.max(0, Math.min(4, numeric));
+  return clampMaxContentBoostStops(value);
 }
 
 function normalizeQuality(value) {

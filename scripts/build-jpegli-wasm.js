@@ -67,7 +67,7 @@ export function buildJpegliWasm() {
     };
     try {
         const envPrefix = `EM_CACHE="${emCachePath}" EMCC_SKIP_SANITY_CHECK=1`;
-        execSync(`${envPrefix} emcmake cmake "${WASM_DIR}"`, execOptions);
+        execSync(`${envPrefix} emcmake cmake -Wno-dev "${WASM_DIR}"`, execOptions);
         execSync(`${envPrefix} emmake make -j4`, execOptions);
     } catch (e) {
         console.error('WASM build failed:', e);

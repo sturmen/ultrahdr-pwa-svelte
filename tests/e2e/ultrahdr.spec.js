@@ -1232,7 +1232,9 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Verify all controls are present
             await expect(page.locator('#boost')).toBeVisible();
-            await expect(page.locator('#boost')).toHaveValue('2.3');
+            await expect(page.locator('#boost')).toHaveValue('3');
+            await expect(page.locator('#boost')).toHaveAttribute('min', '0.0');
+            await expect(page.locator('#boost')).toHaveAttribute('max', '5.0');
             await expect(page.locator('#quality')).toBeVisible();
             await expect(page.getByLabel(/performance mode/i)).toHaveCount(0);
 

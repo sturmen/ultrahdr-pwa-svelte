@@ -35,12 +35,13 @@ vi.mock('../gain-map-generator.js', () => {
         gainMapImageData: new ImageData(data, imageData.width, imageData.height),
         metadata: {
           gainMapMin: [1.0, 1.0, 1.0],
-          gainMapMax: [2.3, 2.3, 2.3],
+          gainMapMax: [8.0, 8.0, 8.0],
           gamma: [1.0, 1.0, 1.0],
           offsetSdr: [0, 0, 0],
           offsetHdr: [0, 0, 0],
           hdrCapacityMin: 1.0,
-          hdrCapacityMax: 2.3,
+          hdrCapacityMax: 8.0,
+
         },
       };
     }

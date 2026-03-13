@@ -1,5 +1,9 @@
 import libheifFactory from './libheif-browser.js';
 import { canvasToBlob, createCanvasWithContext } from './canvas-runtime.js';
+import {
+    extractHdrGainMapHeadroomFromBuffer,
+    parseHdrGainMapMetadataFromBuffer,
+} from './gain-map-metadata.js';
 import { processHeifHdr } from './heif-hdr-processing.js';
 
 let libheif = null;
@@ -71,9 +75,13 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
     const heif = await initLibHeif();
     const arrayBuffer = await file.arrayBuffer();
     const sourceBytes = new Uint8Array(arrayBuffer);
-    const gainMapHeadroom = _extractHdrGainMapHeadroomFromArrayBuffer(arrayBuffer);
+    const gainMapMetadata = parseHdrGainMapMetadataFromBuffer(sourceBytes);
+    const gainMapHeadroom = extractHdrGainMapHeadroomFromBuffer(sourceBytes);
     if (gainMapHeadroom !== null) {
         console.log(`[HEIC] Detected HDR gain-map headroom from source metadata: ${gainMapHeadroom}`);
+    }
+    if (gainMapMetadata) {
+        console.log('[HEIC] Detected full HDR gain-map metadata from source metadata.');
     }
 
     const decoder = new heif.HeifDecoder();
@@ -157,6 +165,7 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
         return {
             sdr: imageData,
             gainMap: gainMapImageData,
+            gainMapMetadata,
             gainMapHeadroom,
             name: file.name
         };
@@ -173,27 +182,6 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
     const pngFile = new File([pngBlob], file.name.replace(/\.(heic|heif)$/i, '.png'), { type: 'image/png' });
 
     return pngFile;
-}
-
-function _extractHdrGainMapHeadroomFromArrayBuffer(arrayBuffer) {
-    try {
-        const text = new TextDecoder('latin1').decode(arrayBuffer);
-        const match = text.match(/<HDRGainMap:HDRGainMapHeadroom>\s*([0-9.+\-eE]+)\s*<\/HDRGainMap:HDRGainMapHeadroom>/i)
-            || text.match(/HDRGainMapHeadroom="([0-9.+\-eE]+)"/i);
-
-        if (!match) {
-            return null;
-        }
-
-        const headroom = Number.parseFloat(match[1]);
-        if (!Number.isFinite(headroom) || headroom <= 0) {
-            return null;
-        }
-
-        return headroom;
-    } catch {
-        return null;
-    }
 }
 
 /**
