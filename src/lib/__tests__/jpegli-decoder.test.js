@@ -32,6 +32,9 @@ function createMockChunkCapableWasm() {
         nextScanline: 0,
         outputPtr: 0,
         outputSize: 0,
+        inputChannels: 0,
+        iccPtr: 0,
+        iccSize: 0,
       });
       return stateId;
     }),
@@ -46,6 +49,19 @@ function createMockChunkCapableWasm() {
       state.width = Number(width);
       state.height = Number(height);
       state.nextScanline = 0;
+      return 0;
+    }),
+    _jpegli_wasm_encoder_set_input_mode: vi.fn((stateId, channels) => {
+      const state = states.get(stateId);
+      if (!state) return -1;
+      state.inputChannels = Number(channels);
+      return 0;
+    }),
+    _jpegli_wasm_encoder_set_icc_profile: vi.fn((stateId, iccPtr, iccSize) => {
+      const state = states.get(stateId);
+      if (!state) return -1;
+      state.iccPtr = Number(iccPtr);
+      state.iccSize = Number(iccSize);
       return 0;
     }),
     _jpegli_wasm_encoder_process_rows: vi.fn((stateId, maxRows) => {
@@ -180,5 +196,43 @@ describe('jpegli-decoder chunked progress', () => {
 
     expect(encoded).toBeInstanceOf(Uint8Array);
     expect(encoded.length).toBeGreaterThan(0);
+  });
+
+  it('passes ICC bytes through to the jpegli wasm encoder when present', async () => {
+    const { encodeJpegli } = await import('../jpegli-decoder.js');
+    const iccProfile = new Uint8Array([0x49, 0x43, 0x43, 0x5f, 0x50, 0x33]);
+
+    await encodeJpegli(createImageData(4, 3), 91, {
+      iccProfile,
+    });
+
+    const wasm = await window.createJpegliWasm.mock.results[0].value;
+    expect(wasm._jpegli_wasm_encoder_set_icc_profile).toHaveBeenCalledTimes(1);
+    expect(wasm._jpegli_wasm_encoder_set_icc_profile).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      iccProfile.length,
+    );
+    const [, iccPtr, iccSize] = wasm._jpegli_wasm_encoder_set_icc_profile.mock.calls[0];
+    expect(new Uint8Array(wasm.HEAPU8.buffer, iccPtr, iccSize)).toEqual(iccProfile);
+  });
+
+  it('switches the jpegli wasm encoder to grayscale mode for monochrome gain maps', async () => {
+    const { encodeJpegli } = await import('../jpegli-decoder.js');
+    const imageData = createImageData(3, 2);
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      imageData.data[i + 1] = imageData.data[i];
+      imageData.data[i + 2] = imageData.data[i];
+    }
+
+    await encodeJpegli(imageData, 93, {
+      inputMode: 'grayscale',
+    });
+
+    const wasm = await window.createJpegliWasm.mock.results[0].value;
+    expect(wasm._jpegli_wasm_encoder_set_input_mode).toHaveBeenCalledWith(
+      expect.any(Number),
+      1,
+    );
   });
 });

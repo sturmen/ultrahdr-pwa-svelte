@@ -71,7 +71,46 @@ function hasChunkedEncodeApi(wasm) {
         && typeof wasm?._jpegli_wasm_encoder_get_image_height === 'function';
 }
 
-async function encodeJpegliWithLegacyApi(wasm, imageData, quality = 95) {
+function configureEncoder(wasm, encoderState, options = {}) {
+    if (
+        options?.inputMode === 'grayscale'
+        && typeof wasm?._jpegli_wasm_encoder_set_input_mode === 'function'
+    ) {
+        const configured = Number(wasm._jpegli_wasm_encoder_set_input_mode(encoderState, 1));
+        if (configured !== 0) {
+            throw new Error('Jpegli grayscale input-mode configuration failed');
+        }
+    }
+
+    const iccProfile = options?.iccProfile;
+    if (
+        iccProfile instanceof Uint8Array
+        && iccProfile.length > 0
+        && typeof wasm?._jpegli_wasm_encoder_set_icc_profile === 'function'
+    ) {
+        const iccPointer = wasm._malloc(iccProfile.length);
+        if (!iccPointer) {
+            throw new Error('Failed to allocate memory for ICC profile');
+        }
+        try {
+            wasm.HEAPU8.set(iccProfile, iccPointer);
+            const configured = Number(
+                wasm._jpegli_wasm_encoder_set_icc_profile(
+                    encoderState,
+                    iccPointer,
+                    iccProfile.length,
+                ),
+            );
+            if (configured !== 0) {
+                throw new Error('Jpegli ICC profile configuration failed');
+            }
+        } finally {
+            wasm._free(iccPointer);
+        }
+    }
+}
+
+async function encodeJpegliWithLegacyApi(wasm, imageData, quality = 95, options = {}) {
     const { width, height, data } = imageData;
     const numChannels = 4;
     const inputSize = width * height * numChannels;
@@ -86,6 +125,7 @@ async function encodeJpegliWithLegacyApi(wasm, imageData, quality = 95) {
     }
 
     try {
+        configureEncoder(wasm, encoderState, options);
         const success = wasm._jpegli_wasm_encode(
             encoderState,
             inputPointer,
@@ -120,6 +160,7 @@ async function encodeJpegliWithChunkedApi(wasm, imageData, quality = 95, options
     }
 
     try {
+        configureEncoder(wasm, encoderState, options);
         const started = wasm._jpegli_wasm_encoder_start(
             encoderState,
             inputPointer,
@@ -255,7 +296,7 @@ export async function encodeJpegli(imageData, quality = 95, options = {}) {
         jpegliTotalRows: Math.max(1, Number(imageData?.height) || 1),
         jpegliChunkRows: normalizeChunkRows(options?.chunkRows, imageData?.height || 1),
     });
-    const result = await encodeJpegliWithLegacyApi(wasm, imageData, quality);
+    const result = await encodeJpegliWithLegacyApi(wasm, imageData, quality, options);
     invokeProgressCallback(options?.onProgress, 100, {
         jpegliRowsEncoded: Math.max(1, Number(imageData?.height) || 1),
         jpegliTotalRows: Math.max(1, Number(imageData?.height) || 1),

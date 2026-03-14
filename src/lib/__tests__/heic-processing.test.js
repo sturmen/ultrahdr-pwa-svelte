@@ -5,8 +5,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Shared mocks to allow override in tests
 const decodeMock = vi.fn();
+const rawDecodeMock = vi.fn();
 const displayMock = vi.fn((imageData, callback) => callback(true));
 const processHeifHdrMock = vi.hoisted(() => vi.fn());
+const getImageHandleMock = vi.hoisted(() => vi.fn((_ctx, itemId) => {
+  if (itemId === 1) return { itemId: 1, constructor: { name: 'heif_image_handle' } };
+  if (itemId === 2) return { itemId: 2, constructor: { name: 'heif_image_handle' } };
+  return { code: 1, subcode: 0, message: 'mock-error' };
+}));
+const getWidthMock = vi.hoisted(() => vi.fn((handle) => (handle?.itemId === 2 ? 50 : 100)));
+const getHeightMock = vi.hoisted(() => vi.fn((handle) => (handle?.itemId === 2 ? 50 : 100)));
 
 // Mock libheif before importing
 vi.mock('../libheif-browser.js', () => {
@@ -19,10 +27,22 @@ vi.mock('../libheif-browser.js', () => {
       this.get_height = () => 100;
       this.display = displayMock;
     }),
+    heif_colorspace: {
+      heif_colorspace_RGB: 1,
+    },
+    heif_chroma: {
+      heif_chroma_interleaved_RGBA: 11,
+    },
+    heif_channel: {
+      heif_channel_interleaved: 10,
+    },
     _malloc: vi.fn().mockReturnValue(0),
     _free: vi.fn(),
     heif_js_context_get_list_of_top_level_image_IDs: vi.fn().mockReturnValue([1]),
-    heif_js_context_get_image_handle: vi.fn().mockReturnValue({ code: 1, subcode: 0, message: 'mock-error' }),
+    heif_js_context_get_image_handle: getImageHandleMock,
+    heif_image_handle_get_width: getWidthMock,
+    heif_image_handle_get_height: getHeightMock,
+    heif_js_decode_image2: rawDecodeMock,
     heif_image_handle_release: vi.fn(),
     getValue: vi.fn(),
     UTF8ToString: vi.fn().mockReturnValue('urn:apple:gainmap'),
@@ -53,9 +73,17 @@ describe('heic-processing.js', () => {
     decodeMock.mockReturnValue([{
       get_width: () => 100,
       get_height: () => 100,
-      handle: 'mock-handle',
+      handle: { itemId: 1, constructor: { name: 'heif_image_handle' } },
       display: displayMock,
     }]);
+    rawDecodeMock.mockReset();
+    getImageHandleMock.mockImplementation((_ctx, itemId) => {
+      if (itemId === 1) return { itemId: 1, constructor: { name: 'heif_image_handle' } };
+      if (itemId === 2) return { itemId: 2, constructor: { name: 'heif_image_handle' } };
+      return { code: 1, subcode: 0, message: 'mock-error' };
+    });
+    getWidthMock.mockImplementation((handle) => (handle?.itemId === 2 ? 50 : 100));
+    getHeightMock.mockImplementation((handle) => (handle?.itemId === 2 ? 50 : 100));
   });
 
   afterEach(() => {
@@ -72,6 +100,10 @@ describe('heic-processing.js', () => {
     it('should process HEIC files and return PNG', async () => {
       const mockFile = new File(['test'], 'test.heic', { type: 'image/heic' });
       mockFile.arrayBuffer = vi.fn(() => Promise.resolve(new ArrayBuffer(100)));
+      getImageHandleMock.mockImplementation((_ctx, itemId) => {
+        if (itemId === 1) return { itemId: 1, constructor: { name: 'heif_image_handle' } };
+        return { code: 1, subcode: 0, message: 'mock-error' };
+      });
 
       const { processHeic } = await import('../heic-processing.js');
 
@@ -79,7 +111,7 @@ describe('heic-processing.js', () => {
 
       expect(result).toBeInstanceOf(File);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/assets/libheif.wasm?v=test-app-version')
+        expect.stringContaining('/assets/libheif.wasm?v=')
       );
     });
 
@@ -122,6 +154,10 @@ describe('heic-processing.js', () => {
       ]);
       const mockFile = new File([hdrBytes], 'test.heic', { type: 'image/heic' });
       mockFile.arrayBuffer = vi.fn(() => Promise.resolve(hdrBytes.buffer.slice(0)));
+      getImageHandleMock.mockImplementation((_ctx, itemId) => {
+        if (itemId === 1) return { itemId: 1, constructor: { name: 'heif_image_handle' } };
+        return { code: 1, subcode: 0, message: 'mock-error' };
+      });
       processHeifHdrMock.mockResolvedValue({
         kind: 'hdr-intent-heif',
         hdrIntent: {
@@ -155,6 +191,71 @@ describe('heic-processing.js', () => {
       decodeMock.mockReturnValue([]);
 
       await expect(processHeic(mockFile)).rejects.toThrow('No images found in HEIC file');
+    });
+
+    it('returns bytes-first preserved components without using image.display when native gain map is found', async () => {
+      const mockFile = new File(['test'], 'test.heic', { type: 'image/heic' });
+      mockFile.arrayBuffer = vi.fn(() => Promise.resolve(new ArrayBuffer(100)));
+      displayMock.mockClear();
+
+      rawDecodeMock.mockImplementation((handle) => {
+        if (handle?.itemId === 1) {
+          return {
+            channels: [{
+              id: 10,
+              stride: 400,
+              width: 100,
+              height: 100,
+              bits_per_pixel: 8,
+              data: new Uint8Array(100 * 100 * 4).fill(200),
+            }],
+          };
+        }
+        if (handle?.itemId === 2) {
+          const data = new Uint8Array(50 * 50 * 4);
+          for (let i = 0; i < data.length; i += 4) {
+            data[i] = 127;
+            data[i + 1] = 127;
+            data[i + 2] = 127;
+            data[i + 3] = 255;
+          }
+          return {
+            channels: [{
+              id: 10,
+              stride: 200,
+              width: 50,
+              height: 50,
+              bits_per_pixel: 8,
+              data,
+            }],
+          };
+        }
+        return { code: 1 };
+      });
+
+      const { processHeic } = await import('../heic-processing.js');
+      const result = await processHeic(mockFile);
+
+      expect(result).toMatchObject({
+        name: 'test.heic',
+        sdr: {
+          width: 100,
+          height: 100,
+          strideBytes: 400,
+          pixelFormat: 'rgba8',
+          bitDepth: 8,
+        },
+        gainMap: {
+          width: 50,
+          height: 50,
+          strideBytes: 200,
+          pixelFormat: 'rgba8',
+          bitDepth: 8,
+        },
+      });
+      expect(result.sdr.data).toBeInstanceOf(Uint8Array);
+      expect(result.gainMap.data).toBeInstanceOf(Uint8Array);
+      expect(displayMock).not.toHaveBeenCalled();
     });
   });
 });

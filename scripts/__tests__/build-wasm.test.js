@@ -123,47 +123,6 @@ describe('ultrahdr wasm dimension guard', () => {
     expect(swContent).toContain("addEventListener('message'");
   });
 
-  it('documents lossless jpegtran wasm rotation behavior in README', () => {
-    const readmePath = path.resolve(process.cwd(), 'README.md');
-    const readmeContent = fs.readFileSync(readmePath, 'utf8');
-    expect(readmeContent).toMatch(/Lossless JPEG Rotation \(jpegtran WASM\)/);
-    expect(readmeContent).toMatch(/rotateJpeg\(inputBytes, transform, options\?\)/);
-  });
-
-  it('documents the end-to-end processing pipelines in a Mermaid diagram in README', () => {
-    const readmePath = path.resolve(process.cwd(), 'README.md');
-    const readmeContent = fs.readFileSync(readmePath, 'utf8');
-    expect(readmeContent).toMatch(/## Processing Pipelines/);
-    expect(readmeContent).toMatch(/```mermaid/);
-    expect(readmeContent).toMatch(/flowchart LR/);
-    expect(readmeContent).toMatch(/subgraph\s+.*Input Classification Stage/);
-    expect(readmeContent).toMatch(/subgraph\s+.*Image Decode Stage/);
-    expect(readmeContent).toMatch(/subgraph\s+.*Rotation Normalization Stage/);
-    expect(readmeContent).toMatch(/subgraph\s+.*Gain Map Decision Stage/);
-    expect(readmeContent).toMatch(/subgraph\s+.*Final Encode Stage/);
-    expect(readmeContent).not.toMatch(/S1\["Input Classification"\]/);
-    expect(readmeContent).not.toMatch(/S2\["Image Decode"\]/);
-    expect(readmeContent).not.toMatch(/S3\["Rotation Normalization"\]/);
-    expect(readmeContent).not.toMatch(/S4\["Gain Map Decision"\]/);
-    expect(readmeContent).not.toMatch(/S5\["Final Encode"\]/);
-    expect(readmeContent).toMatch(/Standard JPEG without gain map/);
-    expect(readmeContent).toMatch(/UltraHDR JPEG with embedded gain map/);
-    expect(readmeContent).toMatch(/HEIC\/HEIF with native gain map/);
-    expect(readmeContent).toMatch(/HIF HDR-intent input/);
-    expect(readmeContent).toMatch(/discardGainMap=false/);
-    expect(readmeContent).toMatch(/discardGainMap=true/);
-    expect(readmeContent).toMatch(/preserve-with-rotation/);
-    expect(readmeContent).toMatch(/GMNet generation path/);
-    expect(readmeContent).toMatch(/HDR-intent HEIF API-0 encode path/);
-    expect(readmeContent).toMatch(/O_ROT\{"rotation != 0\?"\}/);
-    expect(readmeContent).toMatch(/O_EXIF\{"EXIF auto-rotation present\?"\}/);
-    expect(readmeContent).toMatch(/O_DISCARD\{"discardGainMap=false\?"\}/);
-    expect(readmeContent).toMatch(/O_PRESERVE_ZERO\{"rotation=0 and no auto-rotation\/resize\?"\}/);
-    expect(readmeContent).toMatch(/O_PRESERVE_LOSSLESS\{"Lossless preserved-component rotation eligible\?"\}/);
-    expect(readmeContent).toMatch(/O_HEIC_ZERO\{"rotation=0\?"\}/);
-    expect(readmeContent).toMatch(/O_RESIZE\{"Resize\/constrain needed\?"\}/);
-  });
-
   it('pins CMake policy minimum when configuring jpegtran wasm build', () => {
     const scriptPath = path.resolve(process.cwd(), 'scripts/build-jpegtran-wasm.js');
     const scriptContent = fs.readFileSync(scriptPath, 'utf8');

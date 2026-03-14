@@ -4,11 +4,15 @@
  */
 
 // Helper for canvas creation
-export function createCanvasWithContext(width, height, errorMessage = 'Canvas not available') {
+export function createCanvasWithContext(width, height, errorMessage = 'Canvas not available', options = {}) {
+    const contextOptions = { willReadFrequently: true };
+    if (typeof options.colorSpace === 'string' && options.colorSpace) {
+        contextOptions.colorSpace = options.colorSpace;
+    }
     if (typeof document === 'undefined') {
         if (typeof OffscreenCanvas !== 'undefined') {
             const canvas = new OffscreenCanvas(width, height);
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d', contextOptions);
             if (!ctx) throw new Error(errorMessage);
             return { canvas, ctx };
         }
@@ -17,16 +21,20 @@ export function createCanvasWithContext(width, height, errorMessage = 'Canvas no
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const ctx = canvas.getContext('2d', contextOptions);
     if (!ctx) {
         throw new Error(errorMessage);
     }
     return { canvas, ctx };
 }
 
-export async function canvasToBlob(canvas, type = 'image/jpeg', quality = 0.95) {
+export async function canvasToBlob(canvas, type = 'image/jpeg', quality = 0.95, options = {}) {
+    const blobOptions = { type, quality };
+    if (typeof options.colorSpace === 'string' && options.colorSpace) {
+        blobOptions.colorSpace = options.colorSpace;
+    }
     if (typeof canvas.convertToBlob === 'function') {
-        return canvas.convertToBlob({ type, quality });
+        return canvas.convertToBlob(blobOptions);
     }
     if (typeof canvas.toBlob === 'function') {
         return new Promise((resolve, reject) => {
@@ -156,9 +164,16 @@ export async function jpegBytesToImageData(jpegBytes, config = {}) {
 }
 
 export async function imageDataToJpegBlob(imageData, quality = 0.95) {
-    const { canvas, ctx } = createCanvasWithContext(imageData.width, imageData.height, 'Canvas not available for JPEG encoding');
+    const colorSpace = typeof imageData?.colorSpace === 'string' ? imageData.colorSpace : undefined;
+    const canvasOptions = colorSpace ? { colorSpace } : {};
+    const { canvas, ctx } = createCanvasWithContext(
+        imageData.width,
+        imageData.height,
+        'Canvas not available for JPEG encoding',
+        canvasOptions
+    );
     ctx.putImageData(imageData, 0, 0);
-    return canvasToBlob(canvas, 'image/jpeg', quality);
+    return canvasToBlob(canvas, 'image/jpeg', quality, canvasOptions);
 }
 
 export async function blobToUint8Array(blob) {

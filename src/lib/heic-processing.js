@@ -142,6 +142,18 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
         console.log('[HEIC] Gain map extraction skipped (discardGainMap=true)');
     }
 
+    if (gainMapImageData) {
+        const sdrImageData = _decodeHandleToImageData(heif, primaryImage.handle);
+        console.log('[HEIC] Returning SDR + Gain Map (gain map will be preserved through pipeline)');
+        return {
+            sdr: sdrImageData,
+            gainMap: gainMapImageData,
+            gainMapMetadata,
+            gainMapHeadroom,
+            name: file.name
+        };
+    }
+
     // Standard SDR Decoding (always decode the primary/first image)
     const { canvas, ctx } = createCanvasWithContext(
         primaryW,
@@ -160,17 +172,6 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
         });
     });
 
-    if (gainMapImageData) {
-        console.log('[HEIC] Returning SDR + Gain Map (gain map will be preserved through pipeline)');
-        return {
-            sdr: imageData,
-            gainMap: gainMapImageData,
-            gainMapMetadata,
-            gainMapHeadroom,
-            name: file.name
-        };
-    }
-
     if (isSupportedRawHdrHeif(sourceBytes)) {
         console.log('[HEIC] No native gain map found and HDR metadata detected. Routing through raw HDR intent pipeline.');
         return processHeifHdr(file);
@@ -185,10 +186,10 @@ export async function processHeic(file, options = { quality: 0.95, discardGainMa
 }
 
 /**
- * Check if an ImageData gain map is monochrome (R ≈ G ≈ B).
+ * Check if an RGBA gain map candidate is monochrome (R ≈ G ≈ B).
  * Apple gain maps are 8-bit grayscale. If the image has significant
  * color variance, it may be a stereoscopic pair or other non-gain-map image.
- * @param {ImageData} imageData
+ * @param {{data: Uint8Array, width: number, height: number}} imageData
  * @param {number} tolerance - Max per-pixel channel difference allowed
  * @returns {boolean}
  */
@@ -232,26 +233,32 @@ function _isHeifHandle(obj) {
     return !!obj && obj.constructor && obj.constructor.name === 'heif_image_handle';
 }
 
-async function _decodeHandleToImageData(heif, handle) {
-    const w = heif.heif_image_handle_get_width(handle);
-    const h = heif.heif_image_handle_get_height(handle);
-    const heifImage = new heif.HeifImage(handle);
-
-    const { ctx } = createCanvasWithContext(
-        w,
-        h,
-        'Canvas not available for HEIC gain map decoding'
+function _decodeHandleToImageData(heif, handle) {
+    const decoded = heif.heif_js_decode_image2(
+        handle,
+        heif.heif_colorspace.heif_colorspace_RGB,
+        heif.heif_chroma.heif_chroma_interleaved_RGBA
     );
-    const imageData = ctx.createImageData(w, h);
+    if (!decoded || decoded.code) {
+        throw new Error('HEIF image decoding error');
+    }
 
-    await new Promise((resolve, reject) => {
-        heifImage.display(imageData, (displayData) => {
-            if (!displayData) reject(new Error('HEIF image decoding error'));
-            else resolve(displayData);
-        });
-    });
+    const interleavedChannel = decoded.channels?.find((channel) => channel.id === heif.heif_channel.heif_channel_interleaved)
+        || decoded.channels?.[0];
+    if (!interleavedChannel?.data) {
+        throw new Error('HEIF image decoding did not expose interleaved pixels');
+    }
 
-    return imageData;
+    const width = interleavedChannel.width || heif.heif_image_handle_get_width(handle);
+    const height = interleavedChannel.height || heif.heif_image_handle_get_height(handle);
+    return {
+        data: new Uint8Array(interleavedChannel.data),
+        width,
+        height,
+        strideBytes: interleavedChannel.stride || (width * 4),
+        pixelFormat: 'rgba8',
+        bitDepth: Number(interleavedChannel.bits_per_pixel) || 8,
+    };
 }
 
 async function _extractIphoneHiddenGainMapItem(heif, decoder, topLevelIds, primaryW, primaryH) {
