@@ -24,56 +24,132 @@ This is an attempt at a cross-platform way to enhance SDR images into the widely
 
 Gain-map generation is handled by [GMNet](https://github.com/qtlark/GMNet).
 
-## Lossless JPEG Rotation (jpegtran WASM)
+## Processing Pipelines
 
-JPEG preservation paths now use coefficient-domain transforms (jpegtran semantics) in-browser through a WebAssembly wrapper around `libjpeg-turbo`.
+```mermaid
+flowchart LR
+    O_ROT{"rotation != 0?"}
+    O_EXIF{"EXIF auto-rotation present?"}
+    O_DISCARD{"discardGainMap=false?"}
+    O_PRESERVE_ZERO{"rotation=0 and no auto-rotation/resize?"}
+    O_PRESERVE_LOSSLESS{"Lossless preserved-component rotation eligible?"}
+    O_HEIC_ZERO{"rotation=0?"}
+    O_RESIZE{"Resize/constrain needed?"}
 
-- API: `rotateJpeg(inputBytes, transform, options?)` from `src/lib/jpegtran-rotate.js`
-- Supported transforms: `"90" | "180" | "270" | "flipH" | "flipV" | "transpose" | "transverse"`
-- Inputs: `Uint8Array | ArrayBuffer`
-- Output: `Promise<Uint8Array>`
+    subgraph C1["Input Classification Stage"]
+        direction TB
+        A["Input file"] --> B{"Effective input class"}
+        B --> J1["Standard JPEG without gain map"]
+        B --> J2["UltraHDR JPEG with embedded gain map"]
+        B --> H1["HEIC/HEIF with native gain map"]
+        B --> H2["HEIC/HEIF raw HDR intent without native gain map"]
+        B --> H3["HEIC/HEIF without gain map"]
+        B --> H4["HIF HDR-intent input"]
+        B --> T1["TIFF"]
+        B --> O1["Other raster inputs (PNG/WebP/etc.)"]
+    end
 
-```js
-import { rotateJpeg } from './src/lib/jpegtran-rotate.js';
+    subgraph C2["Image Decode Stage"]
+        direction TB
+        D1["Decode SDR pixels"]
+        D2["Convert TIFF to PNG-like SDR decode"]
+        D3["Convert HEIC/HEIF SDR image to PNG-like SDR decode"]
+        D4["preserved: use decoded SDR + native gain map components"]
+        D5["hdr-intent: decode raw HDR intent to linear RGBAF16"]
+        D6["hdr-intent: decode HIF HDR intent"]
+        D7["Decode preserved components, align/resize, rotate, re-encode"]
+        D8["Extract base JPEG and force generated path"]
+    end
 
-const rotated = await rotateJpeg(jpegBytes, '90', { perfect: false, trim: false });
+    subgraph C3["Rotation Normalization Stage"]
+        direction TB
+        R3["Attempt lossless JPEG rotation"]
+        R4["Lossless EXIF normalization"]
+        R5["Lossless JPEG SDR bypass"]
+        R6["Decode, rotate, re-encode SDR"]
+        R9["preserve-with-rotation"]
+        R11["Rotate preserved base + gain map JPEGs losslessly, then rebuild"]
+        R13["Rotate preserved components before re-encoding"]
+    end
+
+    subgraph C4["Gain Map Decision Stage"]
+        direction TB
+        G1["GMNet generation path"]
+        G2["generated path"]
+        G4["Constrain SDR image before encoding"]
+        G5["Keep decoded dimensions"]
+        G6["HDR-intent HEIF API-0 encode path"]
+    end
+
+    subgraph C5["Final Encode Stage"]
+        direction TB
+        F1["Encode SDR base + generated gain map"]
+        F2["preserved: rebuild UltraHDR from compressed base + gain map"]
+        F3["Rebuild UltraHDR with preserved source metadata"]
+        Z["Final UltraHDR JPEG output"]
+    end
+
+    J1 --> O_ROT
+    O_ROT -->|"no"| O_EXIF
+    O_ROT -->|"yes"| R3
+    R3 -->|"eligible"| R5
+    R3 -->|"fallback"| R6
+    O_EXIF -->|"yes"| R4
+    O_EXIF -->|"no"| R5
+    R4 -->|"success"| R5
+    R4 -->|"fallback"| R6
+    R5 --> G1
+    R6 --> G1
+
+    J2 --> O_DISCARD
+    O_DISCARD -->|"no"| D8
+    O_DISCARD -->|"yes"| O_PRESERVE_ZERO
+    O_PRESERVE_ZERO -->|"yes"| F2
+    O_PRESERVE_ZERO -->|"no"| R9
+    R9 --> O_PRESERVE_LOSSLESS
+    O_PRESERVE_LOSSLESS -->|"yes"| R11
+    O_PRESERVE_LOSSLESS -->|"no"| D7
+
+    H1 --> O_DISCARD
+    O_DISCARD -->|"yes"| D4
+    D4 --> O_HEIC_ZERO
+    O_HEIC_ZERO -->|"yes"| F3
+    O_HEIC_ZERO -->|"no"| R13
+
+    H2 --> D5
+    D5 --> G6
+
+    H3 --> D3
+    D3 --> G1
+
+    H4 --> D6
+    D6 --> G6
+
+    T1 --> D2
+    D2 --> G1
+
+    O1 --> D1
+    D1 --> G1
+
+    D8 --> G2
+    G1 --> G2
+    G2 --> O_RESIZE
+    O_RESIZE -->|"yes"| G4
+    O_RESIZE -->|"no"| G5
+    G4 --> F1
+    G5 --> F1
+    R5 --> F1
+
+    F1 --> Z
+    F2 --> Z
+    R11 --> Z
+    D7 --> Z
+    F3 --> Z
+    R13 --> Z
+    G6 --> Z
 ```
 
-Option behavior:
-
-| Options | Behavior |
-| --- | --- |
-| default (`trim=false`, `perfect=false`) | Reversible jpegtran-compatible transform without trimming edge MCUs. |
-| `trim=true` | Trims non-transformable edge blocks (jpegtran `-trim`). |
-| `perfect=true` | Fails if transform is not MCU-perfect, throws `JpegTransformError` with code `JPEG_TRANSFORM_IMPERFECT`. |
-| `trim=true` + `perfect=true` | Invalid combination, throws `JpegTransformError` with code `JPEG_TRANSFORM_INVALID_OPTIONS`. |
-
-Processing scope:
-
-- JPEG preservation paths: use lossless bitstream rotation when eligible.
-- Other input formats (HEIC/TIFF/PNG/etc.): continue using the existing canvas-based path.
-- If lossless eligibility fails, processing falls back to decode/rotate/re-encode.
-
-### Reproducible WASM Build
-
-Prerequisites:
-
-- `emcc`, `emcmake`, `emmake` available in `PATH` (via Emscripten SDK).
-- Repo submodules initialized.
-
-Build steps:
-
-1. `git submodule update --init --recursive`
-2. `npm install`
-3. `npm run build:wasm`
-
-Generated artifacts (`public/assets/`):
-
-- `ultrahdr_wasm.js`, `ultrahdr_wasm.wasm`
-- `jpegli_wasm.js`, `jpegli_wasm.wasm`
-- `jpegtran_wasm.js`, `jpegtran_wasm.wasm`
-
-Runtime loading is local (no remote network dependency) and asset versioning is tracked in `.wasm-version.json`.
+`quality`, `stripExif`, and `maxContentBoost` primarily affect encoding quality and metadata, not the top-level route through `generated`, `preserved`, or `hdr-intent`. Preserved gain maps keep their source metadata unless `discardGainMap=true` forces regeneration. The `preserve-with-rotation` branch covers preserved inputs that still need auto-rotation, explicit rotation, or preserved-component resize/alignment work before the final rebuild. Every branch ends in an UltraHDR JPEG output.
 
 ## Testing
 
@@ -93,6 +169,7 @@ Runtime loading is local (no remote network dependency) and asset versioning is 
 - ISO 21496-1 Metadata Encoding
 - Convert HEIC/HEIF (iPhone, Samsung Galaxy) to UltraHDR JPEG using the original gain map
 - Convert older UltraHDR JPEGs (Hasselblad X2D II 100C, Sigma BF) to ISO 21496-1 using the camera's gain map embedded in the image
+- Convert HDR PQ input (.HIF format from Canon cameras) to UltraHDR JPEG with tone mapping to SDR.
 
 ## Special thanks
 
