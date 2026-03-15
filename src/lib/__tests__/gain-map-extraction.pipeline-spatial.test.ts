@@ -1,0 +1,14 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { describe, expect, it } from 'vitest';
+import { runHeicFixtureProbe } from './gain-map-real-fixture.test-utils';
+
+describe('Gain Map Extraction (Real Files) - Pipeline Preservation Spatial', () => {
+  it('preserves the spatial HEIC extraction result in the shape expected by the pipeline', async () => {
+    const probe = await runHeicFixtureProbe('test_hdr_heif_spatial_gainmap.HEIC', false);
+
+    expect(probe.kind).toBe('preserved');
+    expect(probe.isMonochrome).toBe(true);
+  }, 30000);
+});

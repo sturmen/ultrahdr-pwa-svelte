@@ -187,7 +187,11 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
     expect(screen.getByTestId('photo-viewer-modal')).toBeInTheDocument();
-    expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+    const viewerImage = screen.getByTestId('photo-viewer-image');
+    expect(viewerImage).toHaveAttribute('alt', 'photo-0.jpg');
+    const computedImageStyle = window.getComputedStyle(viewerImage);
+    expect(computedImageStyle.maxWidth).toBe('calc(100vw - 1.5rem)');
+    expect(computedImageStyle.maxHeight).toBe('calc(100vh - 1.5rem)');
     expect(screen.getByTestId('photo-viewer-close')).toHaveAttribute('data-visible', 'true');
 
     await fireEvent.click(screen.getByTestId('photo-viewer-close'));

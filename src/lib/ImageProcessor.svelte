@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import DropZone from "./DropZone.svelte";
   import { getCapabilities } from "./capabilities.js";
@@ -13,7 +13,7 @@
     buildShareFiles,
     getSelectedResults,
     releaseResultUrls,
-  } from "./result-management.js";
+  } from "./result-management";
   import {
     clearQueueState,
     loadQueueState,
@@ -21,10 +21,12 @@
   } from "./share-store.js";
   import {
     QUEUE_ITEM_STATES,
+    selectExportableQueueIds,
+    selectWorkflowCards,
     WORKFLOW_EVENTS,
     WORKFLOW_STATES,
     transitionWorkflow,
-  } from "./workflow-state.js";
+  } from "./workflow-state";
   import { clearQueueBadge, setQueueBadge } from "./badge.js";
   import {
     acquireProcessingLock,
@@ -74,7 +76,7 @@
   let error = null;
   let notice = null;
   let noticeTimer = null;
-  let selectedIndices = new Set();
+  let selectedQueueIds = new Set();
   let latestPipelineEvent = null;
   let activeAbortController = null;
   let processingRunId = 0;
@@ -129,6 +131,8 @@
   let mobileInferenceWarningOpen = false;
   let mobileInferenceChallengeValue = "";
   let mobileInferenceAcknowledgedForSession = false;
+  let workflowCards = [];
+  let exportableQueueIds = new Set();
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
@@ -208,6 +212,22 @@
       item.status === QUEUE_ITEM_STATES.COMPLETED ||
       item.status === QUEUE_ITEM_STATES.STALE,
   ).length;
+  $: workflowCards = selectWorkflowCards({
+    mode: "idle",
+    activeQueueId: currentQueueId,
+    pendingIntent: null,
+    queue,
+    nextQueueId,
+  });
+  $: exportableQueueIds = new Set(
+    selectExportableQueueIds({
+      mode: "idle",
+      activeQueueId: currentQueueId,
+      pendingIntent: null,
+      queue,
+      nextQueueId,
+    }),
+  );
   $: canPauseQueue =
     workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
     workflowState === WORKFLOW_STATES.PROCESSING_PAUSING;
@@ -223,9 +243,9 @@
       ? "resume"
       : "hidden";
   $: selectionToggleState =
-    results.length === 0 || selectedIndices.size === 0
+    exportableQueueIds.size === 0 || selectedQueueIds.size === 0
       ? "none"
-      : selectedIndices.size === results.length
+      : selectedQueueIds.size === exportableQueueIds.size
         ? "all"
         : "partial";
   $: hasShareCapability =
@@ -255,11 +275,11 @@
     viewerCornerHover = false;
     viewerBounceDirection = "none";
   }
-  $: if (viewerOpen && results.length === 0) {
+  $: if (viewerOpen && workflowCards.length === 0) {
     closeViewer();
   }
-  $: if (viewerOpen && viewerIndex >= results.length && results.length > 0) {
-    viewerIndex = results.length - 1;
+  $: if (viewerOpen && viewerIndex >= workflowCards.length && workflowCards.length > 0) {
+    viewerIndex = workflowCards.length - 1;
   }
   $: if (!keepScreenAwake) {
     void releaseWakeLock();
@@ -544,6 +564,9 @@
           queueId,
           processingPath,
         );
+        updateQueueItem(queueId, {
+          processingPath,
+        });
       }
       if (backendRestartAwaitingPathDecision) {
         backendRestartAwaitingPathDecision = false;
@@ -559,6 +582,9 @@
           queueId,
           "generated",
         );
+        updateQueueItem(queueId, {
+          processingPath: "generated",
+        });
       }
       if (backendRestartAwaitingPathDecision) {
         backendRestartAwaitingPathDecision = false;
@@ -635,6 +661,28 @@
       totalFiles > 0
         ? `File ${fileIndex + 1} of ${totalFiles}`
         : "";
+
+    if (queueId !== null && queueId !== undefined) {
+      if (phase === "stage-progress") {
+        updateQueueItem(queueId, {
+          status: QUEUE_ITEM_STATES.PROCESSING,
+          progress: {
+            stage: String(event?.stage || "pipeline"),
+            label: String(event?.note || pipelineStatusLabel || "Processing"),
+            percent: Math.round(clampPercent(event?.stageProgress)),
+            visible: true,
+          },
+        });
+      } else if (
+        phase === "pipeline-complete" ||
+        phase === "pipeline-error" ||
+        phase === "stage-error"
+      ) {
+        updateQueueItem(queueId, {
+          progress: null,
+        });
+      }
+    }
   }
 
   function setNotice(message) {
@@ -719,7 +767,7 @@
   }
 
   function openViewer(index) {
-    if (!Number.isInteger(index) || !results[index]) return;
+    if (!Number.isInteger(index) || !workflowCards[index]) return;
     viewerIndex = index;
     viewerOpen = true;
     viewerCornerHover = false;
@@ -746,7 +794,7 @@
 
   function showNextInViewer() {
     if (!viewerOpen) return;
-    if (viewerIndex >= results.length - 1) {
+    if (viewerIndex >= workflowCards.length - 1) {
       triggerViewerBounce("right");
       return;
     }
@@ -846,6 +894,10 @@
       settingsVersion: settingsVersion,
       error: null,
       processingPath: "unknown",
+      inputPreviewUrl: URL.createObjectURL(file),
+      outputPreviewUrl: null,
+      result: null,
+      progress: null,
     }));
   }
 
@@ -950,10 +1002,11 @@
     appliedRotation,
     processingPath = "unknown",
   ) {
+    const outputUrl = URL.createObjectURL(blob);
     const resultRecord = {
       originalName: queueItem.name,
       blob,
-      url: URL.createObjectURL(blob),
+      url: outputUrl,
       size: blob.size,
       index: queueItem.id,
       queueId: queueItem.id,
@@ -965,19 +1018,27 @@
     const existingIndex = results.findIndex(
       (result) => result.queueId === queueItem.id,
     );
-    const nextSelection = new Set(selectedIndices);
+    const nextSelection = new Set(selectedQueueIds);
     if (existingIndex >= 0) {
       URL.revokeObjectURL(results[existingIndex].url);
       results = results.map((result, index) =>
         index === existingIndex ? resultRecord : result,
       );
-      nextSelection.add(existingIndex);
+      nextSelection.add(queueItem.id);
     } else {
-      const newIndex = results.length;
       results = [...results, resultRecord];
-      nextSelection.add(newIndex);
+      nextSelection.add(queueItem.id);
     }
-    selectedIndices = nextSelection;
+    selectedQueueIds = nextSelection;
+    updateQueueItem(queueItem.id, {
+      outputPreviewUrl: outputUrl,
+      result: {
+        blob,
+        outputUrl,
+        size: blob.size,
+      },
+      progress: null,
+    });
   }
 
   function startQueue() {
@@ -1331,9 +1392,7 @@
 
   function selectedStaleQueueIds() {
     const ids = new Set();
-    selectedIndices.forEach((index) => {
-      const queueId = results[index]?.queueId;
-      if (queueId === undefined || queueId === null) return;
+    selectedQueueIds.forEach((queueId) => {
       if (getQueueItemStatus(queueId) === QUEUE_ITEM_STATES.STALE) {
         ids.add(queueId);
       }
@@ -1500,23 +1559,26 @@
     await gateAndEnqueueFiles(event?.detail);
   }
 
-  function toggleSelection(index) {
-    if (selectedIndices.has(index)) {
-      selectedIndices.delete(index);
-    } else {
-      selectedIndices.add(index);
+  function toggleSelection(queueId) {
+    if (!exportableQueueIds.has(queueId)) {
+      return;
     }
-    selectedIndices = selectedIndices;
+    if (selectedQueueIds.has(queueId)) {
+      selectedQueueIds.delete(queueId);
+    } else {
+      selectedQueueIds.add(queueId);
+    }
+    selectedQueueIds = selectedQueueIds;
   }
 
   function selectAll() {
-    results.forEach((_, i) => selectedIndices.add(i));
-    selectedIndices = selectedIndices;
+    exportableQueueIds.forEach((queueId) => selectedQueueIds.add(queueId));
+    selectedQueueIds = selectedQueueIds;
   }
 
   function deselectAll() {
-    selectedIndices.clear();
-    selectedIndices = selectedIndices;
+    selectedQueueIds.clear();
+    selectedQueueIds = selectedQueueIds;
   }
 
   function download(result) {
@@ -1527,7 +1589,7 @@
   }
 
   async function downloadSelected(asZip = false) {
-    const selectedResults = getSelectedResults(results, selectedIndices);
+    const selectedResults = getSelectedResults(results, selectedQueueIds);
     if (selectedResults.length === 0) return;
 
     if (selectedResults.length === 1) {
@@ -1562,11 +1624,11 @@
   }
 
   async function shareSelected() {
-    const selectedResults = getSelectedResults(results, selectedIndices);
+    const selectedResults = getSelectedResults(results, selectedQueueIds);
     if (selectedResults.length === 0) return;
 
     try {
-      const filesToShare = await buildShareFiles(results, selectedIndices);
+      const filesToShare = await buildShareFiles(results, selectedQueueIds);
 
       if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
         await navigator.share({
@@ -1619,7 +1681,7 @@
     releaseResultUrls(results);
     results = [];
     closeViewer();
-    selectedIndices = new Set();
+    selectedQueueIds = new Set();
     latestPipelineEvent = null;
     processingPathByQueueId = new Map();
     resetProgressUi();
@@ -1672,35 +1734,40 @@
     dispatch("reset");
   }
 
-  function removeImage(index) {
-    const removed = results[index];
+  function removeImage(queueId) {
+    const removed = results.find((result) => result.queueId === queueId);
+    const cardIndex = workflowCards.findIndex((card) => card.queueId === queueId);
     if (removed?.url) URL.revokeObjectURL(removed.url);
 
     if (viewerOpen) {
-      if (results.length <= 1) {
+      if (workflowCards.length <= 1) {
         closeViewer();
-      } else if (index === viewerIndex) {
-        viewerIndex = Math.min(viewerIndex, results.length - 2);
-      } else if (index < viewerIndex) {
+      } else if (cardIndex === viewerIndex) {
+        viewerIndex = Math.min(viewerIndex, workflowCards.length - 2);
+      } else if (cardIndex >= 0 && cardIndex < viewerIndex) {
         viewerIndex -= 1;
       }
     }
 
-    const removedQueueId = removed?.queueId;
-    if (removedQueueId !== undefined) {
-      queue = queue.filter((item) => item.id !== removedQueueId);
+    if (queueId !== undefined) {
+      const queueItem = queue.find((item) => item.id === queueId);
+      if (queueItem?.inputPreviewUrl) {
+        URL.revokeObjectURL(queueItem.inputPreviewUrl);
+      }
+      if (queueItem?.outputPreviewUrl) {
+        URL.revokeObjectURL(queueItem.outputPreviewUrl);
+      }
+      queue = queue.filter((item) => item.id !== queueId);
       files = queue.map((item) => item.file);
       schedulePersistQueueState();
     }
 
-    results = results.filter((_, i) => i !== index);
+    results = results.filter((result) => result.queueId !== queueId);
 
-    const newSelection = new Set();
-    selectedIndices.forEach((i) => {
-      if (i < index) newSelection.add(i);
-      else if (i > index) newSelection.add(i - 1);
-    });
-    selectedIndices = newSelection;
+    if (queueId !== undefined && queueId !== null) {
+      selectedQueueIds.delete(queueId);
+      selectedQueueIds = selectedQueueIds;
+    }
 
     if (queue.length === 0) {
       void reset(false);
@@ -2296,23 +2363,10 @@
       {#if showResultsPanel}
         <div
           class="results-container"
-          class:loading={processing}
+          data-testid="results-container"
           id="panel-results"
         >
-          {#if processing && results.length === 0}
-            <div class="loading-overlay">
-              <div class="spinner"></div>
-              <p>
-                Processing... {Math.round(pipelineOverallProgress)}%
-                {#if latestPipelineEvent}
-                  ({pipelineStatusLabel}, {Math.round(pipelineStageProgress)}%
-                  stage, {formatMs(latestPipelineEvent.elapsedMs)})
-                {/if}
-              </p>
-            </div>
-          {/if}
-
-          {#if results.length > 0}
+          {#if workflowCards.length > 0}
             <div class="results">
               <div class="results-header">
                 <div class="selection-controls compact">
@@ -2338,7 +2392,7 @@
                         ? "share-out-cta"
                         : undefined}
                     >
-                      Export ({selectedIndices.size})
+                      Export ({selectedQueueIds.size})
                     </button>
                   {/if}
                 </div>
@@ -2380,45 +2434,50 @@
               {/if}
 
               <div class="grid" data-testid="results-grid">
-                {#each results as result, i}
+                {#each workflowCards as card, i}
                   <div
                     class="result-card card"
-                    class:selected={selectedIndices.has(i)}
-                    class:stale={getQueueItemStatus(result.queueId) ===
-                      QUEUE_ITEM_STATES.STALE}
-                    class:failed={getQueueItemStatus(result.queueId) ===
-                      QUEUE_ITEM_STATES.FAILED}
+                    data-testid={`workflow-card-${i}`}
+                    class:selected={selectedQueueIds.has(card.queueId)}
+                    class:pending={card.status === QUEUE_ITEM_STATES.QUEUED ||
+                      card.status === QUEUE_ITEM_STATES.PROCESSING}
+                    class:stale={card.status === QUEUE_ITEM_STATES.STALE}
+                    class:failed={card.status === QUEUE_ITEM_STATES.FAILED}
                   >
-                    <div class="selection-indicator">
-                      <button
-                        type="button"
-                        class="selection-toggle"
-                        on:click|stopPropagation={() => toggleSelection(i)}
-                        aria-label={`Toggle selection for ${result.originalName}`}
-                        data-testid={`result-select-${i}`}
-                      >
-                        {#if selectedIndices.has(i)}
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            class="w-6 h-6"
-                          >
-                            <path
-                              fill-rule="evenodd"
-                              d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
-                              clip-rule="evenodd"
-                            />
-                          </svg>
-                        {:else}
-                          <div class="circle"></div>
-                        {/if}
-                      </button>
-                    </div>
+                    {#if card.isSelectable}
+                      <div class="selection-indicator">
+                        <button
+                          type="button"
+                          class="selection-toggle"
+                          on:click|stopPropagation={() => toggleSelection(card.queueId)}
+                          aria-label={`Toggle selection for ${card.filename}`}
+                          data-testid={card.hasOutput
+                            ? `result-select-${i}`
+                            : `workflow-card-select-${i}`}
+                        >
+                          {#if selectedQueueIds.has(card.queueId)}
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                              class="w-6 h-6"
+                            >
+                              <path
+                                fill-rule="evenodd"
+                                d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
+                                clip-rule="evenodd"
+                              />
+                            </svg>
+                          {:else}
+                            <div class="circle"></div>
+                          {/if}
+                        </button>
+                      </div>
+                    {/if}
 
                     <button
                       class="remove-btn"
-                      on:click|stopPropagation={() => removeImage(i)}
+                      on:click|stopPropagation={() => removeImage(card.queueId)}
                       title="Remove image"
                     >
                       <svg
@@ -2441,19 +2500,40 @@
                         class="preview-btn"
                         on:click={() => openViewer(i)}
                         data-testid={`result-thumbnail-${i}`}
-                        aria-label={`Open ${result.originalName}`}
+                        aria-label={`Open ${card.filename}`}
                       >
-                        <img src={result.url} alt={result.originalName} />
+                        <img src={card.previewUrl} alt={card.previewAlt} />
+                        {#if card.overlayVisible}
+                          <div
+                            class="card-progress-overlay"
+                            data-testid={`workflow-card-progress-${i}`}
+                          >
+                            <div
+                              class="card-progress-ring"
+                              role="progressbar"
+                              aria-label={`${card.filename} progress`}
+                              aria-valuemin="0"
+                              aria-valuemax="100"
+                              aria-valuenow={card.progressPercent || 0}
+                              style={`--progress:${card.progressPercent || 0};`}
+                            ></div>
+                          </div>
+                        {/if}
                       </button>
                     </div>
                     <div class="info">
-                      <p class="filename">{result.originalName}</p>
-                      <p class="size">
-                        {(result.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
+                      <p class="filename">{card.filename}</p>
+                      {#if card.hasOutput}
+                        <p class="size">
+                          {((results.find((result) => result.queueId === card.queueId)?.size || 0) / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                      {/if}
                       <p class="status-tag">
-                        {getQueueItemStatus(result.queueId)}
+                        {card.statusLabel}
                       </p>
+                      {#if card.error}
+                        <p class="size">{card.error}</p>
+                      {/if}
                     </div>
                   </div>
                 {/each}
@@ -2475,7 +2555,7 @@
     </section>
   </div>
 
-  {#if !isDesktopLayout && activeMobileTab === "results" && results.length > 0}
+  {#if !isDesktopLayout && activeMobileTab === "results" && workflowCards.length > 0}
     <div class="mobile-action-bar" data-testid="mobile-action-bar">
       <button
         class="secondary"
@@ -2489,7 +2569,7 @@
         on:click={openExportSheet}
         data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
       >
-        Export ({selectedIndices.size})
+        Export ({selectedQueueIds.size})
       </button>
     </div>
   {/if}
@@ -2518,7 +2598,7 @@
     </div>
   {/if}
 
-  {#if viewerOpen && results[viewerIndex]}
+  {#if viewerOpen && workflowCards[viewerIndex]}
     <div
       class="photo-viewer-modal"
       data-testid="photo-viewer-modal"
@@ -2535,8 +2615,9 @@
         <img
           class="photo-viewer-image"
           data-testid="photo-viewer-image"
-          src={results[viewerIndex].url}
-          alt={results[viewerIndex].originalName}
+          src={workflowCards[viewerIndex].previewUrl}
+          alt={workflowCards[viewerIndex].previewAlt}
+          style="max-width: calc(100vw - 1.5rem); max-height: calc(100vh - 1.5rem);"
         />
       </div>
       <button
@@ -2731,20 +2812,20 @@
       </div>
 
       <p class="help-text">
-        {#if selectedIndices.size === 0}
+        {#if selectedQueueIds.size === 0}
           Select at least one result to export.
         {:else}
-          {selectedIndices.size} item(s) selected.
+          {selectedQueueIds.size} item(s) selected.
         {/if}
       </p>
 
       <div class="sheet-actions">
-        {#if selectedIndices.size > 1}
+        {#if selectedQueueIds.size > 1}
           <div class="download-separate-action">
             <button
               class="primary"
               on:click={() => downloadSelected(false)}
-              disabled={selectedIndices.size === 0}
+              disabled={selectedQueueIds.size === 0}
             >
               Download as separate files
             </button>
@@ -2764,12 +2845,12 @@
           <button
             class="primary"
             on:click={() => downloadSelected(false)}
-            disabled={selectedIndices.size === 0}
+            disabled={selectedQueueIds.size === 0}
           >
             Download
           </button>
         {/if}
-        {#if selectedIndices.size > 1}
+        {#if selectedQueueIds.size > 1}
           <button class="primary" on:click={() => downloadSelected(true)}
             >Download as single ZIP file</button
           >
@@ -2778,7 +2859,7 @@
           <button
             class="primary share-btn"
             on:click={shareSelected}
-            disabled={selectedIndices.size === 0}
+            disabled={selectedQueueIds.size === 0}
             title="Share to other apps"
             data-testid={emphasizeShareOut ? "share-out-cta" : undefined}
           >
@@ -3261,35 +3342,6 @@
     min-height: 220px;
   }
 
-  .results-container.loading .results {
-    opacity: 0.55;
-    pointer-events: none;
-  }
-
-  .loading-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    z-index: 10;
-    text-align: center;
-  }
-
-  .spinner {
-    width: 36px;
-    height: 36px;
-    border: 3px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
-    border-left-color: var(--primary-color);
-    border-radius: 50%;
-    animation: spin 0.9s linear infinite;
-    margin-bottom: 0.9rem;
-  }
-
   @keyframes spin {
     to {
       transform: rotate(360deg);
@@ -3456,6 +3508,7 @@
     overflow: hidden;
     display: block;
     cursor: zoom-in;
+    position: relative;
   }
 
   .preview img {
@@ -3464,6 +3517,37 @@
     display: block;
     aspect-ratio: 1 / 1;
     object-fit: cover;
+    transition:
+      opacity 0.15s ease,
+      filter 0.15s ease;
+  }
+
+  .result-card.pending .preview img {
+    opacity: 0.62;
+    filter: saturate(0.88) brightness(0.84);
+  }
+
+  .card-progress-overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, black 28%, transparent);
+    pointer-events: none;
+  }
+
+  .card-progress-ring {
+    --size: 58px;
+    width: var(--size);
+    height: var(--size);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle closest-side, rgba(15, 23, 42, 0.88) 72%, transparent 73% 100%),
+      conic-gradient(
+        var(--primary-color) calc(var(--progress) * 1%),
+        color-mix(in srgb, var(--text-muted) 30%, transparent) 0
+      );
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
   }
 
   .info {
@@ -3649,8 +3733,11 @@
   }
 
   .photo-viewer-image {
-    max-width: 100%;
-    max-height: 100%;
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: calc(100vw - 1.5rem);
+    max-height: calc(100vh - 1.5rem);
     object-fit: contain;
   }
 
@@ -3867,7 +3954,6 @@
     .result-card,
     .tab-btn,
     .icon-btn,
-    .spinner,
     .progress-fill {
       transition: none;
       animation: none;

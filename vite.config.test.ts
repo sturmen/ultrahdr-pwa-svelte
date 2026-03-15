@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
+const heavyHeicFixtureTests = [
+  'src/lib/__tests__/gain-map-extraction.test.js',
+  'src/lib/__tests__/gain-map-extraction.*.test.ts',
+];
+
 export default defineConfig({
   define: {
     'import.meta.env.VITE_APP_ASSET_VERSION': JSON.stringify(
@@ -31,17 +36,31 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.js'],
-    include: ['src/**/*.test.js', 'src/**/*.test.svelte', 'scripts/**/*.test.js'],
-    exclude: ['node_modules/', 'dist/', '.history/', '**/vite.config.test.js'],
+    include: [
+      'src/**/*.test.js',
+      'src/**/*.test.ts',
+      'src/**/*.test.svelte',
+      'scripts/**/*.test.js',
+      'scripts/**/*.test.ts',
+    ],
+    exclude: [
+      'node_modules/',
+      'dist/',
+      '.history/',
+      '**/vite.config.test.ts',
+      ...heavyHeicFixtureTests,
+    ],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json', 'html'],
-      include: ['src/lib/**/*.js'],
+      include: ['src/lib/**/*.js', 'src/lib/**/*.ts'],
       exclude: [
         'node_modules/',
         'src/test/',
         '**/*.test.js',
+        '**/*.test.ts',
         '**/*.spec.js',
+        '**/*.spec.ts',
       ],
     },
     transformMode: {

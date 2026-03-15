@@ -7,7 +7,7 @@ import {
   buildShareFiles,
   getSelectedResults,
   releaseResultUrls
-} from "../result-management.js";
+} from "../result-management";
 
 describe("result-management", () => {
   it("releases all object URLs in result collection", () => {

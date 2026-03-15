@@ -6,7 +6,7 @@ import {
   WORKFLOW_EVENTS,
   WORKFLOW_STATES,
   transitionWorkflow,
-} from '../workflow-state.js';
+} from '../workflow-state';
 
 describe('workflow-state', () => {
   it('starts in EMPTY and transitions to active processing when files are added and auto-started', () => {

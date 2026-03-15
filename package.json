@@ -12,14 +12,15 @@
     "build:wasm": "node scripts/build-wasm.js",
     "preview": "vite preview",
     "deploy": "npm run build:wasm && npm run build && gh-pages -d dist",
-    "test": "vitest run --config vite.config.test.js",
+    "test": "vitest run --config vite.config.test.ts",
+    "test:integration:heic-real": "vitest run --config vite.config.heic-real.ts",
     "test:e2e:chromium": "npx playwright test --project=chromium",
     "test:e2e": "npx playwright test --project=chromium --project=firefox --project=webkit",
     "test:e2e:mobile": "npx playwright test --project=mobile-webkit-ios --project=mobile-chromium-android-gpu --project=mobile-chromium-android-fallback",
     "test:e2e:android-webgpu": "npx playwright test --config=playwright.android-real.config.js",
     "test:ui": "vitest run --ui",
     "test:integration:jpegli-determinism": "vitest run --config vite.config.jpegli-determinism.js",
-    "test:coverage": "vitest run --config vite.config.test.js --coverage --coverage.provider=istanbul"
+    "test:coverage": "vitest run --config vite.config.test.ts --coverage --coverage.provider=istanbul"
   },
   "keywords": [],
   "author": "Nicholas Tinsley",
@@ -48,6 +49,7 @@
     "onnxruntime-node": "^1.24.3",
     "playwright": "^1.58.2",
     "svelte": "^5.53.10",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.18",
     "vitest-browser-svelte": "^2.0.2"
   }
