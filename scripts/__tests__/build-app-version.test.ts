@@ -7,17 +7,17 @@ import {
   computeAppAssetVersion,
   isStrictBuildMode,
   writeAppVersionMetadata,
-} from '../build-app-version.js';
+} from '../build-app-version.ts';
 
-const tempRoots = [];
+const tempRoots: string[] = [];
 
-function makeTempDir() {
+function makeTempDir(): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrahdr-app-version-test-'));
   tempRoots.push(tempDir);
   return tempDir;
 }
 
-function writeFixtureRoot(rootDir) {
+function writeFixtureRoot(rootDir: string): void {
   fs.mkdirSync(path.join(rootDir, 'src', 'lib'), { recursive: true });
   fs.mkdirSync(path.join(rootDir, 'public', 'assets'), { recursive: true });
 
@@ -25,26 +25,26 @@ function writeFixtureRoot(rootDir) {
   fs.writeFileSync(path.join(rootDir, 'src', 'lib', 'x.js'), 'export const x = 1;\n', 'utf8');
   fs.writeFileSync(path.join(rootDir, 'public', 'assets', 'logo.svg'), '<svg></svg>\n', 'utf8');
   fs.writeFileSync(path.join(rootDir, 'index.html'), '<!doctype html>\n', 'utf8');
-  fs.writeFileSync(path.join(rootDir, 'vite.config.js'), 'export default {};\n', 'utf8');
+  fs.writeFileSync(path.join(rootDir, 'vite.config.ts'), 'export default {};\n', 'utf8');
   fs.writeFileSync(
     path.join(rootDir, '.wasm-version.json'),
     JSON.stringify({ wasmAssetVersion: 'aaaaaaaaaaaaaaaa' }),
-    'utf8'
+    'utf8',
   );
 }
 
 afterEach(() => {
   while (tempRoots.length) {
-    fs.rmSync(tempRoots.pop(), { recursive: true, force: true });
+    fs.rmSync(tempRoots.pop() as string, { recursive: true, force: true });
   }
 });
 
 describe('build-app-version strict mode', () => {
   it('enables strict mode in CI/production contexts', () => {
-    expect(isStrictBuildMode({ CI: 'true' })).toBe(true);
-    expect(isStrictBuildMode({ NODE_ENV: 'production' })).toBe(true);
-    expect(isStrictBuildMode({ WASM_BUILD_STRICT: '1' })).toBe(true);
-    expect(isStrictBuildMode({})).toBe(false);
+    expect(isStrictBuildMode({ CI: 'true' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isStrictBuildMode({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isStrictBuildMode({ WASM_BUILD_STRICT: '1' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isStrictBuildMode({} as NodeJS.ProcessEnv)).toBe(false);
   });
 });
 
@@ -81,7 +81,11 @@ describe('build-app-version metadata', () => {
       metadataPath,
       strictMode: true,
     });
-    const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as {
+      appAssetVersion: string;
+      inputs: string[];
+      generatedAt: string;
+    };
 
     expect(metadata.appAssetVersion).toMatch(/^[a-f0-9]{16}$/);
     expect(parsed.appAssetVersion).toBe(metadata.appAssetVersion);

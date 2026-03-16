@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:app-version && npm run build:runtime-bundle-manifest && vite build",
-    "build:app-version": "node scripts/build-app-version.js",
-    "build:runtime-bundle-manifest": "node scripts/build-runtime-bundle-manifest.js",
+    "build:app-version": "node scripts/build-app-version.ts",
+    "build:runtime-bundle-manifest": "node scripts/build-runtime-bundle-manifest.ts",
     "build:wasm": "node scripts/build-wasm.js",
     "preview": "vite preview",
     "deploy": "npm run build:wasm && npm run build && gh-pages -d dist",

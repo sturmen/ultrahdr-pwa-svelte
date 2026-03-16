@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildRuntimeBundleCacheNames,
   resolveRuntimeBundleCacheName,
-} from '../runtime-bundle-asset-map.js';
+} from '../runtime-bundle-asset-map.ts';
 
 describe('runtime bundle asset map', () => {
   it('maps offline bundle asset URLs to the same caches used by runtime fetch routes', () => {
@@ -14,10 +14,11 @@ describe('runtime bundle asset map', () => {
       .toBe(cacheNames.libheifAssets);
     expect(resolveRuntimeBundleCacheName('assets/ort-wasm-simd-threaded.wasm', cacheNames))
       .toBe(cacheNames.onnxWasmAssets);
+    expect(resolveRuntimeBundleCacheName('assets/ort-wasm-simd-threaded.asyncify.mjs', cacheNames))
+      .toBe(cacheNames.onnxWasmAssets);
     expect(resolveRuntimeBundleCacheName('models/gmnet-realworld-global-inline.onnx', cacheNames))
       .toBe(cacheNames.aiModels);
     expect(resolveRuntimeBundleCacheName('models/gmnet-smoke-128.png', cacheNames))
       .toBe(cacheNames.aiModels);
   });
 });
-

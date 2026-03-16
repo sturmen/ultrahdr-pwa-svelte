@@ -2,7 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, type Hash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,7 +15,7 @@ export const APP_VERSION_INPUTS = Object.freeze([
   'src/**',
   'public/**',
   'index.html',
-  'vite.config.js',
+  'vite.config.ts',
   '.wasm-version.json',
 ]);
 
@@ -23,26 +23,26 @@ const INPUT_SPECS = Object.freeze([
   { type: 'directory', relativePath: 'src' },
   { type: 'directory', relativePath: 'public' },
   { type: 'file', relativePath: 'index.html' },
-  { type: 'file', relativePath: 'vite.config.js' },
+  { type: 'file', relativePath: 'vite.config.ts' },
   { type: 'file', relativePath: '.wasm-version.json' },
-]);
+] as const);
 
 const IGNORED_FILENAMES = new Set(['.DS_Store']);
 
-function isTruthyEnvValue(value) {
+function isTruthyEnvValue(value: unknown): boolean {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 }
 
-export function isStrictBuildMode(env = process.env) {
+export function isStrictBuildMode(env: NodeJS.ProcessEnv = process.env): boolean {
   return isTruthyEnvValue(env.WASM_BUILD_STRICT)
     || isTruthyEnvValue(env.CI)
     || String(env.NODE_ENV || '').toLowerCase() === 'production';
 }
 
-function listFilesRecursively(directoryPath) {
-  const relativeFiles = [];
+function listFilesRecursively(directoryPath: string): string[] {
+  const relativeFiles: string[] = [];
 
-  function walk(currentPath) {
+  function walk(currentPath: string): void {
     const entries = fs.readdirSync(currentPath, { withFileTypes: true })
       .filter((entry) => !IGNORED_FILENAMES.has(entry.name))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -61,19 +61,20 @@ function listFilesRecursively(directoryPath) {
   return relativeFiles;
 }
 
-function appendMissingInput(hash, spec) {
+function appendMissingInput(hash: Hash, spec: { type: 'directory' | 'file'; relativePath: string }): void {
   const marker = spec.type === 'directory' ? 'MISSING_DIR' : 'MISSING_FILE';
   hash.update(`${marker}:${spec.relativePath}\n`);
 }
 
-function appendFileToHash(hash, absolutePath, relativePath) {
+function appendFileToHash(hash: Hash, absolutePath: string, relativePath: string): void {
   try {
     const content = fs.readFileSync(absolutePath);
     hash.update(`FILE:${relativePath}\n`);
     hash.update(content);
   } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'EACCES') {
-      console.warn(`Warning: Cannot read ${relativePath} due to permissions (${err.code}). Skipping contents in hash.`);
+    const error = err as NodeJS.ErrnoException;
+    if (error.code === 'EPERM' || error.code === 'EACCES') {
+      console.warn(`Warning: Cannot read ${relativePath} due to permissions (${error.code}). Skipping contents in hash.`);
       hash.update(`ERROR_FILE:${relativePath}\n`);
     } else {
       throw err;
@@ -84,7 +85,10 @@ function appendFileToHash(hash, absolutePath, relativePath) {
 export function computeAppAssetVersion({
   rootDirectory = rootDir,
   strictMode = isStrictBuildMode(),
-} = {}) {
+}: {
+  rootDirectory?: string;
+  strictMode?: boolean;
+} = {}): string {
   const hash = createHash('sha256');
 
   for (const spec of INPUT_SPECS) {
@@ -119,6 +123,10 @@ export function writeAppVersionMetadata({
   rootDirectory = rootDir,
   metadataPath = appVersionMetadataPath,
   strictMode = isStrictBuildMode(),
+}: {
+  rootDirectory?: string;
+  metadataPath?: string;
+  strictMode?: boolean;
 } = {}) {
   const appAssetVersion = computeAppAssetVersion({ rootDirectory, strictMode });
   const metadata = {
@@ -130,8 +138,9 @@ export function writeAppVersionMetadata({
   try {
     fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
   } catch (err) {
-    if (err.code === 'EPERM' || err.code === 'EACCES') {
-      console.warn(`Warning: Could not write app metadata to ${metadataPath} (${err.code})`);
+    const error = err as NodeJS.ErrnoException;
+    if (error.code === 'EPERM' || error.code === 'EACCES') {
+      console.warn(`Warning: Could not write app metadata to ${metadataPath} (${error.code})`);
     } else {
       throw err;
     }
@@ -139,7 +148,7 @@ export function writeAppVersionMetadata({
   return metadata;
 }
 
-function main() {
+function main(): void {
   try {
     const strictMode = isStrictBuildMode();
     const metadata = writeAppVersionMetadata({ strictMode });
@@ -148,7 +157,7 @@ function main() {
     console.log('App asset version:', metadata.appAssetVersion);
     console.log(`Strict app version mode: ${strictMode ? 'enabled' : 'disabled'}`);
   } catch (error) {
-    console.error('\nERROR:', error.message);
+    console.error('\nERROR:', (error as Error).message);
     process.exit(1);
   }
 }

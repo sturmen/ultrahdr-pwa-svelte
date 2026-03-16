@@ -7,7 +7,7 @@ describe('build warning regressions', () => {
     const heicProcessing = readFileSync(resolve('src/lib/heic-processing.js'), 'utf8');
     const heifHdrProcessing = readFileSync(resolve('src/lib/heif-hdr-processing.js'), 'utf8');
     const libheifBrowser = readFileSync(resolve('src/lib/libheif-browser.js'), 'utf8');
-    const viteConfigSource = readFileSync(resolve('vite.config.js'), 'utf8');
+    const viteConfigSource = readFileSync(resolve('vite.config.ts'), 'utf8');
 
     expect(heicProcessing).toContain("import libheifFactory from './libheif-browser.js'");
     expect(heifHdrProcessing).toContain("import libheifFactory from './libheif-browser.js'");
@@ -17,8 +17,8 @@ describe('build warning regressions', () => {
     expect(viteConfigSource).toContain('libheif-bundle.mjs');
   });
 
-  it('prefers external-wasm onnxruntime resolution and manual chunking', () => {
-    const viteConfigSource = readFileSync(resolve('vite.config.js'), 'utf8');
+  it('prefers external-wasm onnxruntime resolution and copies threaded ORT runtime modules', () => {
+    const viteConfigSource = readFileSync(resolve('vite.config.ts'), 'utf8');
     const gmnetSessionSource = readFileSync(resolve('src/lib/gmnet-session.js'), 'utf8');
     const imageProcessorSource = readFileSync(resolve('src/lib/ImageProcessor.svelte'), 'utf8');
 
@@ -27,6 +27,7 @@ describe('build warning regressions', () => {
     expect(gmnetSessionSource).not.toContain("import('onnxruntime-web/all')");
     expect(gmnetSessionSource).not.toContain("import('onnxruntime-web/webgl')");
     expect(viteConfigSource).toContain('ort.webgl.min.mjs');
+    expect(viteConfigSource).toContain('ort-wasm-simd-threaded*.mjs');
     expect(imageProcessorSource).not.toContain('import { classifyInputProcessingPath } from "./processing-core.js";');
   });
 });

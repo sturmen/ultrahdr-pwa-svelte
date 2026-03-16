@@ -16,7 +16,25 @@ const DEFAULT_OUTPUT_PATH = path.join(
   'runtime-bundle-manifest.json',
 );
 
-export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
+type VersionScope = 'app' | 'wasm';
+type AssetKind = 'model' | 'smoke' | 'runtime-script' | 'wasm';
+
+export type RequiredAssetSpec = {
+  id: string;
+  sourcePath: string;
+  url: string;
+  cacheName: string;
+  kind: AssetKind;
+  versionScope?: VersionScope;
+};
+
+type BundleVersionOptions = {
+  appVersion: string;
+  appAssetVersion: string;
+  wasmAssetVersion: string;
+};
+
+export const DEFAULT_REQUIRED_ASSET_SPECS: readonly RequiredAssetSpec[] = Object.freeze([
   {
     id: 'gmnet-realworld-global',
     sourcePath: 'public/models/gmnet-realworld-global.onnx',
@@ -162,6 +180,34 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
     versionScope: 'app',
   },
   {
+    id: 'ort-wasm-simd-threaded-mjs',
+    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
+    url: 'assets/ort-wasm-simd-threaded.mjs',
+    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
+    kind: 'runtime-script',
+  },
+  {
+    id: 'ort-wasm-simd-threaded-asyncify-mjs',
+    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs',
+    url: 'assets/ort-wasm-simd-threaded.asyncify.mjs',
+    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
+    kind: 'runtime-script',
+  },
+  {
+    id: 'ort-wasm-simd-threaded-jsep-mjs',
+    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs',
+    url: 'assets/ort-wasm-simd-threaded.jsep.mjs',
+    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
+    kind: 'runtime-script',
+  },
+  {
+    id: 'ort-wasm-simd-threaded-jspi-mjs',
+    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.mjs',
+    url: 'assets/ort-wasm-simd-threaded.jspi.mjs',
+    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
+    kind: 'runtime-script',
+  },
+  {
     id: 'ort-wasm-simd-threaded-asyncify',
     sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm',
     url: 'assets/ort-wasm-simd-threaded.asyncify.wasm',
@@ -191,7 +237,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS = Object.freeze([
   },
 ]);
 
-function appendVersionQuery(url, version) {
+function appendVersionQuery(url: string, version: string): string {
   if (typeof version !== 'string' || version.trim().length === 0) {
     return url;
   }
@@ -199,22 +245,22 @@ function appendVersionQuery(url, version) {
   return `${url}${separator}v=${encodeURIComponent(version.trim())}`;
 }
 
-function resolveVersionedAssetUrl(assetSpec, { appAssetVersion, wasmAssetVersion }) {
-  if (assetSpec?.versionScope === 'app') {
+function resolveVersionedAssetUrl(assetSpec: RequiredAssetSpec, { appAssetVersion, wasmAssetVersion }: BundleVersionOptions): string {
+  if (assetSpec.versionScope === 'app') {
     return appendVersionQuery(assetSpec.url, appAssetVersion);
   }
-  if (assetSpec?.versionScope === 'wasm') {
+  if (assetSpec.versionScope === 'wasm') {
     return appendVersionQuery(assetSpec.url, wasmAssetVersion);
   }
   return assetSpec.url;
 }
 
-function readVersionMetadata(metadataPath, key, fallbackValue) {
+function readVersionMetadata(metadataPath: string, key: string, fallbackValue: string): string {
   if (!fs.existsSync(metadataPath)) {
     return fallbackValue;
   }
   try {
-    const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
     if (typeof parsed?.[key] === 'string' && parsed[key].trim().length > 0) {
       return parsed[key].trim();
     }
@@ -224,11 +270,11 @@ function readVersionMetadata(metadataPath, key, fallbackValue) {
   }
 }
 
-function createSha256Hex(buffer) {
+function createSha256Hex(buffer: Uint8Array): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
-export function resolveBundleVersion({ appVersion, appAssetVersion, wasmAssetVersion }) {
+export function resolveBundleVersion({ appVersion, appAssetVersion, wasmAssetVersion }: BundleVersionOptions): string {
   return `${appVersion}|${appAssetVersion}|${wasmAssetVersion}`;
 }
 
@@ -238,6 +284,12 @@ export async function buildRuntimeBundleManifest({
   appVersion = packageJson.version,
   appAssetVersion = readVersionMetadata(APP_VERSION_METADATA_PATH, 'appAssetVersion', 'dev-unversioned-app'),
   wasmAssetVersion = readVersionMetadata(WASM_VERSION_METADATA_PATH, 'wasmAssetVersion', 'dev-unversioned'),
+}: {
+  rootDirectory?: string;
+  requiredAssetSpecs?: readonly RequiredAssetSpec[];
+  appVersion?: string;
+  appAssetVersion?: string;
+  wasmAssetVersion?: string;
 } = {}) {
   const resolvedRoot = path.resolve(rootDirectory);
   const requiredAssets = requiredAssetSpecs.map((assetSpec) => {
@@ -249,7 +301,7 @@ export async function buildRuntimeBundleManifest({
     const bytes = fs.readFileSync(sourceAbsolutePath);
     return {
       id: assetSpec.id,
-      url: resolveVersionedAssetUrl(assetSpec, { appAssetVersion, wasmAssetVersion }),
+      url: resolveVersionedAssetUrl(assetSpec, { appVersion, appAssetVersion, wasmAssetVersion }),
       cacheName: assetSpec.cacheName,
       kind: assetSpec.kind,
       byteLength: bytes.byteLength,
@@ -258,47 +310,43 @@ export async function buildRuntimeBundleManifest({
   });
 
   return {
-    bundleVersion: resolveBundleVersion({
-      appVersion,
-      appAssetVersion,
-      wasmAssetVersion,
-    }),
+    bundleVersion: resolveBundleVersion({ appVersion, appAssetVersion, wasmAssetVersion }),
     generatedAt: new Date().toISOString(),
     requiredAssets,
   };
 }
 
 export async function writeRuntimeBundleManifest({
-  rootDirectory = ROOT_DIRECTORY,
   outputPath = DEFAULT_OUTPUT_PATH,
-  requiredAssetSpecs = DEFAULT_REQUIRED_ASSET_SPECS,
-  appVersion = packageJson.version,
-  appAssetVersion = readVersionMetadata(APP_VERSION_METADATA_PATH, 'appAssetVersion', 'dev-unversioned-app'),
-  wasmAssetVersion = readVersionMetadata(WASM_VERSION_METADATA_PATH, 'wasmAssetVersion', 'dev-unversioned'),
+  ...options
+}: {
+  outputPath?: string;
+  rootDirectory?: string;
+  requiredAssetSpecs?: readonly RequiredAssetSpec[];
+  appVersion?: string;
+  appAssetVersion?: string;
+  wasmAssetVersion?: string;
 } = {}) {
-  const manifest = await buildRuntimeBundleManifest({
-    rootDirectory,
-    requiredAssetSpecs,
-    appVersion,
-    appAssetVersion,
-    wasmAssetVersion,
-  });
-
+  const manifest = await buildRuntimeBundleManifest(options);
   const resolvedOutputPath = path.resolve(outputPath);
   fs.mkdirSync(path.dirname(resolvedOutputPath), { recursive: true });
-  fs.writeFileSync(resolvedOutputPath, JSON.stringify(manifest, null, 2));
+  fs.writeFileSync(resolvedOutputPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   return manifest;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  writeRuntimeBundleManifest()
-    .then((manifest) => {
-      console.log(
-        `[build-runtime-bundle-manifest] wrote ${DEFAULT_OUTPUT_PATH} with ${manifest.requiredAssets.length} assets.`,
-      );
-    })
-    .catch((error) => {
-      console.error('[build-runtime-bundle-manifest] failed:', error);
-      process.exitCode = 1;
-    });
+async function main(): Promise<void> {
+  const manifest = await writeRuntimeBundleManifest();
+  console.log(
+    `[build-runtime-bundle-manifest] wrote ${DEFAULT_OUTPUT_PATH} with ${manifest.requiredAssets.length} assets.`,
+  );
+}
+
+const isDirectExecution = process.argv[1]
+  && path.resolve(process.argv[1]) === __filename;
+
+if (isDirectExecution) {
+  main().catch((error: unknown) => {
+    console.error('[build-runtime-bundle-manifest] failed:', error);
+    process.exit(1);
+  });
 }

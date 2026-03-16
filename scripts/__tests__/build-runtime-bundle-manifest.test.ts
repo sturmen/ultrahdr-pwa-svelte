@@ -7,11 +7,11 @@ import {
   buildRuntimeBundleManifest,
   resolveBundleVersion,
   writeRuntimeBundleManifest,
-} from '../build-runtime-bundle-manifest.js';
+} from '../build-runtime-bundle-manifest.ts';
 
-const tempRoots = [];
+const tempRoots: string[] = [];
 
-function makeTempDir() {
+function makeTempDir(): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrahdr-runtime-bundle-test-'));
   tempRoots.push(tempDir);
   return tempDir;
@@ -19,7 +19,7 @@ function makeTempDir() {
 
 afterEach(() => {
   while (tempRoots.length > 0) {
-    fs.rmSync(tempRoots.pop(), { recursive: true, force: true });
+    fs.rmSync(tempRoots.pop() as string, { recursive: true, force: true });
   }
 });
 
@@ -116,6 +116,15 @@ describe('build-runtime-bundle-manifest', () => {
     expect(requiredAssetIds.has('ort-wasm-simd-threaded-jsep')).toBe(true);
     expect(requiredAssetIds.has('ort-wasm-simd-threaded-asyncify')).toBe(true);
     expect(requiredAssetIds.has('ort-wasm-simd-threaded-jspi')).toBe(true);
+  });
+
+  it('includes the shipped ONNX Runtime threaded module shims used by startup', () => {
+    const requiredAssetIds = new Set(DEFAULT_REQUIRED_ASSET_SPECS.map((asset) => asset.id));
+
+    expect(requiredAssetIds.has('ort-wasm-simd-threaded-mjs')).toBe(true);
+    expect(requiredAssetIds.has('ort-wasm-simd-threaded-asyncify-mjs')).toBe(true);
+    expect(requiredAssetIds.has('ort-wasm-simd-threaded-jsep-mjs')).toBe(true);
+    expect(requiredAssetIds.has('ort-wasm-simd-threaded-jspi-mjs')).toBe(true);
   });
 
   it('uses the dedicated libheif cache name in the default bundle spec', () => {

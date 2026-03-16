@@ -6,7 +6,15 @@ export const LIBHEIF_ASSET_CACHE_PREFIX = 'uhdr-libheif-assets';
 export const AI_MODEL_CACHE_PREFIX = 'uhdr-ai-models';
 export const ONNX_WASM_CACHE_PREFIX = 'uhdr-onnx-wasm';
 
-function normalizeAppAssetVersion(appAssetVersion) {
+export type RuntimeBundleCacheNames = {
+  runtime: string;
+  wasmAssets: string;
+  libheifAssets: string;
+  aiModels: string;
+  onnxWasmAssets: string;
+};
+
+function normalizeAppAssetVersion(appAssetVersion: unknown): string {
   if (typeof appAssetVersion !== 'string') {
     return DEFAULT_APP_ASSET_VERSION;
   }
@@ -14,7 +22,7 @@ function normalizeAppAssetVersion(appAssetVersion) {
   return normalized || DEFAULT_APP_ASSET_VERSION;
 }
 
-function normalizeAssetPath(assetUrl) {
+function normalizeAssetPath(assetUrl: unknown): string {
   const normalized = String(assetUrl || '').trim();
   if (!normalized) {
     return '';
@@ -27,7 +35,7 @@ function normalizeAssetPath(assetUrl) {
   }
 }
 
-export function buildRuntimeBundleCacheNames(appAssetVersion) {
+export function buildRuntimeBundleCacheNames(appAssetVersion: unknown): RuntimeBundleCacheNames {
   const resolvedAppAssetVersion = normalizeAppAssetVersion(appAssetVersion);
   return {
     runtime: `${RUNTIME_CACHE_PREFIX}-${resolvedAppAssetVersion}`,
@@ -38,7 +46,10 @@ export function buildRuntimeBundleCacheNames(appAssetVersion) {
   };
 }
 
-export function resolveRuntimeBundleCacheName(assetUrl, cacheNames) {
+export function resolveRuntimeBundleCacheName(
+  assetUrl: unknown,
+  cacheNames?: Partial<RuntimeBundleCacheNames> | null,
+): string | null {
   const pathname = normalizeAssetPath(assetUrl);
   if (!pathname) {
     return null;
@@ -52,7 +63,7 @@ export function resolveRuntimeBundleCacheName(assetUrl, cacheNames) {
     return cacheNames?.libheifAssets || null;
   }
 
-  if (/\/assets\/ort-wasm.*\.wasm$/.test(pathname)) {
+  if (/\/assets\/ort-wasm.*\.(mjs|wasm)$/.test(pathname)) {
     return cacheNames?.onnxWasmAssets || null;
   }
 
@@ -66,4 +77,3 @@ export function resolveRuntimeBundleCacheName(assetUrl, cacheNames) {
 
   return null;
 }
-
