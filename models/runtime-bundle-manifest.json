@@ -1,10 +1,10 @@
 {
-  "bundleVersion": "5.5.0|67cdce2b9d115304|a0a72e98b2664cc0",
-  "generatedAt": "2026-03-15T23:36:05.493Z",
+  "bundleVersion": "5.5.1|daf853587bef49bd|a0a72e98b2664cc0",
+  "generatedAt": "2026-03-16T00:39:12.317Z",
   "requiredAssets": [
     {
       "id": "gmnet-realworld-global",
-      "url": "models/gmnet-realworld-global.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-realworld-global.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 107070,
@@ -12,7 +12,7 @@
     },
     {
       "id": "gmnet-realworld-global-data",
-      "url": "models/gmnet-realworld-global.onnx.data?v=67cdce2b9d115304",
+      "url": "models/gmnet-realworld-global.onnx.data?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2127104,
@@ -20,7 +20,7 @@
     },
     {
       "id": "gmnet-realworld-local",
-      "url": "models/gmnet-realworld-local.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-realworld-local.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 165334,
@@ -28,7 +28,7 @@
     },
     {
       "id": "gmnet-realworld-local-data",
-      "url": "models/gmnet-realworld-local.onnx.data?v=67cdce2b9d115304",
+      "url": "models/gmnet-realworld-local.onnx.data?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5615872,
@@ -36,7 +36,7 @@
     },
     {
       "id": "gmnet-realworld-global-inline",
-      "url": "models/gmnet-realworld-global-inline.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-realworld-global-inline.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2263917,
@@ -44,7 +44,7 @@
     },
     {
       "id": "gmnet-realworld-local-inline-webgl",
-      "url": "models/gmnet-realworld-local-inline-webgl.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-realworld-local-inline-webgl.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5764004,
@@ -52,7 +52,7 @@
     },
     {
       "id": "gmnet-synthetic-global",
-      "url": "models/gmnet-synthetic-global.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-synthetic-global.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 107070,
@@ -60,7 +60,7 @@
     },
     {
       "id": "gmnet-synthetic-global-data",
-      "url": "models/gmnet-synthetic-global.onnx.data?v=67cdce2b9d115304",
+      "url": "models/gmnet-synthetic-global.onnx.data?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2127104,
@@ -68,7 +68,7 @@
     },
     {
       "id": "gmnet-synthetic-local",
-      "url": "models/gmnet-synthetic-local.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-synthetic-local.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 165334,
@@ -76,7 +76,7 @@
     },
     {
       "id": "gmnet-synthetic-local-data",
-      "url": "models/gmnet-synthetic-local.onnx.data?v=67cdce2b9d115304",
+      "url": "models/gmnet-synthetic-local.onnx.data?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5615872,
@@ -84,7 +84,7 @@
     },
     {
       "id": "gmnet-synthetic-global-inline",
-      "url": "models/gmnet-synthetic-global-inline.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-synthetic-global-inline.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2263917,
@@ -92,7 +92,7 @@
     },
     {
       "id": "gmnet-synthetic-local-inline-webgl",
-      "url": "models/gmnet-synthetic-local-inline-webgl.onnx?v=67cdce2b9d115304",
+      "url": "models/gmnet-synthetic-local-inline-webgl.onnx?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5764004,
@@ -100,7 +100,7 @@
     },
     {
       "id": "gmnet-smoke-asset",
-      "url": "models/gmnet-smoke-128.png?v=67cdce2b9d115304",
+      "url": "models/gmnet-smoke-128.png?v=daf853587bef49bd",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "smoke",
       "byteLength": 622,
@@ -140,11 +140,43 @@
     },
     {
       "id": "libheif-wasm-bin",
-      "url": "assets/libheif.wasm?v=67cdce2b9d115304",
+      "url": "assets/libheif.wasm?v=daf853587bef49bd",
       "cacheName": "uhdr-libheif-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 1034305,
       "sha256": "615bfe847f823d008d4a5bdb3e8286029f72a0f581e120115c2d6478e3c37fb3"
+    },
+    {
+      "id": "ort-wasm-simd-threaded-mjs",
+      "url": "assets/ort-wasm-simd-threaded.mjs",
+      "cacheName": "uhdr-onnx-wasm-runtime-bundle",
+      "kind": "runtime-script",
+      "byteLength": 24274,
+      "sha256": "5687566b1bc1c8cf628d76c2ddb16b2a3b81a7997273d4666564880495088e57"
+    },
+    {
+      "id": "ort-wasm-simd-threaded-asyncify-mjs",
+      "url": "assets/ort-wasm-simd-threaded.asyncify.mjs",
+      "cacheName": "uhdr-onnx-wasm-runtime-bundle",
+      "kind": "runtime-script",
+      "byteLength": 48533,
+      "sha256": "dee69056fbfedf946ba0d9026e191c1361c5455895355e03f4346bf9308e58eb"
+    },
+    {
+      "id": "ort-wasm-simd-threaded-jsep-mjs",
+      "url": "assets/ort-wasm-simd-threaded.jsep.mjs",
+      "cacheName": "uhdr-onnx-wasm-runtime-bundle",
+      "kind": "runtime-script",
+      "byteLength": 46595,
+      "sha256": "9a99acd12acc495184c9ea4d458ac9424f8180aacfbc7b8371ed64f9351e4a81"
+    },
+    {
+      "id": "ort-wasm-simd-threaded-jspi-mjs",
+      "url": "assets/ort-wasm-simd-threaded.jspi.mjs",
+      "cacheName": "uhdr-onnx-wasm-runtime-bundle",
+      "kind": "runtime-script",
+      "byteLength": 45481,
+      "sha256": "1622f02ae35e41f8df9db21f750ae1d494c1b0df3cb3f9d669ea2be8a69a0417"
     },
     {
       "id": "ort-wasm-simd-threaded-asyncify",
