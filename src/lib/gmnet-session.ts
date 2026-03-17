@@ -1,6 +1,8 @@
+// @ts-nocheck
 import * as ortWebGpu from 'onnxruntime-web/webgpu';
 import { createCanvasWithContext as createRuntimeCanvasWithContext } from './canvas-runtime.js';
 import { GMNET_MAX_LONG_EDGE, IMAGE_MAX_LONG_EDGE } from './constants.js';
+import { hasWebGlSupport, isChromiumRuntime, isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
 export const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
@@ -334,41 +336,11 @@ export function hasWebGpuSupport(runtime = globalThis) {
     return typeof runtime?.navigator?.gpu !== 'undefined';
 }
 
-function hasWebGlSupport(runtime = globalThis) {
-    try {
-        if (typeof runtime?.OffscreenCanvas !== 'undefined') {
-            const canvas = new runtime.OffscreenCanvas(1, 1);
-            const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-            if (context) {
-                return true;
-            }
-        }
-    } catch (_error) {
-        // Fall through to DOM canvas probing.
-    }
-
-    try {
-        if (typeof runtime?.document?.createElement === 'function') {
-            const canvas = runtime.document.createElement('canvas');
-            if (canvas && typeof canvas.getContext === 'function') {
-                const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-                if (context) {
-                    return true;
-                }
-            }
-        }
-    } catch (_error) {
-        // No-op.
-    }
-
-    return false;
-}
-
 function resolveExecutionProviders(runtime = globalThis) {
     if (hasWebGpuSupport(runtime)) {
         return [REQUIRED_GMNET_EXECUTION_PROVIDER];
     }
-    if (hasWebGlSupport(runtime)) {
+    if (isGmnetWebGlSupportedRuntime(runtime)) {
         return [GMNET_FALLBACK_EXECUTION_PROVIDER];
     }
     return [];
@@ -1013,8 +985,11 @@ export class GMNetInferenceSession {
             throw unavailableError;
         }
 
-        if (requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER && !hasWebGlSupport(this.runtime)) {
-            const unavailableError = new Error('WebGL runtime is not available in this environment.');
+        if (requestedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER && !isGmnetWebGlSupportedRuntime(this.runtime)) {
+            const reason = isChromiumRuntime(this.runtime)
+                ? 'WebGL runtime is disabled on Chromium for GMNet.'
+                : 'WebGL runtime is not available in this environment.';
+            const unavailableError = new Error(reason);
             unavailableError.name = 'GmnetWebGlUnavailableError';
             throw unavailableError;
         }

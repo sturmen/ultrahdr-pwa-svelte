@@ -8,7 +8,7 @@ describe('processing-preferences', () => {
     const {
       DEFAULT_PROCESSING_PREFERENCES,
       normalizeProcessingPreferences,
-    } = await import('../processing-preferences.js');
+    } = await import('../processing-preferences.ts');
 
     const smartphoneRuntime = {
       navigator: {
@@ -36,7 +36,7 @@ describe('processing-preferences', () => {
   });
 
   it('clamps numeric preferences to supported ranges', async () => {
-    const { normalizeProcessingPreferences } = await import('../processing-preferences.js');
+    const { normalizeProcessingPreferences } = await import('../processing-preferences.ts');
 
     const normalized = normalizeProcessingPreferences({
       maxContentBoostStops: 99,
@@ -53,7 +53,7 @@ describe('processing-preferences', () => {
     const {
       DEFAULT_PROCESSING_PREFERENCES,
       loadProcessingPreferences,
-    } = await import('../processing-preferences.js');
+    } = await import('../processing-preferences.ts');
 
     const noStorageRuntime = {
       navigator: {
@@ -104,7 +104,7 @@ describe('processing-preferences', () => {
       PROCESSING_PREFERENCES_STORAGE_KEY,
       loadProcessingPreferences,
       normalizeProcessingPreferences,
-    } = await import('../processing-preferences.js');
+    } = await import('../processing-preferences.ts');
 
     const desktopRuntime = {
       navigator: {
@@ -135,7 +135,7 @@ describe('processing-preferences', () => {
   });
 
   it('resolves auto checkpointing to force on Safari and off on non-Safari', async () => {
-    const { resolveCheckpointingForRun } = await import('../processing-preferences.js');
+    const { resolveCheckpointingForRun } = await import('../processing-preferences.ts');
 
     const safariRuntime = {
       navigator: {
@@ -161,7 +161,7 @@ describe('processing-preferences', () => {
       PROCESSING_PREFERENCES_STORAGE_KEY,
       loadProcessingPreferences,
       saveProcessingPreferences,
-    } = await import('../processing-preferences.js');
+    } = await import('../processing-preferences.ts');
 
     const storage = new Map();
     const runtime = {

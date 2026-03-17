@@ -28,7 +28,7 @@ describe('GMNetInferenceSession', () => {
   it('preserves model load diagnostics when session creation fails offline', async () => {
     inferenceSessionCreate.mockRejectedValue(new Error('ORT create failed'));
 
-    const { GMNetInferenceSession } = await import('../gmnet-session.js');
+    const { GMNetInferenceSession } = await import('../gmnet-session.ts');
     const runtime = {
       navigator: {
         gpu: {},

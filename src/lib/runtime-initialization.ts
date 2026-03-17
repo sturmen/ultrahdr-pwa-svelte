@@ -1,3 +1,4 @@
+// @ts-nocheck
 import {
   DEFAULT_GMNET_MODEL_VARIANT,
   GMNET_FALLBACK_EXECUTION_PROVIDER,
@@ -5,7 +6,8 @@ import {
   GMNET_WASM_EXECUTION_PROVIDER,
   preloadGmnetRuntimeDependencies,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
-} from './gmnet-session.js';
+} from './gmnet-session.ts';
+import { isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
 import {
   RUNTIME_INIT_ERROR_CODES,
   RUNTIME_INIT_STEP_LABELS,
@@ -32,36 +34,6 @@ function normalizeExecutionProviderList(values) {
     .map((value) => normalizeExecutionProvider(value))
     .filter(Boolean);
   return Array.from(new Set(normalizedValues));
-}
-
-function hasWebGlSupport(runtime = globalThis) {
-  try {
-    if (typeof runtime?.OffscreenCanvas !== 'undefined') {
-      const canvas = new runtime.OffscreenCanvas(1, 1);
-      const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (context) {
-        return true;
-      }
-    }
-  } catch (_error) {
-    // Fall through to DOM canvas probing.
-  }
-
-  try {
-    if (typeof runtime?.document?.createElement === 'function') {
-      const canvas = runtime.document.createElement('canvas');
-      if (canvas && typeof canvas.getContext === 'function') {
-        const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (context) {
-          return true;
-        }
-      }
-    }
-  } catch (_error) {
-    // No-op.
-  }
-
-  return false;
 }
 
 function resolveModelBasePath() {
@@ -600,7 +572,7 @@ export async function initializeRuntime({
         webgpuIssues.push('navigator.gpu is unavailable.');
       }
 
-      if (hasWebGlSupport(runtime)) {
+      if (isGmnetWebGlSupportedRuntime(runtime)) {
         providers.push(GMNET_FALLBACK_EXECUTION_PROVIDER);
       }
 

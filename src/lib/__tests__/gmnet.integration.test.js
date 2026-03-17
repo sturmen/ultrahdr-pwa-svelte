@@ -272,7 +272,7 @@ describe('GMNet ONNX model variants', () => {
 
   describe('Probe aspect ratio validation for WebGL compatibility', () => {
     it('validates that probe images match WebGL fixed input requirements', async () => {
-      const { GMNetInferenceSession } = await import('../gmnet-session.js');
+      const { GMNetInferenceSession } = await import('../gmnet-session.ts');
       const session = new GMNetInferenceSession();
 
       // For WebGL, we must use square probe images (128x128) to match the fixed model input

@@ -29,6 +29,17 @@ function createNonFlatGainMapRgba(width = 4, height = 4) {
   return data;
 }
 
+function createOffsetGainMapRgba(width = 4, height = 4, offset = 60) {
+  const data = createNonFlatGainMapRgba(width, height);
+  for (let i = 0; i < data.length; i += 4) {
+    const value = Math.max(0, Math.min(255, (data[i] ?? 0) + offset));
+    data[i] = value;
+    data[i + 1] = value;
+    data[i + 2] = value;
+  }
+  return data;
+}
+
 function createRuntime() {
   return {
     fetch,
@@ -44,7 +55,7 @@ function createRuntime() {
 
 describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   it('throws when GMNet runtime is unsupported', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
     const session = {
       run: vi.fn(),
       on: vi.fn(),
@@ -68,7 +79,7 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   });
 
   it('throws when heuristic path is requested with useGmnet=false', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
     const session = {
       run: vi.fn(),
       on: vi.fn(),
@@ -88,7 +99,7 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   });
 
   it('uses prepare/runTileStep/finalize tiled APIs as the primary inference path', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
     const session = {
       prepareTiledInference: vi.fn(async () => ({
@@ -126,7 +137,7 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   });
 
   it('falls back in auto mode with provider order webgpu -> webgl -> wasm', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
     const session = {
       run: vi.fn(async (_imageData, options = {}) => {
@@ -164,8 +175,8 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
     expect(session.run.mock.calls[2][1]?.forceExecutionProviders).toEqual(['wasm']);
   });
 
-  it('does not fallback when backend is explicitly forced', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+  it('falls back from an explicitly forced webgl request when the webgl parity probe diverges from wasm', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
     const session = {
       run: vi.fn(async (_imageData, options = {}) => {
@@ -173,7 +184,44 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
           ? options.forceExecutionProviders[0]
           : null;
         if (forced === 'webgl') {
-          throw new Error('forced webgl failed');
+          return createOffsetGainMapRgba(4, 4, 90);
+        }
+        if (forced === 'wasm') {
+          return createNonFlatGainMapRgba(4, 4);
+        }
+        throw new Error(`unexpected provider ${forced}`);
+      }),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+    });
+
+    const result = await generator.generate(createTestImageData(4, 4), {
+      forceExecutionProviders: ['webgl'],
+    });
+
+    expect(result.gainMapImageData).toBeInstanceOf(ImageData);
+    expect(session.run.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(session.run.mock.calls[0]?.[1]?.forceExecutionProviders).toEqual(['webgl']);
+    expect(session.run.mock.calls.at(-1)?.[1]?.forceExecutionProviders).toEqual(['wasm']);
+  });
+
+  it('does not fallback when a non-webgl backend is explicitly forced', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
+
+    const session = {
+      run: vi.fn(async (_imageData, options = {}) => {
+        const forced = Array.isArray(options.forceExecutionProviders)
+          ? options.forceExecutionProviders[0]
+          : null;
+        if (forced === 'webgpu') {
+          throw new Error('forced webgpu failed');
         }
         return createNonFlatGainMapRgba(4, 4);
       }),
@@ -189,15 +237,15 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
     });
 
     await expect(
-      generator.generate(createTestImageData(4, 4), { forceExecutionProviders: ['webgl'] }),
-    ).rejects.toThrow(/forced webgl failed/i);
+      generator.generate(createTestImageData(4, 4), { forceExecutionProviders: ['webgpu'] }),
+    ).rejects.toThrow(/forced webgpu failed/i);
 
     expect(session.run).toHaveBeenCalledTimes(1);
-    expect(session.run.mock.calls[0][1]?.forceExecutionProviders).toEqual(['webgl']);
+    expect(session.run.mock.calls[0][1]?.forceExecutionProviders).toEqual(['webgpu']);
   });
 
   it('does not require resolveGainMapCapability to run tiled inference', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
     const session = {
       resolveGainMapCapability: vi.fn(async () => {
@@ -227,7 +275,7 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   });
 
   it('emits provider/tile-centric progress metadata without gmnet capability metadata', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
     const onStageProgress = vi.fn();
     const session = {
@@ -265,7 +313,7 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   });
 
   it('uses checkpoint mode metadata and persists tile progress when gmnetCheckpointing is forced', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
     const onStageProgress = vi.fn();
     const checkpointStore = {
@@ -322,7 +370,7 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
   });
 
   it('resumes tile execution from persisted checkpoint state when available', async () => {
-    const { GmnetGainMapGenerator } = await import('../gain-map-generator.js');
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
     const onStageProgress = vi.fn();
     const checkpointStore = {
       loadSnapshot: vi.fn(async () => ({

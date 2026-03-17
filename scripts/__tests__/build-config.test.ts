@@ -19,7 +19,7 @@ describe('build warning regressions', () => {
 
   it('prefers external-wasm onnxruntime resolution and copies threaded ORT runtime modules', () => {
     const viteConfigSource = readFileSync(resolve('vite.config.ts'), 'utf8');
-    const gmnetSessionSource = readFileSync(resolve('src/lib/gmnet-session.js'), 'utf8');
+    const gmnetSessionSource = readFileSync(resolve('src/lib/gmnet-session.ts'), 'utf8');
     const imageProcessorSource = readFileSync(resolve('src/lib/ImageProcessor.svelte'), 'utf8');
 
     expect(viteConfigSource).toContain("'onnxruntime-web-use-extern-wasm'");

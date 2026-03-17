@@ -38,7 +38,8 @@
     normalizeProcessingPreferences,
     resolveCheckpointingForRun,
     saveProcessingPreferences,
-  } from "./processing-preferences.js";
+  } from "./processing-preferences.ts";
+  import { isChromiumRuntime } from "./runtime-browser.ts";
   import {
     classifyInputProcessingPath,
     probeInputProcessingPathFromHeaders,
@@ -417,6 +418,10 @@
       return null;
     }
     return normalized;
+  }
+
+  function shouldShowWebGlBackendOption() {
+    return !isChromiumRuntime(globalThis);
   }
 
   function parseExecutionProviderFromNote(note) {
@@ -2326,7 +2331,9 @@
                 >
                   <option value="auto">Auto (Recommended)</option>
                   <option value="webgpu">WebGPU</option>
-                  <option value="webgl">WebGL</option>
+                  {#if shouldShowWebGlBackendOption()}
+                    <option value="webgl">WebGL</option>
+                  {/if}
                   <option value="wasm">WASM</option>
                 </select>
               </div>
@@ -2779,7 +2786,9 @@
             >
               <option value="auto">Auto (Recommended)</option>
               <option value="webgpu">WebGPU</option>
-              <option value="webgl">WebGL</option>
+              {#if shouldShowWebGlBackendOption()}
+                <option value="webgl">WebGL</option>
+              {/if}
               <option value="wasm">WASM</option>
             </select>
           </div>

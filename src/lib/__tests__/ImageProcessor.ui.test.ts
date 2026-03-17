@@ -814,7 +814,10 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByTestId('wasm-recommendation-modal')).not.toBeInTheDocument();
   });
 
-  it('renders backend preference dropdown with all backend options in mobile settings', async () => {
+  it('hides the WebGL backend option in Chromium mobile settings', async () => {
+    setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    );
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
@@ -832,13 +835,16 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect.arrayContaining([
         'Auto (Recommended)',
         'WebGPU',
-        'WebGL',
         'WASM',
       ]),
     );
+    expect(optionLabels).not.toContain('WebGL');
   });
 
-  it('persists backend preference and applies forced provider to subsequent processing runs', async () => {
+  it('sanitizes a persisted Chromium webgl backend preference back to auto', async () => {
+    setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    );
     const { unmount } = renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
@@ -847,24 +853,32 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     await fireEvent.click(screen.getByTestId('floating-gear'));
     const backendSelect = screen.getByTestId('backend-preference-select-mobile');
-    await fireEvent.change(backendSelect, { target: { value: 'webgl' } });
+    await fireEvent.change(backendSelect, { target: { value: 'auto' } });
     unmount();
 
     vi.mocked(runtimeProcessMock).mockClear();
+    const { saveProcessingPreferences } = await import('../processing-preferences.ts');
+    saveProcessingPreferences(
+      {
+        backendPreference: 'webgl',
+      },
+      window,
+    );
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
-    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).toEqual(
-      expect.objectContaining({
-        forceExecutionProviders: ['webgl'],
-      }),
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).not.toHaveProperty(
+      'forceExecutionProviders',
     );
   });
 
   it('uses persisted homepage backend + checkpoint settings on the first processing job', async () => {
-    const { saveProcessingPreferences } = await import('../processing-preferences.js');
+    setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    );
+    const { saveProcessingPreferences } = await import('../processing-preferences.ts');
     saveProcessingPreferences(
       {
         backendPreference: 'webgl',
@@ -881,9 +895,11 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).toEqual(
       expect.objectContaining({
-        forceExecutionProviders: ['webgl'],
         gmnetCheckpointing: 'force',
       }),
+    );
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).not.toHaveProperty(
+      'forceExecutionProviders',
     );
   });
 
@@ -891,7 +907,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
     );
-    const { saveProcessingPreferences } = await import('../processing-preferences.js');
+    const { saveProcessingPreferences } = await import('../processing-preferences.ts');
     saveProcessingPreferences(
       {
         backendPreference: 'auto',
@@ -917,7 +933,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
     );
-    const { saveProcessingPreferences } = await import('../processing-preferences.js');
+    const { saveProcessingPreferences } = await import('../processing-preferences.ts');
     saveProcessingPreferences(
       {
         backendPreference: 'auto',

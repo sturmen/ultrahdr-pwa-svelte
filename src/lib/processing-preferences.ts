@@ -2,6 +2,7 @@ import {
   clampMaxContentBoostStops,
   DEFAULT_MAX_CONTENT_BOOST_STOPS,
 } from './max-content-boost.js';
+import { isChromiumRuntime } from './runtime-browser.ts';
 export const PROCESSING_PREFERENCES_STORAGE_KEY = 'ultrahdr:processing-preferences:v1';
 
 export const LEGACY_BACKEND_PREFERENCE_STORAGE_KEY = 'ultrahdr:backend-preference:v1';
@@ -50,8 +51,11 @@ function normalizeString(value) {
   return normalized || null;
 }
 
-function normalizeBackendPreference(value) {
+function normalizeBackendPreference(value, runtime = globalThis) {
   const normalized = normalizeString(value);
+  if (normalized === 'webgl' && isChromiumRuntime(runtime)) {
+    return DEFAULT_PROCESSING_PREFERENCES.backendPreference;
+  }
   if (SUPPORTED_BACKEND_PREFERENCES.includes(normalized)) {
     return normalized;
   }
@@ -120,7 +124,7 @@ export function normalizeProcessingPreferences(rawPreferences, runtime = globalT
     : {};
   const defaults = getRuntimeDefaultPreferences(runtime);
   return {
-    backendPreference: normalizeBackendPreference(raw.backendPreference),
+    backendPreference: normalizeBackendPreference(raw.backendPreference, runtime),
     gmnetCheckpointingPreference: normalizeCheckpointingPreference(raw.gmnetCheckpointingPreference),
     maxContentBoostStops: normalizeMaxContentBoostStops(raw.maxContentBoostStops),
     quality: normalizeQuality(raw.quality),

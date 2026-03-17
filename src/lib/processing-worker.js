@@ -1,5 +1,5 @@
 import { processImage as processImageCore } from './processing-core.js';
-import { initializeRuntime as initializeRuntimeChecks } from './runtime-initialization.js';
+import { initializeRuntime as initializeRuntimeChecks } from './runtime-initialization.ts';
 import { sanitizeRuntimeInitOptions } from './runtime-contract.js';
 
 const activeJobs = new Map();

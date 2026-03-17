@@ -6,7 +6,7 @@ import {
   RUNTIME_INIT_ERROR_CODES,
   RUNTIME_INIT_STEP_ORDER,
   initializeRuntime,
-} from '../runtime-initialization.js';
+} from '../runtime-initialization.ts';
 
 function createSmokeImageData(width = 128, height = 128) {
   const pixels = new Uint8ClampedArray(width * height * 4).fill(127);
