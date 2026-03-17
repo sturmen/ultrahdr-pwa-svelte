@@ -69,17 +69,23 @@ export async function waitForProcessing(page, timeoutMs) {
 
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = await page.evaluate(() => {
-      const results = document.querySelectorAll('.result-card').length;
-      const loading = document.querySelector('.results-container')?.classList.contains('loading') || false;
+      const resultCards = Array.from(document.querySelectorAll('.result-card'));
+      const completedResults = resultCards.filter(
+        (card) =>
+          !card.classList.contains('pending') && !card.classList.contains('failed'),
+      ).length;
+      const pendingResults = resultCards.filter((card) =>
+        card.classList.contains('pending'),
+      ).length;
       const errorText = document.querySelector('.error p')?.textContent || null;
-      return { results, loading, errorText };
+      return { completedResults, pendingResults, errorText };
     });
 
     if (snapshot.errorText) {
       throw new Error(`Processing failed: ${snapshot.errorText}`);
     }
 
-    if (snapshot.results >= 1 && !snapshot.loading) {
+    if (snapshot.completedResults >= 1 && snapshot.pendingResults === 0) {
       await dismissWasmRecommendationIfVisible(page);
       return;
     }

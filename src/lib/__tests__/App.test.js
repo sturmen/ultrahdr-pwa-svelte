@@ -157,6 +157,30 @@ describe('App shell and startup gate', () => {
     expect(runtimeInitializeMock).toHaveBeenCalledTimes(2);
   });
 
+  it('forwards the startup smoke-failure override from the URL query string', async () => {
+    window.history.replaceState({}, '', '/?__uhdr_test_force_smoke_failure=1');
+    runtimeInitializeMock.mockRejectedValueOnce(
+      createInitFailure({
+        code: 'RUNTIME_INIT_SMOKE_ASSET_FAILED',
+        stepId: 'gmnet-smoke-run',
+        userMessage: 'Unable to load the GMNet smoke-test asset.',
+        diagnostics: { forceSmokeFailure: true },
+      }),
+    );
+
+    render(App);
+
+    const failureCard = await screen.findByTestId('runtime-init-failure');
+    expect(failureCard).toHaveTextContent(/runtime_init_smoke_asset_failed/i);
+    expect(runtimeInitializeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeInitOptions: expect.objectContaining({
+          forceSmokeFailure: true,
+        }),
+      }),
+    );
+  });
+
   it('shows loading state while share-target launch files are being checked after init', async () => {
     const launchProbe = deferred();
     consumeSharedFilesFromLaunch.mockReturnValue(launchProbe.promise);
