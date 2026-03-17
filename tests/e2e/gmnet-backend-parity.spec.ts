@@ -110,9 +110,7 @@ function expectGainMapsWithinTolerance(
 }
 
 test.describe('GMNet backend parity', () => {
-  test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium-only parity coverage');
-
-  test('generates matching pre-encode gain maps across webgpu, webgl, and wasm', async ({ page }) => {
+  test('generates matching pre-encode gain maps across webgpu, webgl, and wasm', async ({ page, browserName }) => {
     await page.goto('/');
     await waitForGainMapTestApi(page);
 
@@ -122,7 +120,7 @@ test.describe('GMNet backend parity', () => {
       .map(([provider]) => provider);
     test.skip(
       missingProviders.length > 0,
-      `Chromium runtime is missing required providers: ${missingProviders.join(', ')}`,
+      `${browserName} runtime is missing required providers: ${missingProviders.join(', ')}`,
     );
 
     const captures: Record<BackendName, GainMapCapture> = {
@@ -136,12 +134,12 @@ test.describe('GMNet backend parity', () => {
     expectGainMapsWithinTolerance('webgl vs wasm', captures.webgl, captures.wasm);
   });
 
-  test('produces deterministic pre-encode gain maps for repeated wasm runs', async ({ page }) => {
+  test('produces deterministic pre-encode gain maps for repeated wasm runs', async ({ page, browserName }) => {
     await page.goto('/');
     await waitForGainMapTestApi(page);
 
     const availability = await evaluateProviderAvailability(page);
-    test.skip(!availability.wasm, 'WASM backend is unavailable in this Chromium runtime.');
+    test.skip(!availability.wasm, `WASM backend is unavailable in this ${browserName} runtime.`);
 
     const firstCapture = await processWithBackend(page, 'wasm');
     const secondCapture = await processWithBackend(page, 'wasm');
