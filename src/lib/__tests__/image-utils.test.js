@@ -1,8 +1,8 @@
 /**
- * @vitest-environment node
+ * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canvasToBlob, imageDataToJpegBlob } from '../image-utils.js';
+import { canvasToBlob, imageDataToDrawable, imageDataToJpegBlob } from '../image-utils.js';
 
 describe('canvasToBlob', () => {
   it('prefers convertToBlob over toBlob when both are available', async () => {
@@ -96,5 +96,30 @@ describe('imageDataToJpegBlob', () => {
       quality: 0.8,
       colorSpace: 'display-p3',
     });
+  });
+});
+
+describe('imageDataToDrawable', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes ImageData directly to createImageBitmap when supported', async () => {
+    const drawable = { width: 2, height: 1, close: vi.fn() };
+    const createImageBitmapSpy = vi.spyOn(globalThis, 'createImageBitmap').mockResolvedValue(drawable);
+    const imageData = new ImageData(
+      new Uint8ClampedArray([
+        255, 0, 0, 255,
+        0, 255, 0, 255,
+      ]),
+      2,
+      1,
+    );
+
+    const result = await imageDataToDrawable(imageData);
+
+    expect(result).toBe(drawable);
+    expect(createImageBitmapSpy).toHaveBeenCalledTimes(1);
+    expect(createImageBitmapSpy).toHaveBeenCalledWith(imageData);
   });
 });

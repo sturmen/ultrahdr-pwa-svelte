@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "deploy": "npm run build:wasm && npm run build && gh-pages -d dist",
     "test": "vitest run --config vite.config.test.ts",
+    "typecheck": "tsc -p tsconfig.pipeline.json --noEmit && npx svelte-check --tsconfig ./tsconfig.pipeline.json",
     "test:integration:heic-real": "vitest run --config vite.config.heic-real.ts",
     "test:e2e:chromium": "npx playwright test --project=chromium",
     "test:e2e": "npx playwright test --project=chromium --project=firefox --project=webkit",

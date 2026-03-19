@@ -3,6 +3,30 @@
  * Utility functions for image manipulation and conversion.
  */
 
+const canvasPool = [];
+
+function acquirePooledCanvas(width, height, errorMessage, options = {}) {
+    const pooled = canvasPool.pop();
+    if (!pooled) {
+        return createCanvasWithContext(width, height, errorMessage, options);
+    }
+
+    pooled.canvas.width = width;
+    pooled.canvas.height = height;
+    return pooled;
+}
+
+function releasePooledCanvas(entry) {
+    if (!entry?.canvas || !entry?.ctx) {
+        return;
+    }
+    entry.canvas.width = 1;
+    entry.canvas.height = 1;
+    if (canvasPool.length < 2) {
+        canvasPool.push(entry);
+    }
+}
+
 // Helper for canvas creation
 export function createCanvasWithContext(width, height, errorMessage = 'Canvas not available', options = {}) {
     const contextOptions = { willReadFrequently: true };
@@ -106,55 +130,77 @@ export async function imageDataToDrawable(imageData) {
     if (typeof ImageData === 'undefined') {
         throw new Error('ImageData is not supported in this environment');
     }
+    if (typeof createImageBitmap === 'function') {
+        return createImageBitmap(imageData);
+    }
+
     const { canvas, ctx } = createCanvasWithContext(imageData.width, imageData.height, 'Canvas not available for imageDataToDrawable');
     ctx.putImageData(imageData, 0, 0);
-
-    if (typeof createImageBitmap === 'function') {
-        return createImageBitmap(canvas);
-    }
     return canvas;
 }
 
-export async function resizeImageData(imageData, targetWidth, targetHeight) {
-    const { ctx } = createCanvasWithContext(targetWidth, targetHeight, 'Canvas not available for resizing');
-    const drawable = await imageDataToDrawable(imageData);
-
-    ctx.drawImage(drawable, 0, 0, targetWidth, targetHeight);
-    const resizedData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-
-    if (typeof drawable.close === 'function') {
-        drawable.close();
-    }
-    return resizedData;
+function getTransformedDimensions(width, height, degrees) {
+    const normalized = ((degrees || 0) % 360 + 360) % 360;
+    const isPortrait = normalized === 90 || normalized === 270;
+    return {
+        width: isPortrait ? height : width,
+        height: isPortrait ? width : height,
+        normalizedRotation: normalized,
+    };
 }
 
-export async function rotateImageData(imageData, degrees) {
-    const normalized = ((degrees || 0) % 360 + 360) % 360;
-    if (normalized === 0) {
+export async function transformImageData(imageData, {
+    width = imageData.width,
+    height = imageData.height,
+    degrees = 0,
+} = {}) {
+    const targetWidth = Math.max(1, Math.floor(Number(width) || imageData.width || 1));
+    const targetHeight = Math.max(1, Math.floor(Number(height) || imageData.height || 1));
+    const { width: outputWidth, height: outputHeight, normalizedRotation } = getTransformedDimensions(
+        targetWidth,
+        targetHeight,
+        degrees,
+    );
+
+    if (
+        imageData.width === outputWidth
+        && imageData.height === outputHeight
+        && normalizedRotation === 0
+        && targetWidth === imageData.width
+        && targetHeight === imageData.height
+    ) {
         return imageData;
     }
 
-    const width = imageData.width;
-    const height = imageData.height;
-    const isPortrait = normalized === 90 || normalized === 270;
-    const newWidth = isPortrait ? height : width;
-    const newHeight = isPortrait ? width : height;
+    const surface = acquirePooledCanvas(outputWidth, outputHeight, 'Canvas not available for transform');
+    const sourceSurface = acquirePooledCanvas(imageData.width, imageData.height, 'Canvas not available for transform source');
+    sourceSurface.ctx.putImageData(imageData, 0, 0);
+    const drawable = sourceSurface.canvas;
 
-    const { ctx } = createCanvasWithContext(newWidth, newHeight, 'Canvas not available for rotation');
-    const drawable = await imageDataToDrawable(imageData);
+    try {
+        if (normalizedRotation !== 0) {
+            surface.ctx.save();
+            surface.ctx.translate(outputWidth / 2, outputHeight / 2);
+            surface.ctx.rotate((normalizedRotation * Math.PI) / 180);
+            surface.ctx.drawImage(drawable, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
+            surface.ctx.restore();
+        } else {
+            surface.ctx.drawImage(drawable, 0, 0, targetWidth, targetHeight);
+        }
 
-    ctx.save();
-    ctx.translate(newWidth / 2, newHeight / 2);
-    ctx.rotate((normalized * Math.PI) / 180);
-    ctx.drawImage(drawable, -width / 2, -height / 2);
-    ctx.restore();
-
-    const rotatedData = ctx.getImageData(0, 0, newWidth, newHeight);
-    if (typeof drawable.close === 'function') {
-        drawable.close();
+        return surface.ctx.getImageData(0, 0, outputWidth, outputHeight);
+    } finally {
+        releasePooledCanvas(sourceSurface);
+        releasePooledCanvas(surface);
     }
+}
 
-    return rotatedData;
+export async function resizeImageData(imageData, targetWidth, targetHeight) {
+    return transformImageData(imageData, { width: targetWidth, height: targetHeight });
+}
+
+export async function rotateImageData(imageData, degrees) {
+    return transformImageData(imageData, { degrees });
 }
 
 export async function jpegBytesToImageData(jpegBytes, config = {}) {

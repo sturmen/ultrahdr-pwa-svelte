@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 describe('processing-core module source', () => {
   it('uses the shared gain-map metadata helper without redeclaring it locally', () => {
-    const filePath = path.resolve(process.cwd(), 'src/lib/processing-core.js');
+    const filePath = path.resolve(process.cwd(), 'src/lib/processing-core.ts');
     const source = fs.readFileSync(filePath, 'utf8');
 
     expect(source).toMatch(/import\s*{[\s\S]*\bbuildGainMapMetadata\b[\s\S]*}\s*from '\.\/gain-map-metadata\.js';/);

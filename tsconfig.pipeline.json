@@ -1,0 +1,30 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/lib/heic-processing.ts",
+    "src/lib/heif-hdr-processing.ts",
+    "src/lib/heic-processing.d.ts",
+    "src/lib/heif-hdr-processing.d.ts",
+    "src/lib/processing-core.ts",
+    "src/lib/processing-path.ts",
+    "src/lib/processing-types.ts",
+    "src/lib/libheif-browser.d.ts",
+    "src/lib/input-exif.d.ts",
+    "src/lib/exif-utils.d.ts",
+    "src/lib/canvas-runtime.d.ts",
+    "src/lib/gain-map-metadata.d.ts",
+    "src/lib/pipeline-telemetry.d.ts",
+    "src/lib/ultrahdr-wasm.d.ts",
+    "src/lib/gain-map-generator.d.ts",
+    "src/lib/image-utils.d.ts",
+    "src/lib/jpegtran-rotate.d.ts",
+    "src/lib/jpegli-decoder.d.ts",
+    "src/lib/tiff-processing.d.ts",
+    "src/lib/processing-core.d.ts"
+  ]
+}

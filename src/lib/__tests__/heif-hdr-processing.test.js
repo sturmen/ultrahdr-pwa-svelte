@@ -167,6 +167,17 @@ function readHalfFloatPixel(bytes, pixelIndex = 0) {
   };
 }
 
+function readPackedRgba1010102Pixel(bytes, pixelIndex = 0) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const packed = view.getUint32(pixelIndex * 4, true);
+  return {
+    r: packed & 0x3ff,
+    g: (packed >>> 10) & 0x3ff,
+    b: (packed >>> 20) & 0x3ff,
+    a: (packed >>> 30) & 0x03,
+  };
+}
+
 describe('heif-hdr-processing.js', () => {
   let originalFetch;
 
@@ -271,7 +282,7 @@ describe('heif-hdr-processing.js', () => {
     expect(pixel.b).toBeCloseTo(expected, 3);
   });
 
-  it('normalizes 10-bit channel samples using their native range before converting to linear', async () => {
+  it('returns hdr-intent-heif contract with packed rgba1010102 payload for 10-bit Rec.2020 PQ input', async () => {
     const { processHeifHdr } = await import('../heif-hdr-processing.js');
     const source = makeHdrNclxBuffer({ transfer: 16 });
     const file = new File([source], 'test_hdr_no_gain_map.HIF', { type: 'image/heif' });
@@ -295,13 +306,50 @@ describe('heif-hdr-processing.js', () => {
     );
 
     const result = await processHeifHdr(file);
-    const pixel = readHalfFloatPixel(result.hdrIntent.data);
-    const expected = Math.min((10000 / 203), pqEotfFromNormalized(pqCode10Bit / 1023));
+    const pixel = readPackedRgba1010102Pixel(result.hdrIntent.data);
 
-    expect(pixel.r).toBeCloseTo(expected, 3);
-    expect(pixel.g).toBeCloseTo(expected, 3);
-    expect(pixel.b).toBeCloseTo(expected, 3);
-    expect(pixel.a).toBeCloseTo(1, 3);
+    expect(result.hdrIntent.format).toBe('rgba1010102');
+    expect(result.hdrIntent.ct).toBe('pq');
+    expect(result.hdrIntent.strideBytes).toBe(4);
+    expect(pixel.r).toBe(pqCode10Bit);
+    expect(pixel.g).toBe(pqCode10Bit);
+    expect(pixel.b).toBe(pqCode10Bit);
+    expect(pixel.a).toBe(3);
+  });
+
+  it('returns hdr-intent-heif contract with packed rgba1010102 payload for 10-bit Rec.2020 HLG input', async () => {
+    const { processHeifHdr } = await import('../heif-hdr-processing.js');
+    const source = makeHdrNclxBuffer({ transfer: 18 });
+    const file = new File([source], 'test_hdr_no_gain_map.HIF', { type: 'image/heif' });
+    file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+    const hlgCode10Bit = 700;
+    decodeMock.mockReturnValueOnce([
+      {
+        get_width: () => 1,
+        get_height: () => 1,
+        handle: { id: 1 },
+      },
+    ]);
+    decodeMock.mockReturnValueOnce(
+      makeInterleaved16BitRgba(
+        1,
+        1,
+        [[hlgCode10Bit, hlgCode10Bit, hlgCode10Bit, 1023]],
+        { bitsPerPixel: 10 },
+      ),
+    );
+
+    const result = await processHeifHdr(file);
+    const pixel = readPackedRgba1010102Pixel(result.hdrIntent.data);
+
+    expect(result.hdrIntent.format).toBe('rgba1010102');
+    expect(result.hdrIntent.ct).toBe('hlg');
+    expect(result.hdrIntent.strideBytes).toBe(4);
+    expect(pixel.r).toBe(hlgCode10Bit);
+    expect(pixel.g).toBe(hlgCode10Bit);
+    expect(pixel.b).toBe(hlgCode10Bit);
+    expect(pixel.a).toBe(3);
   });
 
   it('applies orientation normalization in pixel space for rotation transforms', async () => {

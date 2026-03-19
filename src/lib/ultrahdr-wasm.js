@@ -260,6 +260,12 @@ export class UHDREncoder {
     constructor() {
         this._encoder = null;
         this._allocatedMemory = [];
+        this._reusableBuffers = {
+            compressedBase: null,
+            compressedGainMap: null,
+            compressedGainMapMetadata: null,
+            hdrIntentImage: null,
+        };
         this._initialized = false;
     }
 
@@ -329,32 +335,21 @@ export class UHDREncoder {
         }
 
         const Module = getWasmModule();
-        // Allocate memory for compressed data
         const size = data.length;
-        const capacity = size; // Or slightly larger? exact size is fine.
-        const ptr = Module._malloc(capacity);
-
-        if (!ptr) {
-            throw new Error(`Failed to allocate ${capacity} bytes for compressed base image`);
-        }
+        const { ptr, capacity } = this._ensureReusableBuffer('compressedBase', size, 'compressed base image');
 
         // Copy data to WASM memory
         const heap = new Uint8Array(Module.HEAPU8.buffer);
         heap.set(data, ptr);
 
-        try {
-            console.log(`[WASM] JS Calling setCompressedBaseImage: ptr=${ptr}, size=${size}`);
-            const result = Module._wasm_enc_set_compressed_base_image(
-                this._encoder,
-                ptr,
-                size,
-                capacity
-            );
-            this._checkResult(result, 'Failed to set compressed base image');
-        } finally {
-            // Free the memory - uhdr_enc_set_compressed_image should copy it
-            Module._free(ptr);
-        }
+        console.log(`[WASM] JS Calling setCompressedBaseImage: ptr=${ptr}, size=${size}`);
+        const result = Module._wasm_enc_set_compressed_base_image(
+            this._encoder,
+            ptr,
+            size,
+            capacity
+        );
+        this._checkResult(result, 'Failed to set compressed base image');
     }
 
     /**
@@ -481,23 +476,19 @@ export class UHDREncoder {
         }
 
         const Module = getWasmModule();
-        const ptr = this._allocateImageData(data, width, height, strideBytes, 'HDRIntent');
-        try {
-            const result = Module._wasm_enc_set_hdr_intent_image(
-                this._encoder,
-                ptr.dataPtr,
-                width,
-                height,
-                ptr.stride,
-                formatCode,
-                cgCode,
-                ctCode,
-                rangeCode
-            );
-            this._checkResult(result, 'Failed to set HDR intent image');
-        } finally {
-            this._freeMemory(ptr.dataPtr);
-        }
+        const ptr = this._allocateImageData(data, width, height, strideBytes, 'HDRIntent', 'hdrIntentImage');
+        const result = Module._wasm_enc_set_hdr_intent_image(
+            this._encoder,
+            ptr.dataPtr,
+            width,
+            height,
+            ptr.stride,
+            formatCode,
+            cgCode,
+            ctCode,
+            rangeCode
+        );
+        this._checkResult(result, 'Failed to set HDR intent image');
     }
 
     /**
@@ -580,53 +571,42 @@ export class UHDREncoder {
 
         const Module = getWasmModule();
 
-        // Allocate memory for compressed JPEG data
         const size = data.length;
-        const ptr = Module._malloc(size);
-        if (!ptr) {
-            throw new Error(`Failed to allocate ${size} bytes for compressed gain map image`);
-        }
+        const { ptr } = this._ensureReusableBuffer('compressedGainMap', size, 'compressed gain map image');
 
         const heap = new Uint8Array(Module.HEAPU8.buffer);
         heap.set(data, ptr);
 
-        // Allocate metadata in WASM memory (23 float values)
-        const metaPtr = Module._malloc(23 * 4);
-        if (!metaPtr) {
-            Module._free(ptr);
-            throw new Error('Failed to allocate metadata memory');
+        const { ptr: metaPtr } = this._ensureReusableBuffer(
+            'compressedGainMapMetadata',
+            23 * 4,
+            'compressed gain map metadata'
+        );
+        const metaArray = new Float32Array(Module.HEAPU8.buffer, metaPtr, 23);
+
+        // Per-channel metadata (matches wasm_enc_set_gainmap layout)
+        for (let i = 0; i < 3; i++) {
+            metaArray[i * 7 + 0] = metadata.gainMapMax ? metadata.gainMapMax[i] : 1.0;
+            metaArray[i * 7 + 3] = metadata.gainMapMin ? metadata.gainMapMin[i] : 1.0;
+            metaArray[i * 7 + 6] = metadata.gamma ? metadata.gamma[i] : 1.0;
+            metaArray[i * 7 + 4] = metadata.offsetSdr ? metadata.offsetSdr[i] : 0.0;
+            metaArray[i * 7 + 5] = metadata.offsetHdr ? metadata.offsetHdr[i] : 0.0;
         }
+        metaArray[21] = metadata.hdrCapacityMin !== undefined ? metadata.hdrCapacityMin : 1.0;
+        metaArray[22] = metadata.hdrCapacityMax !== undefined ? metadata.hdrCapacityMax : 1.0;
 
-        try {
-            const metaArray = new Float32Array(Module.HEAPU8.buffer, metaPtr, 23);
-
-            // Per-channel metadata (matches wasm_enc_set_gainmap layout)
-            for (let i = 0; i < 3; i++) {
-                metaArray[i * 7 + 0] = metadata.gainMapMax ? metadata.gainMapMax[i] : 1.0;
-                metaArray[i * 7 + 3] = metadata.gainMapMin ? metadata.gainMapMin[i] : 1.0;
-                metaArray[i * 7 + 6] = metadata.gamma ? metadata.gamma[i] : 1.0;
-                metaArray[i * 7 + 4] = metadata.offsetSdr ? metadata.offsetSdr[i] : 0.0;
-                metaArray[i * 7 + 5] = metadata.offsetHdr ? metadata.offsetHdr[i] : 0.0;
-            }
-            metaArray[21] = metadata.hdrCapacityMin !== undefined ? metadata.hdrCapacityMin : 1.0;
-            metaArray[22] = metadata.hdrCapacityMax !== undefined ? metadata.hdrCapacityMax : 1.0;
-
-            // Call C function: wasm_enc_set_gainmap(encoder, data, width, height, stride, metadata)
-            // For compressed data: width = data length, height = 1, stride = data length
-            // The C side computes capacity = stride * height = data.length, which is the exact JPEG size
-            const result = Module._wasm_enc_set_gainmap(
-                this._encoder,
-                ptr,
-                size,  // width = byte count
-                1,     // height = 1
-                size,  // stride = byte count (so capacity = size * 1 = size)
-                metaPtr
-            );
-            this._checkResult(result, 'Failed to set compressed gain map image');
-        } finally {
-            Module._free(ptr);
-            Module._free(metaPtr);
-        }
+        // Call C function: wasm_enc_set_gainmap(encoder, data, width, height, stride, metadata)
+        // For compressed data: width = data length, height = 1, stride = data length
+        // The C side computes capacity = stride * height = data.length, which is the exact JPEG size
+        const result = Module._wasm_enc_set_gainmap(
+            this._encoder,
+            ptr,
+            size,  // width = byte count
+            1,     // height = 1
+            size,  // stride = byte count (so capacity = size * 1 = size)
+            metaPtr
+        );
+        this._checkResult(result, 'Failed to set compressed gain map image');
     }
 
     /**
@@ -741,6 +721,7 @@ export class UHDREncoder {
      * @returns {void}
      */
     destroy() {
+        this._freeReusableBuffers();
         if (this._encoder !== null) {
             const Module = getWasmModule();
             Module._wasm_release_encoder(this._encoder);
@@ -768,7 +749,7 @@ export class UHDREncoder {
      * @param {string} label - Label for debugging
      * @returns {{dataPtr: number, stride: number}} - Pointer to data and stride
      */
-    _allocateImageData(data, width, height, stride, label) {
+    _allocateImageData(data, width, height, stride, label, reusableKey = null) {
         const Module = getWasmModule();
         const hasImageDataConstructor = typeof ImageData !== 'undefined';
 
@@ -799,16 +780,25 @@ export class UHDREncoder {
         // Allocate memory for the image with padding to prevent OOB reads
         const totalSize = alignedStride * height;
         const padding = 4096; // 4KB padding
-        const dataPtr = Module._malloc(totalSize + padding);
+        const allocationSize = totalSize + padding;
+        let dataPtr;
+
+        if (reusableKey) {
+            dataPtr = this._ensureReusableBuffer(reusableKey, allocationSize, `${label} image`).ptr;
+        } else {
+            dataPtr = Module._malloc(allocationSize);
+        }
 
         if (!dataPtr) { // Check for null or 0
-            throw new Error(`Failed to allocate ${totalSize + padding} bytes for ${label} image`);
+            throw new Error(`Failed to allocate ${allocationSize} bytes for ${label} image`);
         }
 
         console.log(`[WASM] Allocated ${label} image: ${width}x${height}, stride=${alignedStride} (unaligned=${unalignedStride}), ptr=${dataPtr}`);
 
         // Track for cleanup
-        this._allocatedMemory.push(dataPtr);
+        if (!reusableKey) {
+            this._allocatedMemory.push(dataPtr);
+        }
 
         // Copy data to WASM memory
         const heap = new Uint8Array(Module.HEAPU8.buffer);
@@ -848,6 +838,38 @@ export class UHDREncoder {
             Module._free(ptr);
         }
         this._allocatedMemory = this._allocatedMemory.filter(p => p !== ptr);
+    }
+
+    _ensureReusableBuffer(name, size, label) {
+        const Module = getWasmModule();
+        const existing = this._reusableBuffers[name];
+        if (existing && existing.capacity >= size) {
+            return existing;
+        }
+
+        if (existing?.ptr) {
+            Module._free(existing.ptr);
+        }
+
+        const ptr = Module._malloc(size);
+        if (!ptr) {
+            throw new Error(`Failed to allocate ${size} bytes for ${label}`);
+        }
+
+        const buffer = { ptr, capacity: size };
+        this._reusableBuffers[name] = buffer;
+        return buffer;
+    }
+
+    _freeReusableBuffers() {
+        const Module = getWasmModule();
+        for (const key of Object.keys(this._reusableBuffers)) {
+            const buffer = this._reusableBuffers[key];
+            if (buffer?.ptr) {
+                Module._free(buffer.ptr);
+            }
+            this._reusableBuffers[key] = null;
+        }
     }
 
     /**

@@ -23,7 +23,8 @@ export function hasWebGlSupport(runtime: typeof globalThis = globalThis): boolea
   try {
     if (typeof runtime?.OffscreenCanvas !== 'undefined') {
       const canvas = new runtime.OffscreenCanvas(1, 1);
-      const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      const context = canvas.getContext('webgl')
+        || (canvas as unknown as { getContext: (contextId: string) => unknown }).getContext('experimental-webgl');
       if (context) {
         return true;
       }

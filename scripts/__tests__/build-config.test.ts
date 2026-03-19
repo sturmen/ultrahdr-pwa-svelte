@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 describe('build warning regressions', () => {
   it('uses browser-safe HEIF adapter imports in production modules', () => {
-    const heicProcessing = readFileSync(resolve('src/lib/heic-processing.js'), 'utf8');
-    const heifHdrProcessing = readFileSync(resolve('src/lib/heif-hdr-processing.js'), 'utf8');
+    const heicProcessing = readFileSync(resolve('src/lib/heic-processing.ts'), 'utf8');
+    const heifHdrProcessing = readFileSync(resolve('src/lib/heif-hdr-processing.ts'), 'utf8');
     const libheifBrowser = readFileSync(resolve('src/lib/libheif-browser.js'), 'utf8');
     const viteConfigSource = readFileSync(resolve('vite.config.ts'), 'utf8');
 
@@ -29,5 +29,21 @@ describe('build warning regressions', () => {
     expect(viteConfigSource).toContain('ort.webgl.min.mjs');
     expect(viteConfigSource).toContain('ort-wasm-simd-threaded*.mjs');
     expect(imageProcessorSource).not.toContain('import { classifyInputProcessingPath } from "./processing-core.js";');
+  });
+
+  it('defines a focused strict typecheck for the migrated HDR pipeline modules', () => {
+    const packageJsonSource = readFileSync(resolve('package.json'), 'utf8');
+    const typecheckConfigSource = readFileSync(resolve('tsconfig.pipeline.json'), 'utf8');
+
+    expect(packageJsonSource).toContain('"typecheck"');
+    expect(packageJsonSource).toContain('tsconfig.pipeline.json');
+    expect(packageJsonSource).toContain('svelte-check');
+    expect(typecheckConfigSource).toContain('"strict": true');
+    expect(typecheckConfigSource).toContain('"allowImportingTsExtensions": true');
+    expect(typecheckConfigSource).toContain('src/lib/heic-processing.ts');
+    expect(typecheckConfigSource).toContain('src/lib/heif-hdr-processing.ts');
+    expect(typecheckConfigSource).toContain('src/lib/processing-core.ts');
+    expect(typecheckConfigSource).toContain('src/lib/processing-path.ts');
+    expect(typecheckConfigSource).toContain('src/lib/processing-types.ts');
   });
 });

@@ -14,6 +14,7 @@ vi.mock('../image-utils.js', async () => {
         ...actual,
         rotateImageData: vi.fn(actual.rotateImageData),
         jpegBytesToImageData: vi.fn(actual.jpegBytesToImageData),
+        transformImageData: vi.fn(actual.transformImageData),
     };
 });
 
@@ -407,7 +408,6 @@ describe('processImage UltraHDR preservation path', () => {
 
         expect(result).toBeInstanceOf(Blob);
         expect(result.type).toBe('image/jpeg');
-        expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
     });
 
     it('uses lossless bitstream rotation for preserved UltraHDR components when dimensions are MCU-compatible', async () => {
@@ -434,6 +434,26 @@ describe('processImage UltraHDR preservation path', () => {
             transform: '90',
             options: { trim: false, perfect: false },
         });
+    });
+
+    it('avoids decoding preserved UltraHDR JPEG components when lossless component rotation remains valid', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        const imageUtils = await import('../image-utils.js');
+        isUhdrImage.mockResolvedValue(true);
+
+        const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
+        file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
+
+        await processImage(file, {
+            rotation: 90,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(losslessRotateCalls).toHaveLength(2);
+        expect(imageUtils.jpegBytesToImageData).not.toHaveBeenCalled();
     });
 
     it('normalizes multichannel gain-map metadata for rotated preserved UltraHDR output', async () => {
@@ -513,8 +533,6 @@ describe('processImage UltraHDR preservation path', () => {
                 offsetHdr: [0.0, 0.0, 0.0]
             })
         );
-
-        expect(canvasSpy.mock.calls.filter(([tag]) => tag === 'canvas').length).toBeGreaterThan(0);
     });
 
     it('passes extracted HEIC EXIF payload to encoder when stripExif=false', async () => {
@@ -770,13 +788,37 @@ describe('processImage UltraHDR preservation path', () => {
         const mockImageData = new ImageData(new Uint8ClampedArray(400), 10, 10);
         vi.spyOn(imageUtils, 'jpegBytesToImageData').mockResolvedValue(mockImageData);
 
-        const rotateSpy = vi.spyOn(imageUtils, 'rotateImageData').mockImplementation(async (img) => img);
+        const transformSpy = vi.spyOn(imageUtils, 'transformImageData').mockImplementation(async (img) => img);
         vi.spyOn(core, 'compressImages').mockResolvedValue({ sdr: new Uint8Array(), gainMap: new Uint8Array() });
 
         await core.processUhdrWithRotation(new Uint8Array([0]), { rotation: 0 });
 
         // Should be called for base + gain map alignment (auto-rotation 90 for orientation 6)
-        expect(rotateSpy).toHaveBeenCalledWith(expect.anything(), 90);
+        expect(transformSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ degrees: 90 }));
+    });
+
+    it('uses a fused transform helper instead of separate resize and rotate passes during generated-path re-encode', async () => {
+        const core = await import('../processing-core.js');
+        const imageUtils = await import('../image-utils.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const transformSpy = vi.spyOn(imageUtils, 'transformImageData');
+        const rotateSpy = vi.spyOn(imageUtils, 'rotateImageData');
+        const resizeSpy = vi.spyOn(imageUtils, 'resizeImageData');
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await core.processImage(file, {
+            rotation: 90,
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(transformSpy).toHaveBeenCalled();
+        expect(rotateSpy).not.toHaveBeenCalled();
+        expect(resizeSpy).not.toHaveBeenCalled();
     });
 
 });

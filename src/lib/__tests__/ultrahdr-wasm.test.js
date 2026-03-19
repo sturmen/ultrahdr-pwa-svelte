@@ -379,6 +379,93 @@ describe('UHDREncoder Class', () => {
     expect(() => encoder.setExifData(new Uint8Array([1, 2, 3]))).toThrow('Encoder not initialized');
   });
 
+  it('reuses the compressed base-image upload buffer across same-sized calls', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    mockModule._malloc.mockReturnValueOnce(0x3000);
+
+    encoder.setCompressedBaseImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+    encoder.setCompressedBaseImage(new Uint8Array([0xff, 0xd8, 0xff, 0xdb]));
+
+    expect(mockModule._malloc).toHaveBeenCalledTimes(1);
+    expect(mockModule._free).not.toHaveBeenCalledWith(0x3000);
+    expect(mockModule._wasm_enc_set_compressed_base_image).toHaveBeenNthCalledWith(
+      2,
+      mockEncoderHandle,
+      0x3000,
+      4,
+      4,
+    );
+  });
+
+  it('reuses compressed gain-map upload and metadata buffers across same-sized calls', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    mockModule._malloc
+      .mockReturnValueOnce(0x3800)
+      .mockReturnValueOnce(0x3900);
+
+    const metadata = {
+      gainMapMax: [1, 1, 1],
+      gainMapMin: [1, 1, 1],
+      gamma: [1, 1, 1],
+      offsetSdr: [0, 0, 0],
+      offsetHdr: [0, 0, 0],
+      hdrCapacityMin: 1,
+      hdrCapacityMax: 1,
+    };
+
+    encoder.setCompressedGainMapImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), metadata);
+    encoder.setCompressedGainMapImage(new Uint8Array([0xff, 0xd8, 0xff, 0xdb]), metadata);
+
+    expect(mockModule._malloc).toHaveBeenCalledTimes(2);
+    expect(mockModule._free).not.toHaveBeenCalledWith(0x3800);
+    expect(mockModule._free).not.toHaveBeenCalledWith(0x3900);
+    expect(mockModule._wasm_enc_set_gainmap).toHaveBeenNthCalledWith(
+      2,
+      mockEncoderHandle,
+      0x3800,
+      4,
+      1,
+      4,
+      0x3900,
+    );
+  });
+
+  it('frees reusable upload buffers on destroy', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    mockModule._malloc
+      .mockReturnValueOnce(0x4000)
+      .mockReturnValueOnce(0x4100)
+      .mockReturnValueOnce(0x4200);
+
+    const metadata = {
+      gainMapMax: [1, 1, 1],
+      gainMapMin: [1, 1, 1],
+      gamma: [1, 1, 1],
+      offsetSdr: [0, 0, 0],
+      offsetHdr: [0, 0, 0],
+      hdrCapacityMin: 1,
+      hdrCapacityMax: 1,
+    };
+
+    encoder.setCompressedBaseImage(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+    encoder.setCompressedGainMapImage(new Uint8Array([0xff, 0xd8, 0xff, 0xdb]), metadata);
+
+    encoder.destroy();
+
+    expect(mockModule._free).toHaveBeenCalledWith(0x4000);
+    expect(mockModule._free).toHaveBeenCalledWith(0x4100);
+    expect(mockModule._free).toHaveBeenCalledWith(0x4200);
+  });
+
   it('should map HDR-intent image metadata to API-0 RGBA1010102 BT2100/PQ/FULL arguments', async () => {
     const { UHDREncoder } = await import('../ultrahdr-wasm.js');
     const encoder = new UHDREncoder();
@@ -406,6 +493,54 @@ describe('UHDREncoder Class', () => {
       2, // UHDR_CG_BT_2100
       2, // UHDR_CT_PQ
       1  // UHDR_CR_FULL_RANGE
+    );
+  });
+
+  it('reuses the HDR-intent upload buffer across same-sized calls', async () => {
+    const { UHDREncoder } = await import('../ultrahdr-wasm.js');
+    const encoder = new UHDREncoder();
+    await encoder.init();
+
+    mockModule._malloc.mockReturnValueOnce(0x4400);
+
+    encoder.setHDRIntentImage(
+      new Uint8Array([0xff, 0x03, 0x00, 0xc0, 0x00, 0x00, 0xf0, 0x3f]),
+      2,
+      1,
+      {
+        strideBytes: 8,
+        format: 'rgba1010102',
+        cg: 'bt2100',
+        ct: 'pq',
+        range: 'full',
+      },
+    );
+    encoder.setHDRIntentImage(
+      new Uint8Array([0x00, 0x00, 0xf0, 0x3f, 0xff, 0x03, 0x00, 0xc0]),
+      2,
+      1,
+      {
+        strideBytes: 8,
+        format: 'rgba1010102',
+        cg: 'bt2100',
+        ct: 'pq',
+        range: 'full',
+      },
+    );
+
+    expect(mockModule._malloc).toHaveBeenCalledTimes(1);
+    expect(mockModule._free).not.toHaveBeenCalledWith(0x4400);
+    expect(mockModule._wasm_enc_set_hdr_intent_image).toHaveBeenNthCalledWith(
+      2,
+      mockEncoderHandle,
+      0x4400,
+      2,
+      1,
+      64,
+      5,
+      2,
+      2,
+      1,
     );
   });
 
