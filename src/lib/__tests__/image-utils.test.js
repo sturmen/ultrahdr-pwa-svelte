@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canvasToBlob, imageDataToDrawable, imageDataToJpegBlob } from '../image-utils.js';
+import { canvasToBlob, imageDataToDrawable, imageDataToJpegBlob, transformImageData } from '../image-utils.js';
 
 describe('canvasToBlob', () => {
   it('prefers convertToBlob over toBlob when both are available', async () => {
@@ -90,7 +90,7 @@ describe('imageDataToJpegBlob', () => {
       willReadFrequently: true,
       colorSpace: 'display-p3',
     });
-    expect(putImageData).toHaveBeenCalledWith(imageData, 0, 0);
+    expect(putImageData).toHaveBeenCalledWith(expect.any(ImageData), 0, 0);
     expect(convertToBlob).toHaveBeenCalledWith({
       type: 'image/jpeg',
       quality: 0.8,
@@ -121,5 +121,60 @@ describe('imageDataToDrawable', () => {
     expect(result).toBe(drawable);
     expect(createImageBitmapSpy).toHaveBeenCalledTimes(1);
     expect(createImageBitmapSpy).toHaveBeenCalledWith(imageData);
+  });
+});
+
+describe('transformImageData', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete global.document;
+  });
+
+  it('normalizes image-data-shaped inputs before writing them to a canvas context', async () => {
+    const putImageData = vi.fn((value) => {
+      if (!(value instanceof ImageData)) {
+        throw new TypeError("Argument 1 ('imagedata') to OffscreenCanvasRenderingContext2D.putImageData must be an instance of ImageData");
+      }
+    });
+    const getImageData = vi.fn(() => new ImageData(new Uint8ClampedArray([
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+    ]), 2, 1));
+    const drawImage = vi.fn();
+    const save = vi.fn();
+    const restore = vi.fn();
+    const translate = vi.fn();
+    const rotate = vi.fn();
+
+    global.document = {
+      createElement: vi.fn(() => ({
+        width: 0,
+        height: 0,
+        getContext: vi.fn(() => ({
+          putImageData,
+          getImageData,
+          drawImage,
+          save,
+          restore,
+          translate,
+          rotate,
+        })),
+      })),
+    };
+
+    const foreignImageData = {
+      width: 2,
+      height: 1,
+      data: new Uint8ClampedArray([
+        255, 0, 0, 255,
+        0, 255, 0, 255,
+      ]),
+      colorSpace: 'srgb',
+    };
+
+    const result = await transformImageData(foreignImageData, { width: 2, height: 1, degrees: 90 });
+
+    expect(result).toBeInstanceOf(ImageData);
+    expect(putImageData).toHaveBeenCalledWith(expect.any(ImageData), 0, 0);
   });
 });
