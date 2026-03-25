@@ -1,6 +1,6 @@
 {
   "name": "ultrahdr-pwa-svelte",
-  "version": "5.5.5",
+  "version": "5.5.6",
   "description": "A progressive webapp to encode UltraHDR images.",
   "homepage": "https://sturmen.github.io/ultrahdr-pwa-svelte",
   "main": "index.js",
