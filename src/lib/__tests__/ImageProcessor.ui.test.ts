@@ -160,6 +160,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByTestId('floating-gear')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^settings$/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/high-efficiency jpeg encoding/i)).not.toBeInTheDocument();
   });
 
   it('shows mobile results action bar with export and discard controls', async () => {
@@ -383,6 +384,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByRole('heading', { name: /^settings$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /^results$/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/minimum brightness threshold for enhancement/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/high-efficiency jpeg encoding/i)).not.toBeInTheDocument();
     expect(screen.getByTestId('results-discard-all')).toBeInTheDocument();
 
     expect(screen.queryByTestId('floating-gear')).not.toBeInTheDocument();
@@ -906,6 +908,9 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     );
     expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).not.toHaveProperty(
       'forceExecutionProviders',
+    );
+    expect(vi.mocked(runtimeProcessMock).mock.calls[0][1]).not.toHaveProperty(
+      'useJpegli',
     );
   });
 

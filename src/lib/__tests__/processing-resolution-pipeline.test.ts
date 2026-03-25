@@ -262,7 +262,6 @@ describe('processing fixed-resolution generated pipeline', () => {
       rotation: 0,
       stripExif: true,
       discardGainMap: true,
-      useJpegli: true,
     });
 
     expect(jpegBitstreamRotations).toHaveLength(1);
@@ -290,7 +289,6 @@ describe('processing fixed-resolution generated pipeline', () => {
       rotation: 0,
       stripExif: true,
       discardGainMap: true,
-      useJpegli: true,
     });
 
     expect(rotateJpeg).toHaveBeenCalledTimes(1);
@@ -368,7 +366,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     expect(stageEvents).toContain('prepare-gmnet-input');
   });
 
-  it('emits stage-progress updates for both jpegli encode stages when useJpegli=true', async () => {
+  it('emits stage-progress updates for both jpegli encode stages by default', async () => {
     decodeDimensions.width = 3200;
     decodeDimensions.height = 2400;
     const onProgress = vi.fn();
@@ -379,7 +377,6 @@ describe('processing fixed-resolution generated pipeline', () => {
       rotation: 0,
       stripExif: true,
       discardGainMap: true,
-      useJpegli: true,
       onProgress,
     });
 

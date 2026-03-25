@@ -58,7 +58,6 @@ interface ProcessOptions {
     onStageProgress?: (progress: number, note?: string, metadata?: Record<string, unknown> | null) => void;
     fileIndex?: number;
     totalFiles?: number;
-    useJpegli?: boolean;
     jpegliChunkRows?: number;
     originalSdrJpegBytes?: Uint8Array | null;
     sourceAutoRotation?: number;
@@ -1497,7 +1496,7 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
         }
 
         const createJpegliProgressOptions = (stage, label) => {
-            if (!telemetry || !options.useJpegli) {
+            if (!telemetry) {
                 return {};
             }
             return {
@@ -1519,7 +1518,7 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
 
         console.log("[start] encode-sdr-to-jpeg")
         let sdrJpegBytes;
-        if (telemetry && options.useJpegli) {
+        if (telemetry) {
             telemetry.emitStageProgress('encode-sdr-to-jpeg', 0, {
                 note: 'Encoding SDR JPEG 0%',
             });
@@ -1558,7 +1557,7 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
                     quality,
                     createJpegliProgressOptions('encode-sdr-to-jpeg', 'Encoding SDR JPEG'),
                 );
-            if (telemetry && options.useJpegli) {
+            if (telemetry) {
                 telemetry.emitStageProgress('encode-sdr-to-jpeg', 100, {
                     note: 'Encoding SDR JPEG 100%',
                 });
@@ -1566,7 +1565,7 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
         }
         console.log("[end] encode-sdr-to-jpeg success")
         console.log("[start] encode-gain-map-to-jpeg")
-        if (telemetry && options.useJpegli) {
+        if (telemetry) {
             telemetry.emitStageProgress('encode-gain-map-to-jpeg', 0, {
                 note: 'Encoding gain map JPEG 0%',
             });
@@ -1580,12 +1579,12 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
                     createJpegliProgressOptions('encode-gain-map-to-jpeg', 'Encoding gain map JPEG'),
                 )
             ) :
-            await encoderFn(
-                encoderGainMapImageData,
-                quality,
-                createJpegliProgressOptions('encode-gain-map-to-jpeg', 'Encoding gain map JPEG'),
-            );
-        if (telemetry && options.useJpegli) {
+                await encoderFn(
+                    encoderGainMapImageData,
+                    quality,
+                    createJpegliProgressOptions('encode-gain-map-to-jpeg', 'Encoding gain map JPEG'),
+                );
+        if (telemetry) {
             telemetry.emitStageProgress('encode-gain-map-to-jpeg', 100, {
                 note: 'Encoding gain map JPEG 100%',
             });

@@ -70,7 +70,6 @@
   let keepScreenAwake = true;
   let backendPreference = "auto";
   let gmnetCheckpointingPreference = "auto";
-  let useJpegli = false;
 
   let processing = false;
   let results = [];
@@ -390,7 +389,6 @@
       gmnetCheckpointingPreference,
       maxContentBoostStops,
       quality,
-      useJpegli,
       discardGainMap,
       stripExif,
       keepScreenAwake,
@@ -404,7 +402,6 @@
     gmnetCheckpointingPreference = normalized.gmnetCheckpointingPreference;
     maxContentBoostStops = normalized.maxContentBoostStops;
     quality = normalized.quality;
-    useJpegli = normalized.useJpegli;
     discardGainMap = normalized.discardGainMap;
     stripExif = normalized.stripExif;
     keepScreenAwake = normalized.keepScreenAwake;
@@ -880,7 +877,6 @@
       maxContentBoost: convertStopsToMaxContentBoost(maxContentBoostStops),
       rotation,
       quality,
-      useJpegli,
       discardGainMap,
       stripExif,
       gmnetModelVariant: "realworld",
@@ -2397,20 +2393,6 @@
               <label class="switch">
                 <input
                   type="checkbox"
-                  bind:checked={useJpegli}
-                  on:change={handleSettingChange}
-                />
-                <span class="slider"></span>
-              </label>
-              <div class="switch-text">
-                <span class="switch-label">High-Efficiency JPEG Encoding</span>
-              </div>
-            </div>
-
-            <div class="control-group switch-group">
-              <label class="switch">
-                <input
-                  type="checkbox"
                   bind:checked={discardGainMap}
                   on:change={handleSettingChange}
                 />
@@ -2854,20 +2836,6 @@
           <label class="switch">
             <input
               type="checkbox"
-              bind:checked={useJpegli}
-              on:change={handleSettingChange}
-            />
-            <span class="slider"></span>
-          </label>
-          <div class="switch-text">
-            <span class="switch-label">High-Efficiency JPEG Encoding</span>
-          </div>
-        </div>
-
-        <div class="control-group switch-group">
-          <label class="switch">
-            <input
-              type="checkbox"
               bind:checked={discardGainMap}
               on:change={handleSettingChange}
             />
@@ -3091,13 +3059,6 @@
     text-align: left;
     display: grid;
     gap: 0.38rem;
-  }
-
-  .control-group.switch-group .switch-text {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
   }
 
   .control-group.horizontal {
