@@ -104,8 +104,8 @@ function installSafeStorage(name: 'localStorage' | 'sessionStorage', storage: Me
   }
 }
 
-const CanvasImageData = resolveImageDataConstructor();
-installImageDataConstructor(CanvasImageData);
+const InstalledImageData = resolveImageDataConstructor();
+installImageDataConstructor(InstalledImageData);
 installSafeStorage('localStorage', createMemoryStorage());
 installSafeStorage('sessionStorage', createMemoryStorage());
 
@@ -114,20 +114,6 @@ global.URL.createObjectURL = vi.fn((_blob: Blob) => {
 });
 
 global.URL.revokeObjectURL = vi.fn();
-
-global.createImageBitmap = vi.fn(async (source: { width?: number; height?: number } | Blob) => {
-  const width = typeof source === 'object' && source && typeof source.width === 'number'
-    ? source.width
-    : 64;
-  const height = typeof source === 'object' && source && typeof source.height === 'number'
-    ? source.height
-    : 64;
-  return {
-    width,
-    height,
-    close: () => { },
-  };
-});
 
 // Mock navigator
 if (typeof navigator === 'undefined') {

@@ -25,6 +25,12 @@ const { encoderSpies, forwardedMetadata } = vi.hoisted(() => ({
   },
 }));
 
+type JpegliDecodedImage = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
+
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
     constructor() {}
@@ -81,52 +87,17 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 
 vi.mock('../jpegli-decoder.js', () => ({
   encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
-  decodeJpegli: vi.fn(async () => ({
+  decodeJpegli: vi.fn(async (): Promise<JpegliDecodedImage> => ({
     width: 8,
     height: 8,
     data: new Uint8ClampedArray(8 * 8 * 4).fill(127),
   })),
 }));
 
-class MockOffscreenCanvas {
-  constructor(width, height) {
-    this.width = width;
-    this.height = height;
-  }
-
-  getContext() {
-    const { width, height } = this;
-    return {
-      drawImage: vi.fn(),
-      putImageData: vi.fn(),
-      getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(width * height * 4).fill(127), width, height)),
-      save: vi.fn(),
-      restore: vi.fn(),
-      translate: vi.fn(),
-      rotate: vi.fn(),
-    };
-  }
-
-  async convertToBlob() {
-    return new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
-  }
-}
-
 describe('processImage metadata forwarding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     globalThis.Worker = undefined;
-    globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async (input) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = input instanceof ImageData ? input.width : 1;
-      canvas.height = input instanceof ImageData ? input.height : 1;
-      if (input instanceof ImageData) {
-        const context = canvas.getContext('2d');
-        context?.putImageData(input, 0, 0);
-      }
-      return canvas;
-    });
   });
 
   it('uses generated gain-map metadata when encoding compressed gain map', async () => {

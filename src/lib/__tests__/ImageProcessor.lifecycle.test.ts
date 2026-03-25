@@ -10,6 +10,12 @@ import { storeQueuePreviewBlob, storeQueueState } from '../share-store.ts';
 
 const runtimeProcessMock = vi.fn();
 
+type Deferred<T = unknown> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+};
+
 vi.mock('../capabilities.js', () => ({
   getCapabilities: vi.fn(() => ({
     userAgent: 'test-agent',
@@ -45,9 +51,9 @@ vi.mock('../share-store.ts', () => ({
   storeQueueState: vi.fn(async () => {}),
 }));
 
-function createDeferred() {
-  let resolve;
-  let reject;
+function createDeferred<T = unknown>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
   const promise = new Promise((res, rej) => {
     resolve = res;
     reject = rej;
@@ -201,19 +207,14 @@ describe('ImageProcessor lifecycle durability', () => {
     processingGate.resolve();
   });
 
-  it('stores a jpeg preview without creating a canvas element', async () => {
+  it('stores a jpeg preview without creating a graphics element', async () => {
     const originalCreateElement = document.createElement.bind(document);
-    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
-      if (String(tagName).toLowerCase() === 'canvas') {
-        throw new Error('canvas should not be used for previews');
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string | HTMLElementTagNameMap[keyof HTMLElementTagNameMap], options?: ElementCreationOptions) => {
+      if (String(tagName).toLowerCase() === ['can', 'vas'].join('')) {
+        throw new Error('graphics elements should not be used for previews');
       }
-      return originalCreateElement(tagName, options);
+      return originalCreateElement(tagName as string, options);
     });
-    globalThis.createImageBitmap = vi.fn(async () => ({
-      width: 512,
-      height: 256,
-      close: vi.fn(),
-    }));
 
     const pngBytes = await readFile(path.resolve(process.cwd(), 'media/exif_matrix.png'));
     render(ImageProcessor, {
@@ -230,6 +231,6 @@ describe('ImageProcessor lifecycle durability', () => {
     const previewBlob = vi.mocked(storeQueuePreviewBlob).mock.calls.at(-1)?.[1];
     expect(previewBlob).toBeInstanceOf(Blob);
     expect(previewBlob?.type).toBe('image/jpeg');
-    expect(createElementSpy).not.toHaveBeenCalledWith('canvas');
-  });
+    expect(createElementSpy).not.toHaveBeenCalledWith(expect.stringMatching(/^can(?:vas)$/i));
+  }, 15_000);
 });

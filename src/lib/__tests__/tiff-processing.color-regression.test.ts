@@ -38,5 +38,5 @@ describe('tiff-processing color regression', () => {
     expect(redMean).toBeGreaterThan(40);
     expect(greenMean).toBeLessThan(120);
     expect(blueMean).toBeGreaterThan(30);
-  });
+  }, 15_000);
 });

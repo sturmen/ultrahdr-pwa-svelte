@@ -178,7 +178,6 @@ function cloneRuntimeInitFailureHistory(history = []) {
 function buildWorkerRuntimeCapabilities(runtime = globalThis) {
   return {
     hasWorker: typeof runtime?.Worker === 'function',
-    hasCreateImageBitmap: typeof runtime?.createImageBitmap === 'function',
   };
 }
 
@@ -990,7 +989,6 @@ async function initializeRuntimeInternal(context, options = {}) {
     error.stepId = 'webgpu-check';
     error.diagnostics = {
       hasWorker: typeof globalThis?.Worker === 'function',
-      hasCreateImageBitmap: typeof globalThis?.createImageBitmap === 'function',
     };
     throw error;
   }

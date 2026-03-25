@@ -17,11 +17,12 @@ describe('processing runtime API', () => {
 
   it('isolates worker initialization state across runtime instances', async () => {
     const OriginalWorker = globalThis.Worker;
-    const originalOffscreenCanvas = globalThis.OffscreenCanvas;
-    const originalCreateImageBitmap = globalThis.createImageBitmap;
-    const instances = [];
+    const instances: MockWorker[] = [];
 
     class MockWorker {
+      listeners: Map<string, Array<(event: MessageEvent) => void>>;
+      posted: Array<{ type: string; options?: { smokeAssetPath?: string } }>;
+
       constructor() {
         this.listeners = new Map();
         this.posted = [];
@@ -63,8 +64,6 @@ describe('processing runtime API', () => {
 
     try {
       globalThis.Worker = MockWorker;
-      globalThis.OffscreenCanvas = class OffscreenCanvas {};
-      globalThis.createImageBitmap = async () => ({});
 
       const runtimeA = createProcessingRuntime();
       const runtimeB = createProcessingRuntime();
@@ -87,8 +86,6 @@ describe('processing runtime API', () => {
       expect(initB.options.smokeAssetPath).toBe('models/b.png');
     } finally {
       globalThis.Worker = OriginalWorker;
-      globalThis.OffscreenCanvas = originalOffscreenCanvas;
-      globalThis.createImageBitmap = originalCreateImageBitmap;
     }
   });
 

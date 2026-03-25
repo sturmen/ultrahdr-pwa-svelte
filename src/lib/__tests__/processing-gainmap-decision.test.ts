@@ -21,6 +21,12 @@ const {
   },
 }));
 
+type JpegliDecodedImage = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
+
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
     async generate(imageData) {
@@ -89,42 +95,12 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 
 vi.mock('../jpegli-decoder.js', () => ({
   encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
-  decodeJpegli: vi.fn(async () => ({
+  decodeJpegli: vi.fn(async (): Promise<JpegliDecodedImage> => ({
     width: 16,
     height: 16,
     data: new Uint8ClampedArray(16 * 16 * 4).fill(127),
   })),
 }));
-
-class MockOffscreenCanvas {
-  constructor(width, height) {
-    this.width = width;
-    this.height = height;
-  }
-
-  getContext() {
-    const { width, height } = this;
-    return {
-      drawImage: vi.fn(),
-      putImageData: vi.fn(),
-      getImageData: vi.fn(() => {
-        const data = new Uint8ClampedArray(width * height * 4).fill(127);
-        for (let i = 3; i < data.length; i += 4) {
-          data[i] = 255;
-        }
-        return new ImageData(data, width, height);
-      }),
-      save: vi.fn(),
-      restore: vi.fn(),
-      translate: vi.fn(),
-      rotate: vi.fn(),
-    };
-  }
-
-  async convertToBlob() {
-    return new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
-  }
-}
 
 function fixtureFileNamesByGlob(prefixRegex) {
   const mediaPath = path.resolve(process.cwd(), 'media');
@@ -160,17 +136,6 @@ describe('processImage gain map decision (fixture driven)', () => {
     vi.clearAllMocks();
     gmnetCalls.length = 0;
     globalThis.Worker = undefined;
-    globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async (input) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = input instanceof ImageData ? input.width : 8;
-      canvas.height = input instanceof ImageData ? input.height : 8;
-      if (input instanceof ImageData) {
-        const context = canvas.getContext('2d');
-        context?.putImageData(input, 0, 0);
-      }
-      return canvas;
-    });
   });
 
   it('uses generated path for test_sdr.jpg', async () => {

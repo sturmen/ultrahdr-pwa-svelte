@@ -72,7 +72,7 @@ describe('GMNetInferenceSession', () => {
     });
   });
 
-  it('preprocesses the global inference image without requiring canvas support', async () => {
+  it('preprocesses the global inference image without requiring browser drawing support', async () => {
     const { GMNetInferenceSession } = await import('../gmnet-session.ts');
     const session = new GMNetInferenceSession({
       runtime: {

@@ -69,8 +69,6 @@ class CapabilityWorker {
 
 describe('processing probe-free runtime init and process options', () => {
   const originalWorker = globalThis.Worker;
-  const originalOffscreenCanvas = globalThis.OffscreenCanvas;
-  const originalCreateImageBitmap = globalThis.createImageBitmap;
   const originalLocalStorage = globalThis.localStorage;
 
   beforeEach(() => {
@@ -95,14 +93,10 @@ describe('processing probe-free runtime init and process options', () => {
     };
     globalThis.localStorage.clear();
     globalThis.Worker = CapabilityWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
   });
 
   afterEach(() => {
     globalThis.Worker = originalWorker;
-    globalThis.OffscreenCanvas = originalOffscreenCanvas;
-    globalThis.createImageBitmap = originalCreateImageBitmap;
     globalThis.localStorage = originalLocalStorage;
   });
 

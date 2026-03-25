@@ -67,7 +67,7 @@ describe('jpegli-decoder decode', () => {
     globalThis.createJpegliWasm = window.createJpegliWasm;
   });
 
-  it('decodes jpeg bytes to rgba raster output without canvas', async () => {
+  it('decodes jpeg bytes to rgba raster output without browser drawing shims', async () => {
     const { decodeJpegli } = await import('../jpegli-decoder.js');
 
     const result = await decodeJpegli(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));

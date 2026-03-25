@@ -1,5 +1,4 @@
 import { Jimp, ResizeStrategy } from 'jimp';
-import { Buffer } from 'buffer';
 import { decode as decodePng } from 'fast-png';
 
 export type RasterImageLike = ImageData | {
@@ -11,12 +10,23 @@ export type RasterImageLike = ImageData | {
 
 type JimpBitmapImage = {
   bitmap: {
-    data: Uint8Array | Buffer;
+    data: Uint8Array;
     width: number;
     height: number;
   };
   resize(options: { w: number; h: number; mode?: unknown }): unknown;
   rotate(options: number): unknown;
+};
+
+type JimpBitmapConstructor = new (options: {
+  width: number;
+  height: number;
+  data: Uint8Array;
+}) => JimpBitmapImage;
+
+type JimpBufferReader = {
+  fromBuffer?: (buffer: ArrayBuffer) => Promise<JimpBitmapImage>;
+  read: (buffer: ArrayBuffer) => Promise<JimpBitmapImage>;
 };
 
 type RgbaSource = {
@@ -163,11 +173,12 @@ function rotateOrthogonal(source: RgbaSource, rotation: number): ImageData {
 }
 
 function toJimpImage(imageData: ImageData): JimpBitmapImage {
-  return new Jimp({
+  const JimpBitmap = Jimp as unknown as JimpBitmapConstructor;
+  return new JimpBitmap({
     width: imageData.width,
     height: imageData.height,
-    data: Buffer.from(imageData.data),
-  }) as unknown as JimpBitmapImage;
+    data: new Uint8Array(imageData.data),
+  });
 }
 
 function fromJimpImage(image: JimpBitmapImage, colorSpace?: PredefinedColorSpace): ImageData {
@@ -201,6 +212,10 @@ function decodePngBuffer(bytes: Uint8Array, colorSpace?: PredefinedColorSpace): 
   );
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return Uint8Array.from(bytes).buffer;
+}
+
 export async function decodeRasterBuffer(
   bytes: Uint8Array,
   colorSpace?: PredefinedColorSpace,
@@ -208,10 +223,11 @@ export async function decodeRasterBuffer(
   if (isPngBytes(bytes)) {
     return decodePngBuffer(bytes, colorSpace);
   }
-  const buffer = Buffer.from(bytes);
-  const image = typeof Jimp.fromBuffer === 'function'
-    ? await Jimp.fromBuffer(buffer) as unknown as JimpBitmapImage
-    : await Jimp.read(buffer) as unknown as JimpBitmapImage;
+  const jimpBufferReader = Jimp as unknown as JimpBufferReader;
+  const buffer = toArrayBuffer(bytes);
+  const image = typeof jimpBufferReader.fromBuffer === 'function'
+    ? await jimpBufferReader.fromBuffer(buffer)
+    : await jimpBufferReader.read(buffer);
   return fromJimpImage(image, colorSpace);
 }
 

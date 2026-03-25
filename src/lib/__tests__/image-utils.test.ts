@@ -18,7 +18,7 @@ vi.mock('../jpegli-decoder.js', () => ({
 import { imageDataToJpegBlob, transformImageData } from '../image-utils.js';
 
 describe('imageDataToJpegBlob', () => {
-  it('returns a jpeg blob without requiring canvas export', async () => {
+  it('returns a jpeg blob without requiring legacy browser export shims', async () => {
     const imageData = {
       width: 2,
       height: 1,

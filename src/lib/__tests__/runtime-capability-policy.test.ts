@@ -10,7 +10,6 @@ describe('runtime-capability-policy', () => {
     expect(
       canUseProcessingWorker({
         Worker: class Worker {},
-        createImageBitmap: async () => ({}),
         fetch: async () => ({}),
         ImageData: class ImageData {},
       }),
@@ -19,7 +18,6 @@ describe('runtime-capability-policy', () => {
     expect(
       canUseProcessingWorker({
         Worker: class Worker {},
-        createImageBitmap: async () => ({}),
         fetch: async () => ({}),
         ImageData: class ImageData {},
       }),
@@ -27,7 +25,6 @@ describe('runtime-capability-policy', () => {
 
     expect(
       canUseProcessingWorker({
-        Worker: class Worker {},
         fetch: async () => ({}),
         ImageData: class ImageData {},
       }),

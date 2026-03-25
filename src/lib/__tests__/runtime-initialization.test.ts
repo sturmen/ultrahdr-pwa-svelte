@@ -33,21 +33,6 @@ function createSmokeOutputRgba(width = 128, height = 128) {
   return pixels;
 }
 
-function createWebGlDocument() {
-  return {
-    createElement: () => ({
-      width: 0,
-      height: 0,
-      getContext: (type) => {
-        if (type === 'webgl' || type === 'experimental-webgl') {
-          return { clear: () => { } };
-        }
-        return null;
-      },
-    }),
-  };
-}
-
 function createRuntimeWithGpuAndWebGl() {
   return {
     navigator: {
@@ -59,10 +44,6 @@ function createRuntimeWithGpuAndWebGl() {
       hardwareConcurrency: 8,
     },
     fetch: vi.fn(),
-    document: createWebGlDocument(),
-    WebGLRenderingContext: class WebGLRenderingContext {},
-    OffscreenCanvas: undefined,
-    createImageBitmap: undefined,
     crossOriginIsolated: true,
   };
 }
@@ -176,7 +157,7 @@ describe('runtime initialization', () => {
     expect(session.run).not.toHaveBeenCalled();
   });
 
-  it('retries with webgl when webgpu smoke inference fails', async () => {
+  it('retries with wasm when webgpu smoke inference fails and no webgl runtime is available', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     const attemptOrder = [];
     const session = {
@@ -203,12 +184,12 @@ describe('runtime initialization', () => {
       loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
     });
 
-    expect(attemptOrder).toEqual(['webgpu', 'webgl']);
-    expect(result.resolvedExecutionProvider).toBe('webgl');
+    expect(attemptOrder).toEqual(['webgpu', 'wasm']);
+    expect(result.resolvedExecutionProvider).toBe('wasm');
     expect(result.gmnetCapability).toBeNull();
   });
 
-  it('retries with wasm when both webgpu and webgl smoke inference fail', async () => {
+  it('uses wasm fallback when webgpu fails and no webgl runtime is available', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     const attemptOrder = [];
     const session = {
@@ -219,10 +200,7 @@ describe('runtime initialization', () => {
       }),
       resolveGainMapCapability: vi.fn(),
       run: vi.fn(async () => {
-        if (
-          session.activeExecutionProvider === 'webgpu'
-          || session.activeExecutionProvider === 'webgl'
-        ) {
+        if (session.activeExecutionProvider === 'webgpu') {
           throw new Error(`smoke failed on ${session.activeExecutionProvider}`);
         }
         return createSmokeOutputRgba();
@@ -238,7 +216,7 @@ describe('runtime initialization', () => {
       loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
     });
 
-    expect(attemptOrder).toEqual(['webgpu', 'webgl', 'wasm']);
+    expect(attemptOrder).toEqual(['webgpu', 'wasm']);
     expect(result.resolvedExecutionProvider).toBe('wasm');
     expect(result.gmnetCapability).toBeNull();
   });
@@ -249,8 +227,6 @@ describe('runtime initialization', () => {
         gpu: undefined,
       },
       document: undefined,
-      OffscreenCanvas: undefined,
-      createImageBitmap: undefined,
       crossOriginIsolated: true,
     };
 
@@ -281,8 +257,6 @@ describe('runtime initialization', () => {
         gpu: undefined,
       },
       document: undefined,
-      OffscreenCanvas: undefined,
-      createImageBitmap: undefined,
       crossOriginIsolated: true,
     };
 
@@ -360,7 +334,7 @@ describe('runtime initialization', () => {
     });
   });
 
-  it('decodes the default smoke asset without createImageBitmap or canvas support', async () => {
+  it('decodes the default smoke asset without legacy browser image decode shims', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     const smokeBytes = await readFile(path.resolve(process.cwd(), 'public/models/gmnet-smoke-128.png'));
     runtime.fetch.mockResolvedValue(
@@ -369,16 +343,6 @@ describe('runtime initialization', () => {
         headers: { 'content-type': 'image/png' },
       }),
     );
-    runtime.document = {
-      createElement: vi.fn((tagName) => {
-        if (tagName === 'canvas') {
-          throw new Error('canvas should not be used');
-        }
-        return {};
-      }),
-    };
-    runtime.OffscreenCanvas = undefined;
-    runtime.createImageBitmap = undefined;
 
     const session = {
       init: vi.fn(async (_variant, options = {}) => {
@@ -438,7 +402,6 @@ describe('runtime initialization', () => {
   it('fails with PROVIDER_FALLBACK_EXHAUSTED when smoke inference output is flat for all providers', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     runtime.document = undefined;
-    runtime.OffscreenCanvas = undefined;
     const session = {
       init: vi.fn(async (_variant, options = {}) => {
         session.activeExecutionProvider = options.forceExecutionProviders?.[0] || null;
@@ -461,14 +424,10 @@ describe('runtime initialization', () => {
       code: RUNTIME_INIT_ERROR_CODES.PROVIDER_FALLBACK_EXHAUSTED,
       stepId: 'gmnet-smoke-run',
       diagnostics: expect.objectContaining({
-        requestedExecutionProviders: ['webgpu', 'webgl', 'wasm'],
+        requestedExecutionProviders: ['webgpu', 'wasm'],
         attemptFailures: [
           expect.objectContaining({
             provider: 'webgpu',
-            errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
-          }),
-          expect.objectContaining({
-            provider: 'webgl',
             errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
           }),
           expect.objectContaining({
@@ -513,7 +472,6 @@ describe('runtime initialization', () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     runtime.navigator.onLine = false;
     runtime.document = undefined;
-    runtime.OffscreenCanvas = undefined;
 
     const init = vi.fn(async (_variant, options = {}) => {
       const provider = options.forceExecutionProviders?.[0] || 'webgpu';
@@ -548,9 +506,9 @@ describe('runtime initialization', () => {
       forceReload: true,
     });
     expect(init).toHaveBeenNthCalledWith(2, 'realworld', {
-      forceExecutionProviders: ['webgl'],
+      forceExecutionProviders: ['wasm'],
       forceReload: true,
     });
-    expect(result.resolvedExecutionProvider).toBe('webgl');
+    expect(result.resolvedExecutionProvider).toBe('wasm');
   });
 });

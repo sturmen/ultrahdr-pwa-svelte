@@ -27,22 +27,16 @@ class HangingInitWorker {
 
 describe('processing worker init timeout', () => {
   const originalWorker = globalThis.Worker;
-  const originalOffscreenCanvas = globalThis.OffscreenCanvas;
-  const originalCreateImageBitmap = globalThis.createImageBitmap;
 
   beforeEach(() => {
     vi.resetModules();
     vi.useFakeTimers();
     globalThis.Worker = HangingInitWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     globalThis.Worker = originalWorker;
-    globalThis.OffscreenCanvas = originalOffscreenCanvas;
-    globalThis.createImageBitmap = originalCreateImageBitmap;
     vi.restoreAllMocks();
   });
 
@@ -69,7 +63,6 @@ describe('processing worker init timeout', () => {
         workerInitTimeoutMs: 300_000,
         runtimeCapabilities: {
           hasWorker: true,
-          hasCreateImageBitmap: true,
         },
       },
     });

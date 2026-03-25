@@ -36,18 +36,6 @@ function createChromiumRuntimeWithWebGlOnly() {
       platform: 'MacIntel',
       hardwareConcurrency: 8,
     },
-    document: {
-      createElement: () => ({
-        getContext: (type: string) => {
-          if (type === 'webgl' || type === 'experimental-webgl') {
-            return { clear: () => {} };
-          }
-          return null;
-        },
-      }),
-    },
-    OffscreenCanvas: undefined,
-    createImageBitmap: undefined,
     crossOriginIsolated: true,
   };
 }

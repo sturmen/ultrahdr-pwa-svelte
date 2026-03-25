@@ -63,20 +63,14 @@ class PolicyWorker {
 
 describe('processing runtime bundle policy', () => {
   const originalWorker = globalThis.Worker;
-  const originalOffscreenCanvas = globalThis.OffscreenCanvas;
-  const originalCreateImageBitmap = globalThis.createImageBitmap;
 
   beforeEach(() => {
     vi.resetModules();
     globalThis.Worker = PolicyWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
   });
 
   afterEach(() => {
     globalThis.Worker = originalWorker;
-    globalThis.OffscreenCanvas = originalOffscreenCanvas;
-    globalThis.createImageBitmap = originalCreateImageBitmap;
   });
 
   it('throws explicit hard-block error when bundle is not ready offline', async () => {

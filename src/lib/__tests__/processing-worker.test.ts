@@ -113,8 +113,6 @@ function flush() {
 
 describe('processing worker wrapper', () => {
   const originalWorker = globalThis.Worker;
-  const originalOffscreenCanvas = globalThis.OffscreenCanvas;
-  const originalCreateImageBitmap = globalThis.createImageBitmap;
   const originalCaches = globalThis.caches;
   const originalUserAgentDescriptor = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent');
   const originalOnLineDescriptor = Object.getOwnPropertyDescriptor(window.navigator, 'onLine');
@@ -147,8 +145,6 @@ describe('processing worker wrapper', () => {
 
   afterEach(() => {
     globalThis.Worker = originalWorker;
-    globalThis.OffscreenCanvas = originalOffscreenCanvas;
-    globalThis.createImageBitmap = originalCreateImageBitmap;
     globalThis.caches = originalCaches;
     if (originalUserAgentDescriptor) {
       Object.defineProperty(window.navigator, 'userAgent', originalUserAgentDescriptor);
@@ -183,8 +179,6 @@ describe('processing worker wrapper', () => {
 
   it('falls back to main-thread processing when worker runtime is unavailable', async () => {
     globalThis.Worker = undefined;
-    globalThis.OffscreenCanvas = undefined;
-    globalThis.createImageBitmap = undefined;
 
     const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
@@ -200,8 +194,6 @@ describe('processing worker wrapper', () => {
         throw new Error('worker init broke');
       }
     };
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
@@ -213,8 +205,6 @@ describe('processing worker wrapper', () => {
 
   it('can disable main-thread fallback for worker runtime unavailability', async () => {
     globalThis.Worker = undefined;
-    globalThis.OffscreenCanvas = undefined;
-    globalThis.createImageBitmap = undefined;
 
     const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1])], 'input.jpg', { type: 'image/jpeg' });
@@ -227,8 +217,6 @@ describe('processing worker wrapper', () => {
 
   it('initializeRuntime emits init-progress updates before resolving ready', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
     const onProgress = vi.fn();
     MockWorker.onInit = (worker) => {
       queueMicrotask(() => {
@@ -293,8 +281,6 @@ describe('processing worker wrapper', () => {
 
   it('initializeRuntime exposes worker-wasm runtime mode when startup resolves to WASM', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
     MockWorker.onInit = (worker) => {
       queueMicrotask(() => {
         worker.emit('message', {
@@ -322,8 +308,6 @@ describe('processing worker wrapper', () => {
 
   it('initializeRuntime falls back to main thread and reports main-thread-wasm runtime mode', async () => {
     globalThis.Worker = undefined;
-    globalThis.OffscreenCanvas = undefined;
-    globalThis.createImageBitmap = undefined;
 
     const { initialize } = await createRuntimeFixture();
     const result = await initialize();
@@ -339,8 +323,6 @@ describe('processing worker wrapper', () => {
 
   it('initializes directly in main-thread wasm mode for offline iPhone Safari', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
     installOfflineReadyBundleRecord();
     setOnline(false);
     setUserAgent(
@@ -367,8 +349,6 @@ describe('processing worker wrapper', () => {
         throw new Error('worker init broke');
       }
     };
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
     installOfflineReadyBundleRecord();
     setOnline(false);
     setUserAgent(
@@ -390,8 +370,6 @@ describe('processing worker wrapper', () => {
 
   it('initializeRuntime strips legacy probe fields from init-progress payloads', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
     const onProgress = vi.fn();
     MockWorker.onInit = (worker) => {
       queueMicrotask(() => {
@@ -457,8 +435,6 @@ describe('processing worker wrapper', () => {
 
   it('does not forward gmnetCapabilityHintsByProvider in initializeRuntime init options', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     const { initialize } = await createRuntimeFixture();
     await initialize({
@@ -488,8 +464,6 @@ describe('processing worker wrapper', () => {
 
   it('initializeRuntime rejects with structured init-error payload from worker', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
     MockWorker.onInit = (worker) => {
       queueMicrotask(() => {
         worker.emit('message', {
@@ -530,8 +504,6 @@ describe('processing worker wrapper', () => {
 
   it('uses worker processing and forwards progress telemetry', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
@@ -557,8 +529,6 @@ describe('processing worker wrapper', () => {
 
   it('forwards gmnet execution provider progress payloads on non-probe stages', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {
@@ -604,8 +574,6 @@ describe('processing worker wrapper', () => {
 
   it('forwards gmnetCheckpointing process option to worker jobs', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     const { process } = await createRuntimeFixture();
     const file = new File([new Uint8Array([1, 2])], 'input.jpg', { type: 'image/jpeg' });
@@ -625,8 +593,6 @@ describe('processing worker wrapper', () => {
 
   it('forwards checkpoint telemetry metadata through progress callbacks', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {
@@ -677,8 +643,6 @@ describe('processing worker wrapper', () => {
 
   it('sends cancel message and returns AbortError when aborted', async () => {
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = () => {
       // Wait for explicit cancel
@@ -715,8 +679,6 @@ describe('processing worker wrapper', () => {
   it('rejects with a worker-timeout error when a worker job stalls with no messages', async () => {
     vi.useFakeTimers();
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = () => {
       // Simulate a stuck worker job: no progress/result/error messages.
@@ -737,8 +699,6 @@ describe('processing worker wrapper', () => {
   it('emits heartbeat progress during long inference with a user-facing status note', async () => {
     vi.useFakeTimers();
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {
@@ -816,8 +776,6 @@ describe('processing worker wrapper', () => {
       value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:132.0) Gecko/20100101 Firefox/132.0',
     });
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {
@@ -880,8 +838,6 @@ describe('processing worker wrapper', () => {
       value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     });
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {
@@ -956,8 +912,6 @@ describe('processing worker wrapper', () => {
   it('emits stage-error telemetry before rejecting when inference timeout occurs', async () => {
     vi.useFakeTimers();
     globalThis.Worker = MockWorker;
-    globalThis.OffscreenCanvas = class OffscreenCanvas {};
-    globalThis.createImageBitmap = vi.fn();
 
     MockWorker.onProcess = (worker, message) => {
       queueMicrotask(() => {

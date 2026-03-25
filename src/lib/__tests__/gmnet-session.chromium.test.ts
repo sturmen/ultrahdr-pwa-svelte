@@ -11,17 +11,6 @@ function createChromiumRuntimeWithWebGlOnly() {
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       platform: 'MacIntel',
     },
-    document: {
-      createElement: () => ({
-        getContext: (type: string) => {
-          if (type === 'webgl' || type === 'experimental-webgl') {
-            return { clear: () => {} };
-          }
-          return null;
-        },
-      }),
-    },
-    OffscreenCanvas: undefined,
   };
 }
 

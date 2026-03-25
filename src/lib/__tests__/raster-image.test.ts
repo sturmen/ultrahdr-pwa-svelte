@@ -2,6 +2,8 @@
  * @vitest-environment jsdom
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const {
   JimpMock,
@@ -81,7 +83,7 @@ describe('raster-image', () => {
     ]);
   });
 
-  it('resizes rgba raster buffers without canvas', async () => {
+  it('resizes rgba raster buffers without browser drawing primitives', async () => {
     const { resizeRasterImage } = await import('../raster-image.ts');
 
     const result = await resizeRasterImage({
@@ -100,7 +102,7 @@ describe('raster-image', () => {
     expect(resizeMock).toHaveBeenCalledTimes(1);
   });
 
-  it('rotates orthogonal rgba raster buffers without canvas or jimp rotate', async () => {
+  it('rotates orthogonal rgba raster buffers without browser drawing primitives or jimp rotate', async () => {
     const { rotateRasterImage } = await import('../raster-image.ts');
 
     const result = await rotateRasterImage({
@@ -121,5 +123,12 @@ describe('raster-image', () => {
       0, 255, 0, 255,
     ]);
     expect(rotateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not import the node buffer module in the browser raster pipeline', () => {
+    const sourcePath = path.resolve(process.cwd(), 'src/lib/raster-image.ts');
+    const source = fs.readFileSync(sourcePath, 'utf8');
+
+    expect(source).not.toMatch(/from 'buffer'|from "buffer"/);
   });
 });

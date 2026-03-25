@@ -15,6 +15,12 @@ const { encoderSpies } = vi.hoisted(() => ({
   },
 }));
 
+type JpegliDecodedImage = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
+
 vi.mock('../heic-processing.js', () => {
   throw new Error('HEIC module should not be imported for JPEG processing');
 });
@@ -66,51 +72,16 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 
 vi.mock('../jpegli-decoder.js', () => ({
   encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
-  decodeJpegli: vi.fn(async () => ({
+  decodeJpegli: vi.fn(async (): Promise<JpegliDecodedImage> => ({
     width: 4,
     height: 4,
     data: new Uint8ClampedArray(4 * 4 * 4).fill(127),
   })),
 }));
 
-class MockOffscreenCanvas {
-  constructor(width, height) {
-    this.width = width;
-    this.height = height;
-  }
-
-  getContext() {
-    const { width, height } = this;
-    return {
-      drawImage: vi.fn(),
-      putImageData: vi.fn(),
-      getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(width * height * 4).fill(127), width, height)),
-      save: vi.fn(),
-      restore: vi.fn(),
-      translate: vi.fn(),
-      rotate: vi.fn(),
-    };
-  }
-
-  async convertToBlob() {
-    return new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
-  }
-}
-
 describe('processing-core lazy imports', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async (input) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = input instanceof ImageData ? input.width : 4;
-      canvas.height = input instanceof ImageData ? input.height : 4;
-      if (input instanceof ImageData) {
-        const context = canvas.getContext('2d');
-        context?.putImageData(input, 0, 0);
-      }
-      return canvas;
-    });
   });
 
   it('processes JPEG inputs without importing HEIC module', async () => {

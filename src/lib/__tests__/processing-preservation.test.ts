@@ -347,46 +347,6 @@ describe('processImage UltraHDR preservation path', () => {
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(true);
 
-        const originalImage = global.Image;
-        global.Image = class MockImage {
-            constructor() {
-                this.width = 1;
-                this.height = 1;
-            }
-
-            set src(_value) {
-                setTimeout(() => {
-                    if (this.onload) this.onload();
-                }, 0);
-            }
-        };
-
-        const originalCreateElement = document.createElement.bind(document);
-        const canvasSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
-            if (tagName !== 'canvas') {
-                return originalCreateElement(tagName);
-            }
-
-            return {
-                width: 1,
-                height: 1,
-                getContext: vi.fn(() => ({
-                    drawImage: vi.fn(),
-                    getImageData: vi.fn(() =>
-                        new ImageData(new Uint8ClampedArray([128, 128, 128, 255]), 1, 1)
-                    ),
-                    putImageData: vi.fn(),
-                    save: vi.fn(),
-                    restore: vi.fn(),
-                    translate: vi.fn(),
-                    rotate: vi.fn()
-                })),
-                toBlob: vi.fn((callback) => {
-                    callback(new Blob([baseUhdrBytes], { type: 'image/jpeg' }));
-                })
-            };
-        });
-
         const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
         file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
 
@@ -396,8 +356,6 @@ describe('processImage UltraHDR preservation path', () => {
             discardGainMap: false,
             stripExif: true
         });
-
-        global.Image = originalImage;
 
         expect(decoderInstance.setImage).toHaveBeenCalledWith(inputUhdrBytes);
         expect(decoderInstance.getBaseImage).toHaveBeenCalledTimes(1);
@@ -480,46 +438,6 @@ describe('processImage UltraHDR preservation path', () => {
             hdrCapacityMax: 2.6
         });
 
-        const originalImage = global.Image;
-        global.Image = class MockImage {
-            constructor() {
-                this.width = 1;
-                this.height = 1;
-            }
-
-            set src(_value) {
-                setTimeout(() => {
-                    if (this.onload) this.onload();
-                }, 0);
-            }
-        };
-
-        const originalCreateElement = document.createElement.bind(document);
-        const canvasSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
-            if (tagName !== 'canvas') {
-                return originalCreateElement(tagName);
-            }
-
-            return {
-                width: 1,
-                height: 1,
-                getContext: vi.fn(() => ({
-                    drawImage: vi.fn(),
-                    getImageData: vi.fn(() =>
-                        new ImageData(new Uint8ClampedArray([200, 150, 100, 255]), 1, 1)
-                    ),
-                    putImageData: vi.fn(),
-                    save: vi.fn(),
-                    restore: vi.fn(),
-                    translate: vi.fn(),
-                    rotate: vi.fn()
-                })),
-                toBlob: vi.fn((callback) => {
-                    callback(new Blob([baseUhdrBytes], { type: 'image/jpeg' }));
-                })
-            };
-        });
-
         const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
         file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
 
@@ -529,8 +447,6 @@ describe('processImage UltraHDR preservation path', () => {
             discardGainMap: false,
             stripExif: true
         });
-
-        global.Image = originalImage;
 
         expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
             expect.any(Uint8Array),

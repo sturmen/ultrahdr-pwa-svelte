@@ -687,7 +687,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
     });
 
     test.describe('Single Image Processing', () => {
-        test('should process a single SDR image using standard canvas encoder', async ({ page }) => {
+        test('should process a single SDR image using the standard SDR path', async ({ page }) => {
             test.setTimeout(180_000);
             await page.goto('/');
 

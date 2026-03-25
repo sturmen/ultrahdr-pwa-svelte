@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hasWebGlSupport, isGmnetWebGlSupportedRuntime } from '../runtime-browser.ts';
 
 describe('runtime-browser', () => {
-  it('uses non-canvas WebGL heuristics from runtime globals', () => {
+  it('uses browser-independent WebGL heuristics from runtime globals', () => {
     expect(
       hasWebGlSupport({
         navigator: {

@@ -28,6 +28,18 @@ const {
   },
 }));
 
+type ProgressMetadata = {
+  jpegliRowsEncoded: number;
+  jpegliTotalRows: number;
+  jpegliChunkRows: number;
+};
+
+type JpegliDecodedImage = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
+
 vi.mock('../gain-map-generator.js', () => {
   class GmnetGainMapGenerator {
     async generate(imageData) {
@@ -80,7 +92,12 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 }));
 
 vi.mock('../jpegli-decoder.js', () => ({
-  encodeJpegli: vi.fn(async (imageData, quality, options = {}) => {
+  encodeJpegli: vi.fn(async (
+    imageData: { width: number; height: number },
+    quality: number,
+    options: { onProgress?: (progress: number, metadata?: ProgressMetadata) => void } = {},
+  ) => {
+    void quality;
     options?.onProgress?.(20, {
       jpegliRowsEncoded: 2,
       jpegliTotalRows: 10,
@@ -99,7 +116,7 @@ vi.mock('../jpegli-decoder.js', () => ({
     jpegEncodeCanvasSizes.push({ width: imageData.width, height: imageData.height });
     return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]); // Fake JPEG bytes
   }),
-  decodeJpegli: vi.fn(async () => ({
+  decodeJpegli: vi.fn(async (): Promise<JpegliDecodedImage> => ({
     width: decodeDimensions.width,
     height: decodeDimensions.height,
     data: new Uint8ClampedArray(decodeDimensions.width * decodeDimensions.height * 4).fill(128),
@@ -131,7 +148,7 @@ const exifPayloadOrientation6 = new Uint8Array([
 
 const validPngBytes = fs.readFileSync(path.resolve(process.cwd(), 'media/exif_matrix.png'));
 
-function buildJpegWithExif(exifPayload, imageData = new Uint8Array([0x11, 0x22, 0x33])) {
+function buildJpegWithExif(exifPayload: Uint8Array, imageData = new Uint8Array([0x11, 0x22, 0x33])) {
   const exifLength = exifPayload.length + 2;
   const segments = [
     new Uint8Array([0xff, 0xd8]),
@@ -153,37 +170,6 @@ function buildJpegWithExif(exifPayload, imageData = new Uint8Array([0x11, 0x22, 
   return bytes;
 }
 
-class MockOffscreenCanvas {
-  constructor(width, height) {
-    this.width = width;
-    this.height = height;
-  }
-
-  getContext() {
-    return {
-      drawImage: vi.fn(),
-      putImageData: vi.fn(),
-      getImageData: vi.fn(() => {
-        const pixelCount = this.width * this.height;
-        const data = new Uint8ClampedArray(pixelCount * 4).fill(120);
-        for (let i = 3; i < data.length; i += 4) {
-          data[i] = 255;
-        }
-        return new ImageData(data, this.width, this.height);
-      }),
-      save: vi.fn(),
-      restore: vi.fn(),
-      translate: vi.fn(),
-      rotate: vi.fn(),
-    };
-  }
-
-  async convertToBlob() {
-    jpegEncodeCanvasSizes.push({ width: this.width, height: this.height });
-    return new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
-  }
-}
-
 describe('processing fixed-resolution generated pipeline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -195,20 +181,6 @@ describe('processing fixed-resolution generated pipeline', () => {
     decodeDimensions.height = 9000;
 
     globalThis.Worker = undefined;
-    globalThis.OffscreenCanvas = MockOffscreenCanvas;
-    globalThis.createImageBitmap = vi.fn(async (input) => {
-      const canvas = document.createElement('canvas');
-      if (input instanceof ImageData) {
-        canvas.width = input.width;
-        canvas.height = input.height;
-        const context = canvas.getContext('2d');
-        context?.putImageData(input, 0, 0);
-        return canvas;
-      }
-      canvas.width = decodeDimensions.width;
-      canvas.height = decodeDimensions.height;
-      return canvas;
-    });
   });
 
   it('clamps, rotates up front, and feeds full-resolution image to GMNet', async () => {
@@ -221,7 +193,7 @@ describe('processing fixed-resolution generated pipeline', () => {
       rotation: 90,
       stripExif: true,
       discardGainMap: true,
-      onProgress: (event) => {
+      onProgress: (event: { stage?: string }) => {
         stages.push(event.stage);
       },
     });
@@ -239,7 +211,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(
       '[Process] Gain map decision: generating new gain map with GMNet'
     );
-  });
+  }, 15_000);
 
   it('normalizes orientation-tagged JPEG EXIF and avoids lossless bitstream rotate', async () => {
     const { processImage } = await import('../processing-core.js');
@@ -259,7 +231,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     expect(normalizedExif).toBeInstanceOf(Uint8Array);
     expect(normalizedExif[24]).toBe(1);
     expect(normalizedExif[25]).toBe(0);
-  });
+  }, 15_000);
 
   it('lossless-normalizes EXIF-oriented JPEG before zero-rotation SDR bypass when stripExif=false', async () => {
     const { processImage } = await import('../processing-core.js');

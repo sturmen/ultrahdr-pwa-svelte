@@ -29,7 +29,6 @@ function isFirefoxRuntime(runtime: RuntimeLike = globalThis): boolean {
 export function canUseProcessingWorker(runtime: RuntimeLike = globalThis): boolean {
   return (
     typeof runtime?.Worker === 'function' &&
-    typeof runtime?.createImageBitmap === 'function' &&
     typeof runtime?.fetch === 'function' &&
     typeof runtime?.ImageData !== 'undefined'
   );

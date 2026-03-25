@@ -17,7 +17,6 @@ type RuntimeOverrides = {
   navigator?: RuntimeNavigatorLike;
   window?: RuntimeWindowLike;
   Worker?: typeof Worker;
-  createImageBitmap?: typeof createImageBitmap;
   fetch?: typeof fetch;
   ImageData?: typeof ImageData;
 };
@@ -41,7 +40,6 @@ function getDefaultRuntime(): RuntimeOverrides {
     navigator: typeof navigator !== 'undefined' ? (navigator as unknown as RuntimeNavigatorLike) : {},
     window: typeof window !== 'undefined' ? (window as unknown as RuntimeWindowLike) : {},
     Worker: typeof Worker !== 'undefined' ? Worker : undefined,
-    createImageBitmap: typeof createImageBitmap !== 'undefined' ? createImageBitmap : undefined,
     fetch: typeof fetch !== 'undefined' ? fetch : undefined,
     ImageData: typeof ImageData !== 'undefined' ? ImageData : undefined,
   };
@@ -94,7 +92,6 @@ export function getCapabilities(runtimeOverrides: RuntimeOverrides = {}): Capabi
 
   const supportsOffscreenWorker = Boolean(
     runtime.Worker &&
-    runtime.createImageBitmap &&
     runtime.fetch &&
     runtime.ImageData,
   );

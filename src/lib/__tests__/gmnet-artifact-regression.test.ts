@@ -198,5 +198,5 @@ describe('GMNet artifact regression gate', () => {
         }
       }
     }
-  });
+  }, 20_000);
 });

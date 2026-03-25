@@ -5,7 +5,15 @@ import { describe, it, expect } from 'vitest';
 
 import { getCapabilities, getProcessingProfile } from '../capabilities.js';
 
-function createRuntime(overrides = {}) {
+type RuntimeOverrideInput = {
+  navigator?: Record<string, unknown>;
+  window?: Record<string, unknown>;
+  Worker?: typeof Worker | undefined;
+  fetch?: typeof fetch | undefined;
+  ImageData?: typeof ImageData | undefined;
+};
+
+function createRuntime(overrides: RuntimeOverrideInput = {}) {
   return {
     navigator: {
       userAgent: 'Mozilla/5.0',
@@ -20,10 +28,8 @@ function createRuntime(overrides = {}) {
       ...overrides.window,
     },
     Worker: overrides.Worker,
-    createImageBitmap: overrides.createImageBitmap,
     fetch: overrides.fetch,
     ImageData: overrides.ImageData,
-    OffscreenCanvas: overrides.OffscreenCanvas,
   };
 }
 
@@ -55,7 +61,6 @@ describe('capabilities', () => {
         deviceMemory: 8,
       },
       Worker: function Worker() {},
-      createImageBitmap: async () => ({}),
       fetch: async () => ({}),
       ImageData,
     });
