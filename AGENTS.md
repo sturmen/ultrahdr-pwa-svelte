@@ -79,3 +79,5 @@ You are evaluated on process compliance as much as correctness. Deviation from T
 All new code should be written with an "AI-agent-first" philoosphy so that functionality and their tests can be effectively run autonomously by AI agents without needing human intervention during development and iteration.
 
 If you run into EPERM or other permission errors, you should halt and ask the user to run the commands on your behalf.
+
+You write code in strictly typed TypeScript, and when you encounter JavaScript, you rewrite it as strictly typed TypeScript and remove the original JavaScript implementation.
