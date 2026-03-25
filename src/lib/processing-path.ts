@@ -1,5 +1,6 @@
 import { probeHeifProcessingPathFromHeaders } from './input-exif.js';
 import type {
+  DecodedRasterImage,
   HdrIntentHeifResult,
   PreservedHeifResult,
   ProcessingPathClassification,
@@ -17,6 +18,7 @@ type HeifFamilyBlob = Blob & {
 
 type ClassifiedInput =
   | Blob
+  | DecodedRasterImage
   | HdrIntentHeifResult
   | PreservedHeifResult
   | {
@@ -38,7 +40,7 @@ function isPreservedHeifResult(file: ClassifiedInput): file is PreservedHeifResu
   return !!file && typeof file === 'object' && 'sdr' in file && 'gainMap' in file;
 }
 
-async function getProcessHeic(): Promise<(file: File, options?: HeicProcessOptions) => Promise<File | HdrIntentHeifResult | PreservedHeifResult>> {
+async function getProcessHeic(): Promise<(file: File, options?: HeicProcessOptions) => Promise<DecodedRasterImage | HdrIntentHeifResult | PreservedHeifResult>> {
   const module = await import('./heic-processing.js');
   return module.processHeic;
 }
@@ -48,7 +50,7 @@ async function getProcessHeifHdr(): Promise<(file: File) => Promise<HdrIntentHei
   return module.processHeifHdr;
 }
 
-async function getProcessTiff(): Promise<(file: Blob) => Promise<File | Blob>> {
+async function getProcessTiff(): Promise<(file: Blob) => Promise<DecodedRasterImage>> {
   const module = await import('./tiff-processing.js');
   return module.processTiff;
 }

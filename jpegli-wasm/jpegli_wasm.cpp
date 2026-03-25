@@ -1,4 +1,5 @@
 #include "lib/jpegli/encode.h"
+#include "lib/jpegli/decode.h"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +34,15 @@ struct JpegliEncoderState {
   bool compression_started = false;
 };
 
+struct JpegliDecoderState {
+  jpeg_decompress_struct dinfo;
+  jpeg_error_mgr jerr;
+  uint8_t* output_buffer = nullptr;
+  size_t output_size = 0;
+  int image_width = 0;
+  int image_height = 0;
+};
+
 EMSCRIPTEN_KEEPALIVE
 JpegliEncoderState* jpegli_wasm_encoder_create() {
   auto* state = new JpegliEncoderState();
@@ -45,6 +55,25 @@ EMSCRIPTEN_KEEPALIVE
 void jpegli_wasm_encoder_destroy(JpegliEncoderState* state) {
   if (state) {
     jpegli_destroy_compress(&state->cinfo);
+    if (state->output_buffer) {
+      free(state->output_buffer);
+    }
+    delete state;
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+JpegliDecoderState* jpegli_wasm_decoder_create() {
+  auto* state = new JpegliDecoderState();
+  state->dinfo.err = jpegli_std_error(&state->jerr);
+  jpegli_create_decompress(&state->dinfo);
+  return state;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void jpegli_wasm_decoder_destroy(JpegliDecoderState* state) {
+  if (state) {
+    jpegli_destroy_decompress(&state->dinfo);
     if (state->output_buffer) {
       free(state->output_buffer);
     }
@@ -184,6 +213,91 @@ const uint8_t* jpegli_wasm_get_output_data(JpegliEncoderState* state) {
 
 EMSCRIPTEN_KEEPALIVE
 int jpegli_wasm_get_output_size(JpegliEncoderState* state) {
+  if (!state) {
+    return 0;
+  }
+  return static_cast<int>(state->output_size);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int jpegli_wasm_decode(JpegliDecoderState* state, const uint8_t* jpeg_data,
+                       int jpeg_size) {
+  if (!state || !jpeg_data || jpeg_size <= 0) {
+    return -1;
+  }
+
+  if (state->output_buffer) {
+    free(state->output_buffer);
+    state->output_buffer = nullptr;
+  }
+  state->output_size = 0;
+  state->image_width = 0;
+  state->image_height = 0;
+
+  jpegli_mem_src(&state->dinfo, jpeg_data, static_cast<unsigned long>(jpeg_size));
+  if (jpegli_read_header(&state->dinfo, TRUE) != JPEG_HEADER_OK) {
+    return -1;
+  }
+
+  state->dinfo.out_color_space = JCS_EXT_RGBA;
+  if (!jpegli_start_decompress(&state->dinfo)) {
+    return -1;
+  }
+
+  state->image_width = static_cast<int>(state->dinfo.output_width);
+  state->image_height = static_cast<int>(state->dinfo.output_height);
+  const size_t row_stride =
+      static_cast<size_t>(state->dinfo.output_width) *
+      static_cast<size_t>(state->dinfo.output_components);
+  state->output_size = row_stride * static_cast<size_t>(state->dinfo.output_height);
+  state->output_buffer = static_cast<uint8_t*>(malloc(state->output_size));
+  if (!state->output_buffer) {
+    jpegli_finish_decompress(&state->dinfo);
+    return -1;
+  }
+
+  while (state->dinfo.output_scanline < state->dinfo.output_height) {
+    JSAMPROW row_pointer =
+        state->output_buffer + (state->dinfo.output_scanline * row_stride);
+    if (jpegli_read_scanlines(&state->dinfo, &row_pointer, 1) != 1) {
+      jpegli_finish_decompress(&state->dinfo);
+      return -1;
+    }
+  }
+
+  if (!jpegli_finish_decompress(&state->dinfo)) {
+    return -1;
+  }
+
+  return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int jpegli_wasm_decoder_get_width(JpegliDecoderState* state) {
+  if (!state) {
+    return 0;
+  }
+  return state->image_width;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int jpegli_wasm_decoder_get_height(JpegliDecoderState* state) {
+  if (!state) {
+    return 0;
+  }
+  return state->image_height;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const uint8_t* jpegli_wasm_decoder_get_output_data(JpegliDecoderState* state) {
+  if (!state) {
+    return nullptr;
+  }
+  return state->output_buffer;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int jpegli_wasm_decoder_get_output_size(JpegliDecoderState* state) {
   if (!state) {
     return 0;
   }

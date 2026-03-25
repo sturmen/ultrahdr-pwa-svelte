@@ -10,15 +10,24 @@
     MAX_CONTENT_BOOST_STOPS_RANGE,
   } from "./max-content-boost.js";
   import {
-    buildShareFiles,
+    buildShareFilesFromStorage,
     getSelectedResults,
+    loadSelectedResultBlobs,
     releaseResultUrls,
   } from "./result-management";
   import {
+    clearSessionQueuePayloads,
     clearQueueState,
+    deleteQueuePayloads,
+    getQueueInputFile,
+    getQueueOutputBlob,
     loadQueueState,
+    shouldPauseForStorageWrite,
+    storeQueueInputFile,
+    storeQueueOutputBlob,
+    storeQueuePreviewBlob,
     storeQueueState,
-  } from "./share-store.js";
+  } from "./share-store.ts";
   import {
     QUEUE_ITEM_STATES,
     selectExportableQueueIds,
@@ -44,6 +53,7 @@
     classifyInputProcessingPath,
     probeInputProcessingPathFromHeaders,
   } from "./processing-path.js";
+  import { imageDataToJpegBlob, loadImageData, resizeImageData } from "./image-utils.js";
 
   export let files = [];
   export let launchSource = "regular";
@@ -893,7 +903,7 @@
   function createQueueItems(fileList) {
     return fileList.map((file) => ({
       id: nextQueueId++,
-      file,
+      file: null,
       name: file.name,
       status: QUEUE_ITEM_STATES.QUEUED,
       settingsVersion: settingsVersion,
@@ -904,6 +914,54 @@
       result: null,
       progress: null,
     }));
+  }
+
+  async function createPreviewBlob(file) {
+    try {
+      const maxDimension = 256;
+      const { imageData } = await loadImageData(file);
+      const sourceWidth = imageData.width || 1;
+      const sourceHeight = imageData.height || 1;
+      const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+      const previewWidth = Math.max(1, Math.round(sourceWidth * scale));
+      const previewHeight = Math.max(1, Math.round(sourceHeight * scale));
+      const resized = await resizeImageData(imageData, previewWidth, previewHeight);
+      return await imageDataToJpegBlob(resized, 0.7);
+    } catch {
+      return file;
+    }
+  }
+
+  async function ensureStorageCapacity(requiredBytes) {
+    const decision = await shouldPauseForStorageWrite(requiredBytes);
+    if (!decision?.pause) {
+      return true;
+    }
+
+    processing = false;
+    pauseRequested = true;
+    workflowState = WORKFLOW_STATES.PROCESSING_PAUSED;
+    setNotice(
+      "Storage is too full to continue. Export or remove results before resuming.",
+    );
+    return false;
+  }
+
+  async function persistFileBackedQueueItem(file) {
+    if (!(await ensureStorageCapacity(file?.size || 0))) {
+      return null;
+    }
+
+    const queueItem = createQueueItems([file])[0];
+    await storeQueueInputFile(queueItem.id, file);
+    const previewBlob = await createPreviewBlob(file);
+    await storeQueuePreviewBlob(queueItem.id, previewBlob);
+
+    if (queueItem.inputPreviewUrl) {
+      URL.revokeObjectURL(queueItem.inputPreviewUrl);
+    }
+    queueItem.inputPreviewUrl = URL.createObjectURL(previewBlob);
+    return queueItem;
   }
 
   async function persistQueueStateSnapshot() {
@@ -1002,17 +1060,16 @@
 
   function upsertResult(
     queueItem,
-    blob,
+    outputUrl,
+    blobSize,
     appliedSettingsVersion,
     appliedRotation,
     processingPath = "unknown",
   ) {
-    const outputUrl = URL.createObjectURL(blob);
     const resultRecord = {
       originalName: queueItem.name,
-      blob,
       url: outputUrl,
-      size: blob.size,
+      size: blobSize,
       index: queueItem.id,
       queueId: queueItem.id,
       settingsVersion: appliedSettingsVersion,
@@ -1038,12 +1095,37 @@
     updateQueueItem(queueItem.id, {
       outputPreviewUrl: outputUrl,
       result: {
-        blob,
         outputUrl,
-        size: blob.size,
+        size: blobSize,
+        persisted: true,
       },
       progress: null,
     });
+  }
+
+  async function persistOutputForQueueItem(
+    queueItem,
+    blob,
+    appliedSettingsVersion,
+    appliedRotation,
+    processingPath = "unknown",
+  ) {
+    if (!(await ensureStorageCapacity(blob?.size || 0))) {
+      throw new Error(
+        "Storage is too full to continue. Export or remove results before resuming.",
+      );
+    }
+
+    await storeQueueOutputBlob(queueItem.id, blob);
+    const outputUrl = URL.createObjectURL(blob);
+    upsertResult(
+      queueItem,
+      outputUrl,
+      blob.size,
+      appliedSettingsVersion,
+      appliedRotation,
+      processingPath,
+    );
   }
 
   function startQueue() {
@@ -1183,8 +1265,13 @@
         });
 
         try {
+          const activeInput = await getQueueInputFile(nextItem.id);
+          if (!activeInput) {
+            throw new Error("Queued input is unavailable in storage.");
+          }
+
           const blob = await runtime.process(
-            nextItem.file,
+            activeInput,
             buildProcessingOptions(
               controller.signal,
               queueIndex,
@@ -1200,7 +1287,7 @@
           const itemProcessingPath = normalizeProcessingPath(
             processingPathByQueueId.get(nextItem.id) || currentProcessingPath,
           );
-          upsertResult(
+          await persistOutputForQueueItem(
             nextItem,
             blob,
             activeSettingsVersion,
@@ -1266,7 +1353,7 @@
     }
   }
 
-  function initializeQueueFromFiles(initialFiles) {
+  async function initializeQueueFromFiles(initialFiles) {
     const normalizedFiles = Array.from(initialFiles || []).filter(
       (file) => file instanceof File,
     );
@@ -1275,8 +1362,17 @@
       return;
     }
 
-    queue = createQueueItems(normalizedFiles);
-    files = normalizedFiles;
+    const persistedItems = (
+      await Promise.all(
+        normalizedFiles.map((file) => persistFileBackedQueueItem(file)),
+      )
+    ).filter(Boolean);
+    if (persistedItems.length === 0) {
+      return;
+    }
+
+    queue = persistedItems;
+    files = [];
     setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
     startQueue();
   }
@@ -1448,15 +1544,21 @@
     }
   }
 
-  function enqueueFiles(fileList) {
+  async function enqueueFiles(fileList) {
     const newFiles = Array.from(fileList || []).filter(
       (file) => file instanceof File,
     );
     if (newFiles.length === 0) return false;
 
-    const addedItems = createQueueItems(newFiles);
+    const addedItems = (
+      await Promise.all(newFiles.map((file) => persistFileBackedQueueItem(file)))
+    ).filter(Boolean);
+    if (addedItems.length === 0) {
+      return false;
+    }
+
     queue = [...queue, ...addedItems];
-    files = [...files, ...newFiles];
+    files = [];
 
     if (
       workflowState === WORKFLOW_STATES.EMPTY ||
@@ -1492,7 +1594,7 @@
     closeMobileInferenceWarning();
   }
 
-  function proceedWithMobileInferenceWarning() {
+  async function proceedWithMobileInferenceWarning() {
     if (!isMobileInferenceAcknowledgementValid(mobileInferenceChallengeValue)) {
       return;
     }
@@ -1500,7 +1602,7 @@
     pendingMobileInferenceFiles = [];
     mobileInferenceAcknowledgedForSession = true;
     closeMobileInferenceWarning();
-    enqueueFiles(pendingFiles);
+    await enqueueFiles(pendingFiles);
   }
 
   async function classifyInputProcessingPathForGate(file) {
@@ -1538,7 +1640,7 @@
     });
 
     if (safeFiles.length > 0) {
-      enqueueFiles(safeFiles);
+      await enqueueFiles(safeFiles);
     }
 
     if (unsafeFiles.length > 0) {
@@ -1586,11 +1688,18 @@
     selectedQueueIds = selectedQueueIds;
   }
 
-  function download(result) {
+  async function download(result) {
+    const blob = await getQueueOutputBlob(result.queueId);
+    if (!blob) {
+      setNotice("Stored output is unavailable. Reprocess the image to export it.");
+      return;
+    }
     const a = document.createElement("a");
-    a.href = result.url;
+    const downloadUrl = URL.createObjectURL(blob);
+    a.href = downloadUrl;
     a.download = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
   }
 
   async function downloadSelected(asZip = false) {
@@ -1598,21 +1707,24 @@
     if (selectedResults.length === 0) return;
 
     if (selectedResults.length === 1) {
-      download(selectedResults[0]);
+      await download(selectedResults[0]);
       closeSheet();
       return;
     }
 
     if (!asZip) {
-      selectedResults.forEach((result) => download(result));
+      await Promise.all(selectedResults.map((result) => download(result)));
       closeSheet();
       return;
     }
 
+    const loadedResults = await loadSelectedResultBlobs(results, selectedQueueIds, {
+      loadResultBlob: getQueueOutputBlob,
+    });
     const zip = new JSZip();
-    for (const result of selectedResults) {
+    for (const { result, blob } of loadedResults) {
       const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
-      zip.file(filename, result.blob);
+      zip.file(filename, blob);
     }
 
     const content = await zip.generateAsync({ type: "blob" });
@@ -1633,7 +1745,13 @@
     if (selectedResults.length === 0) return;
 
     try {
-      const filesToShare = await buildShareFiles(results, selectedQueueIds);
+      const filesToShare = await buildShareFilesFromStorage(
+        results,
+        selectedQueueIds,
+        {
+          loadResultBlob: getQueueOutputBlob,
+        },
+      );
 
       if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
         await navigator.share({
@@ -1646,10 +1764,17 @@
       }
 
       if (navigator.canShare && selectedResults.length > 1) {
+        const loadedResults = await loadSelectedResultBlobs(
+          results,
+          selectedQueueIds,
+          {
+            loadResultBlob: getQueueOutputBlob,
+          },
+        );
         const zip = new JSZip();
-        for (const result of selectedResults) {
+        for (const { result, blob } of loadedResults) {
           const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
-          zip.file(filename, result.blob);
+          zip.file(filename, blob);
         }
 
         const timestamp = new Date()
@@ -1736,6 +1861,7 @@
     openSheet = "none";
 
     await clearQueueState();
+    await clearSessionQueuePayloads();
     dispatch("reset");
   }
 
@@ -1763,8 +1889,9 @@
         URL.revokeObjectURL(queueItem.outputPreviewUrl);
       }
       queue = queue.filter((item) => item.id !== queueId);
-      files = queue.map((item) => item.file);
+      files = [];
       schedulePersistQueueState();
+      void deleteQueuePayloads(queueId);
     }
 
     results = results.filter((result) => result.queueId !== queueId);
@@ -1864,7 +1991,7 @@
         console.warn("[UI] Failed to load persisted queue state:", e);
       }
 
-      initializeQueueFromFiles(files);
+      await initializeQueueFromFiles(files);
       consumeLaunchIntent();
     })();
 

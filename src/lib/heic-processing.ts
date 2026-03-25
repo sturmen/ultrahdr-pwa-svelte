@@ -1,11 +1,10 @@
 import libheifFactory from './libheif-browser.js';
-import { canvasToBlob, createCanvasWithContext } from './canvas-runtime.js';
 import {
     extractHdrGainMapHeadroomFromBuffer,
     parseHdrGainMapMetadataFromBuffer,
 } from './gain-map-metadata.js';
 import { processHeifHdr } from './heif-hdr-processing.js';
-import type { HdrIntentHeifResult, PreservedHeifResult } from './processing-types.ts';
+import type { DecodedRasterImage, HdrIntentHeifResult, PreservedHeifResult } from './processing-types.ts';
 
 interface HeifImageHandle {
     constructor?: {
@@ -82,9 +81,9 @@ type HeicProcessOptions = {
     discardGainMap?: boolean;
 };
 
-type DecodedRgbaImageData = PreservedHeifResult['sdr'];
+type DecodedRgbaImageData = DecodedRasterImage;
 type GainMapImageData = PreservedHeifResult['gainMap'];
-type HeicProcessResult = File | HdrIntentHeifResult | PreservedHeifResult;
+type HeicProcessResult = DecodedRgbaImageData | HdrIntentHeifResult | PreservedHeifResult;
 
 let libheif: LibHeifModule | null = null;
 const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
@@ -242,30 +241,8 @@ export async function processHeic(
         return processHeifHdr(file);
     }
 
-    // Standard SDR Decoding (always decode the primary/first image)
-    const { canvas, ctx } = createCanvasWithContext(
-        primaryW,
-        primaryH,
-        'Canvas not available for HEIC decoding'
-    );
-    const imageData = ctx.createImageData(primaryW, primaryH);
-
-    await new Promise((resolve, reject) => {
-        primaryImage.display(imageData, (displayData: ImageData | null) => {
-            if (!displayData) {
-                reject(new Error('HEIF processing error'));
-            } else {
-                resolve(displayData);
-            }
-        });
-    });
-
     console.log('[HEIC] No gain map found (or discarded), falling back to ITM');
-    ctx.putImageData(imageData, 0, 0);
-    const pngBlob = await canvasToBlob(canvas, 'image/png');
-    const pngFile = new File([pngBlob], file.name.replace(/\.(heic|heif)$/i, '.png'), { type: 'image/png' });
-
-    return pngFile;
+    return _decodeHandleToImageData(heif, primaryImage.handle);
 }
 
 /**

@@ -1,8 +1,8 @@
 // @ts-nocheck
 import * as ortWebGpu from 'onnxruntime-web/webgpu';
-import { createCanvasWithContext as createRuntimeCanvasWithContext } from './canvas-runtime.js';
 import { GMNET_MAX_LONG_EDGE, IMAGE_MAX_LONG_EDGE } from './constants.js';
 import { hasWebGlSupport, isChromiumRuntime, isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
+import { resizeRasterImageSync } from './raster-image.ts';
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
 export const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
@@ -638,22 +638,6 @@ function safeDisposeTensor(tensor) {
     }
 }
 
-function clearCanvasBackingStore(canvas) {
-    if (!canvas || typeof canvas !== 'object') {
-        return;
-    }
-    try {
-        if (typeof canvas.width === 'number') {
-            canvas.width = 0;
-        }
-        if (typeof canvas.height === 'number') {
-            canvas.height = 0;
-        }
-    } catch (_error) {
-        // Best-effort cleanup only.
-    }
-}
-
 function createOrtSessionOptions(requestedExecutionProviders, externalDataOptions = null) {
     const sessionOptions = {
         executionProviders: requestedExecutionProviders,
@@ -807,15 +791,7 @@ function runWithTimeout(promise, timeoutMs, timeoutMessage = 'Operation timed ou
 }
 
 function resizeImageData(imageData, targetWidth, targetHeight) {
-    if (imageData.width === targetWidth && imageData.height === targetHeight) {
-        return imageData;
-    }
-
-    const { canvas: sourceCanvas, ctx: sourceCtx } = createCanvasWithContext(imageData.width, imageData.height);
-    sourceCtx.putImageData(imageData, 0, 0);
-    const { ctx: targetCtx } = createCanvasWithContext(targetWidth, targetHeight);
-    targetCtx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
-    return targetCtx.getImageData(0, 0, targetWidth, targetHeight);
+    return resizeRasterImageSync(imageData, targetWidth, targetHeight);
 }
 
 function resizeRgbaBuffer(rgba, width, height, targetWidth, targetHeight) {
@@ -911,10 +887,6 @@ function buildFeatherWeights(length, overlap, atStartEdge, atEndEdge) {
         weights[index] = Math.max(0.001, weight);
     }
     return weights;
-}
-
-function createCanvasWithContext(width, height) {
-    return createRuntimeCanvasWithContext(width, height, 'Canvas is not available for GMNet preprocessing');
 }
 
 export class GMNetInferenceSession {
@@ -1734,18 +1706,8 @@ export class GMNetInferenceSession {
     async preprocessGlobal(imageData) {
         // Resize to 256x256
         const targetSize = 256;
-        const { canvas: sourceCanvas, ctx: sourceCtx } = createCanvasWithContext(imageData.width, imageData.height);
-        sourceCtx.putImageData(imageData, 0, 0);
-
-        const { canvas: targetCanvas, ctx: targetCtx } = createCanvasWithContext(targetSize, targetSize);
-        try {
-            targetCtx.drawImage(sourceCanvas, 0, 0, targetSize, targetSize);
-            const resizedData = targetCtx.getImageData(0, 0, targetSize, targetSize);
-            return this.preprocessLocal(resizedData, targetSize, targetSize);
-        } finally {
-            clearCanvasBackingStore(sourceCanvas);
-            clearCanvasBackingStore(targetCanvas);
-        }
+        const resizedData = resizeImageData(imageData, targetSize, targetSize);
+        return this.preprocessLocal(resizedData, targetSize, targetSize);
     }
 
     postprocess(tensor, width, height) {

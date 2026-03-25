@@ -7,6 +7,7 @@ import {
   preloadGmnetRuntimeDependencies,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.ts';
+import { loadImageData } from './image-utils.js';
 import { isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
 import {
   RUNTIME_INIT_ERROR_CODES,
@@ -337,45 +338,8 @@ async function loadSmokeImageDataDefault({ runtime = globalThis, smokeAssetUrl }
     throw new Error('Smoke asset response does not support blob() or arrayBuffer().');
   }
 
-  let drawable = null;
-  try {
-    if (typeof runtime?.createImageBitmap === 'function') {
-      drawable = await runtime.createImageBitmap(blob);
-    } else if (typeof createImageBitmap === 'function') {
-      drawable = await createImageBitmap(blob);
-    }
-
-    if (drawable) {
-      const width = drawable.width;
-      const height = drawable.height;
-      let ctx;
-      if (typeof runtime?.OffscreenCanvas !== 'undefined') {
-        const canvas = new runtime.OffscreenCanvas(width, height);
-        ctx = canvas.getContext('2d');
-      } else if (typeof OffscreenCanvas !== 'undefined') {
-        const canvas = new OffscreenCanvas(width, height);
-        ctx = canvas.getContext('2d');
-      } else if (typeof runtime?.document?.createElement === 'function') {
-        const canvas = runtime.document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        ctx = canvas.getContext('2d');
-      }
-
-      if (!ctx) {
-        throw new Error('Canvas context unavailable while decoding smoke asset.');
-      }
-
-      ctx.drawImage(drawable, 0, 0);
-      return ctx.getImageData(0, 0, width, height);
-    }
-  } finally {
-    if (drawable && typeof drawable.close === 'function') {
-      drawable.close();
-    }
-  }
-
-  throw new Error('createImageBitmap is unavailable for smoke asset decoding.');
+  const { imageData } = await loadImageData(blob);
+  return imageData;
 }
 
 export async function initializeRuntime({

@@ -77,6 +77,16 @@ describe('heic-processing.js', () => {
       display: displayMock,
     }]);
     rawDecodeMock.mockReset();
+    rawDecodeMock.mockImplementation((handle) => ({
+      channels: [{
+        id: 10,
+        stride: 400,
+        width: handle?.itemId === 2 ? 50 : 100,
+        height: handle?.itemId === 2 ? 50 : 100,
+        bits_per_pixel: 8,
+        data: new Uint8Array((handle?.itemId === 2 ? 50 : 100) * (handle?.itemId === 2 ? 50 : 100) * 4).fill(127),
+      }],
+    }));
     processHeifHdrMock.mockReset();
     displayMock.mockClear();
     getImageHandleMock.mockImplementation((_ctx, itemId) => {
@@ -99,7 +109,7 @@ describe('heic-processing.js', () => {
       expect(module.processHeic).toBeDefined();
     });
 
-    it('should process HEIC files and return PNG', async () => {
+    it('should process HEIC files and return decoded raster bytes when no gain map is present', async () => {
       const mockFile = new File(['test'], 'test.heic', { type: 'image/heic' });
       mockFile.arrayBuffer = vi.fn(() => Promise.resolve(new ArrayBuffer(100)));
       getImageHandleMock.mockImplementation((_ctx, itemId) => {
@@ -111,7 +121,14 @@ describe('heic-processing.js', () => {
 
       const result = await processHeic(mockFile);
 
-      expect(result).toBeInstanceOf(File);
+      expect(result).toMatchObject({
+        width: 100,
+        height: 100,
+        strideBytes: 400,
+        pixelFormat: 'rgba8',
+        bitDepth: 8,
+      });
+      expect(result.data).toBeInstanceOf(Uint8Array);
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining('/assets/libheif.wasm?v=')
       );
@@ -126,7 +143,13 @@ describe('heic-processing.js', () => {
       const options = { discardGainMap: true };
       const result = await processHeic(mockFile, options);
 
-      expect(result).toBeInstanceOf(File);
+      expect(result).toMatchObject({
+        width: 100,
+        height: 100,
+        strideBytes: 400,
+        pixelFormat: 'rgba8',
+        bitDepth: 8,
+      });
     });
 
     it('extracts full preserved gain-map metadata from embedded HDR gain-map XMP', async () => {

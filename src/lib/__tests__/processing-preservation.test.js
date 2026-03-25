@@ -32,6 +32,15 @@ vi.mock('../jpegtran-rotate.js', () => ({
     })
 }));
 
+vi.mock('../jpegli-decoder.js', () => ({
+    encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+    decodeJpegli: vi.fn(async () => ({
+        width: 10,
+        height: 10,
+        data: new Uint8ClampedArray(10 * 10 * 4).fill(127),
+    })),
+}));
+
 const encodedBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xee, 0x00, 0x01, 0xff, 0xd9]);
 
 const sdrImageData = new ImageData(
@@ -556,8 +565,12 @@ describe('processImage UltraHDR preservation path', () => {
         const { processImage } = await import('../processing-core.js');
         const { extractExifApp1PayloadFromInput } = await import('../input-exif.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        const imageUtils = await import('../image-utils.js');
         isUhdrImage.mockResolvedValue(true);
         extractExifApp1PayloadFromInput.mockReturnValueOnce(extractedExifPayloadOrientation6);
+        vi.spyOn(imageUtils, 'jpegBytesToImageData').mockResolvedValue(
+            new ImageData(new Uint8ClampedArray(4 * 4 * 4).fill(120), 4, 4)
+        );
 
         const file = new File([inputUhdrBytes], 'input.jpg', { type: 'image/jpeg' });
         file.arrayBuffer = vi.fn(async () => inputUhdrBytes.buffer.slice(0));
@@ -698,6 +711,7 @@ describe('processImage UltraHDR preservation path', () => {
     it('forces re-encode and downsampling if an existing UltraHDR JPEG exceeds IMAGE_MAX_LONG_EDGE', async () => {
         const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        const imageUtils = await import('../image-utils.js');
         isUhdrImage.mockResolvedValue(true);
 
         // SOF0 marker for 17000x17000 (exceeds 16384)
@@ -718,34 +732,9 @@ describe('processImage UltraHDR preservation path', () => {
         // Mock decoder output
         decoderInstance.getBaseImage.mockReturnValueOnce(largeUhdrBytes);
         decoderInstance.getGainMapImage.mockReturnValueOnce(largeUhdrBytes);
-
-        // Mock Image to return large dimensions
-        const originalImage = global.Image;
-        global.Image = class MockImage {
-            constructor() {
-                this.width = 17000;
-                this.height = 17000;
-            }
-            set src(_v) { setTimeout(() => this.onload?.(), 0); }
-        };
-
-        const originalCreateElement = document.createElement.bind(document);
-        const canvasSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName) => {
-            if (tagName !== 'canvas') return originalCreateElement(tagName);
-            return {
-                width: 17000, height: 17000,
-                getContext: vi.fn(() => ({
-                    drawImage: vi.fn(),
-                    getImageData: vi.fn(() => new ImageData(new Uint8ClampedArray(4 * 16384 * 16384).fill(128), 16384, 16384)),
-                    putImageData: vi.fn(),
-                    save: vi.fn(),
-                    restore: vi.fn(),
-                    translate: vi.fn(),
-                    rotate: vi.fn()
-                })),
-                toBlob: vi.fn((callback) => callback(new Blob([new Uint8Array(10)], { type: 'image/jpeg' })))
-            };
-        });
+        vi.spyOn(imageUtils, 'jpegBytesToImageData').mockResolvedValue(
+            new ImageData(new Uint8ClampedArray(4 * 16384 * 16384).fill(128), 16384, 16384)
+        );
 
         const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => { });
         await processImage(file, { rotation: 0 });
@@ -757,9 +746,6 @@ describe('processImage UltraHDR preservation path', () => {
 
         // It SHOULD have decoded images (which calls UHDRDecoder)
         expect(decoderInstance.getBaseImage).toHaveBeenCalled();
-
-        global.Image = originalImage;
-        canvasSpy.mockRestore();
     });
 
     it('aligns base and gain-map components using auto-rotation in processUhdrWithRotation', async () => {

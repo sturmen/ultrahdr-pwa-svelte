@@ -4,11 +4,23 @@ import '@testing-library/jest-dom/vitest';
 // This file runs before each test file
 console.log('=== SETUP FILE LOADED ===');
 
-// Mock browser APIs that may not be available in JSDOM
-import pkg from 'canvas';
-const { createCanvas } = pkg;
+type ImageDataInit = Uint8ClampedArray | Uint8Array | number[];
 
-function resolveImageDataConstructor() {
+class ImageDataShim {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+  colorSpace: PredefinedColorSpace;
+
+  constructor(data: ImageDataInit, width: number, height: number, options?: ImageDataSettings) {
+    this.data = data instanceof Uint8ClampedArray ? data : new Uint8ClampedArray(data);
+    this.width = width;
+    this.height = height;
+    this.colorSpace = options?.colorSpace ?? 'srgb';
+  }
+}
+
+function resolveImageDataConstructor(): typeof ImageDataShim | typeof ImageData {
   if (typeof globalThis.ImageData === 'function') {
     return globalThis.ImageData;
   }
@@ -17,29 +29,10 @@ function resolveImageDataConstructor() {
     return window.ImageData;
   }
 
-  if (typeof pkg.ImageData === 'function') {
-    return pkg.ImageData;
-  }
-
-  const canvas = createCanvas(1, 1);
-  const context = canvas.getContext('2d');
-  const imageData = context?.createImageData?.(1, 1);
-  if (imageData?.constructor && typeof imageData.constructor === 'function') {
-    return imageData.constructor;
-  }
-
-  class ImageDataShim {
-    constructor(data, width, height) {
-      this.data = data;
-      this.width = width;
-      this.height = height;
-    }
-  }
-
   return ImageDataShim;
 }
 
-function installImageDataConstructor(ImageDataCtor) {
+function installImageDataConstructor(ImageDataCtor: typeof ImageDataShim | typeof ImageData) {
   if (typeof globalThis !== 'undefined') {
     Object.defineProperty(globalThis, 'ImageData', {
       configurable: true,
@@ -65,31 +58,35 @@ function installImageDataConstructor(ImageDataCtor) {
   }
 }
 
-function createMemoryStorage() {
+type MemoryStorage = Storage & {
+  key(index: number): string | null;
+};
+
+function createMemoryStorage(): MemoryStorage {
   const storage = new Map();
   return {
-    getItem(key) {
+    getItem(key: string) {
       return storage.has(String(key)) ? storage.get(String(key)) : null;
     },
-    setItem(key, value) {
+    setItem(key: string, value: string) {
       storage.set(String(key), String(value));
     },
-    removeItem(key) {
+    removeItem(key: string) {
       storage.delete(String(key));
     },
     clear() {
       storage.clear();
     },
-    key(index) {
+    key(index: number) {
       return Array.from(storage.keys())[index] ?? null;
     },
     get length() {
       return storage.size;
     },
-  };
+  } as MemoryStorage;
 }
 
-function installSafeStorage(name, storage) {
+function installSafeStorage(name: 'localStorage' | 'sessionStorage', storage: MemoryStorage) {
   if (typeof globalThis !== 'undefined') {
     Object.defineProperty(globalThis, name, {
       configurable: true,
@@ -112,17 +109,24 @@ installImageDataConstructor(CanvasImageData);
 installSafeStorage('localStorage', createMemoryStorage());
 installSafeStorage('sessionStorage', createMemoryStorage());
 
-global.URL.createObjectURL = vi.fn((blob) => {
+global.URL.createObjectURL = vi.fn((_blob: Blob) => {
   return 'mock-object-url';
 });
 
 global.URL.revokeObjectURL = vi.fn();
 
-global.createImageBitmap = vi.fn(async (blob) => {
-  const canvas = createCanvas(64, 64);
-  // Add close() for compatibility with ImageBitmap
-  canvas.close = () => { };
-  return canvas;
+global.createImageBitmap = vi.fn(async (source: { width?: number; height?: number } | Blob) => {
+  const width = typeof source === 'object' && source && typeof source.width === 'number'
+    ? source.width
+    : 64;
+  const height = typeof source === 'object' && source && typeof source.height === 'number'
+    ? source.height
+    : 64;
+  return {
+    width,
+    height,
+    close: () => { },
+  };
 });
 
 // Mock navigator

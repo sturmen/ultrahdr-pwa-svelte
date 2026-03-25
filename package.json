@@ -20,7 +20,7 @@
     "test:e2e:mobile": "npx playwright test --project=mobile-webkit-ios --project=mobile-chromium-android-gpu --project=mobile-chromium-android-fallback",
     "test:e2e:android-webgpu": "npx playwright test --config=playwright.android-real.config.js",
     "test:ui": "vitest run --ui",
-    "test:integration:jpegli-determinism": "vitest run --config vite.config.jpegli-determinism.js",
+    "test:integration:jpegli-determinism": "vitest run --config vite.config.jpegli-determinism.ts",
     "test:coverage": "vitest run --config vite.config.test.ts --coverage --coverage.provider=istanbul"
   },
   "keywords": [],
@@ -28,6 +28,8 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
+    "fast-png": "^8.0.0",
+    "jimp": "^1.6.0",
     "jszip": "^3.10.1",
     "libheif-js": "^1.19.8",
     "onnxruntime-web": "^1.24.3",
@@ -43,7 +45,6 @@
     "@vitest/browser": "^4.1.0",
     "@vitest/coverage-istanbul": "^4.1.0",
     "@vitest/ui": "^4.1.0",
-    "canvas": "^3.2.1",
     "gh-pages": "^6.3.0",
     "jsdom": "^29.0.0",
     "onnxruntime-node": "^1.24.3",

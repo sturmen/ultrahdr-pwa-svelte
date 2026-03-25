@@ -117,4 +117,39 @@ describe('workflow-state queue-centric selectors', () => {
     });
     expect(selectExportableQueueIds(state)).toEqual([secondId]);
   });
+
+  it('treats storage-backed outputs as exportable even without resident blobs', () => {
+    const state = {
+      mode: 'done',
+      activeQueueId: null,
+      pendingIntent: null,
+      nextQueueId: 1,
+      queue: [
+        {
+          id: 0,
+          name: 'stored.jpg',
+          status: 'completed',
+          settingsVersion: 1,
+          processingPath: 'generated',
+          error: null,
+          inputPreviewUrl: 'blob:preview',
+          outputPreviewUrl: 'blob:output',
+          result: {
+            outputUrl: 'blob:output',
+            size: 123,
+            persisted: true,
+          },
+          progress: null,
+        },
+      ],
+    };
+
+    expect(selectExportableQueueIds(state)).toEqual([0]);
+    expect(selectWorkflowCards(state)[0]).toEqual(
+      expect.objectContaining({
+        hasOutput: true,
+        previewUrl: 'blob:output',
+      }),
+    );
+  });
 });

@@ -71,4 +71,46 @@ describe('GMNetInferenceSession', () => {
       },
     });
   });
+
+  it('preprocesses the global inference image without requiring canvas support', async () => {
+    const { GMNetInferenceSession } = await import('../gmnet-session.ts');
+    const session = new GMNetInferenceSession({
+      runtime: {
+        navigator: {
+          userAgent: 'Mozilla/5.0 Firefox/123.0',
+          platform: 'MacIntel',
+        },
+      },
+    });
+
+    const preprocessLocal = vi.fn(async (imageData, width, height) => ({
+      imageData,
+      width,
+      height,
+    }));
+    session.preprocessLocal = preprocessLocal;
+
+    const imageData = new ImageData(
+      new Uint8ClampedArray(4 * 4 * 4).fill(255),
+      4,
+      4,
+    );
+
+    await expect(session.preprocessGlobal(imageData)).resolves.toEqual({
+      imageData: expect.objectContaining({
+        width: 256,
+        height: 256,
+      }),
+      width: 256,
+      height: 256,
+    });
+    expect(preprocessLocal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        width: 256,
+        height: 256,
+      }),
+      256,
+      256,
+    );
+  });
 });

@@ -16,7 +16,6 @@
     "src/lib/libheif-browser.d.ts",
     "src/lib/input-exif.d.ts",
     "src/lib/exif-utils.d.ts",
-    "src/lib/canvas-runtime.d.ts",
     "src/lib/gain-map-metadata.d.ts",
     "src/lib/pipeline-telemetry.d.ts",
     "src/lib/ultrahdr-wasm.d.ts",
@@ -27,6 +26,12 @@
     "src/lib/jpegtran-rotate.d.ts",
     "src/lib/jpegli-decoder.d.ts",
     "src/lib/tiff-processing.d.ts",
-    "src/lib/processing-core.d.ts"
+    "src/lib/processing-core.d.ts",
+    "src/lib/jpegli-decoder.ts",
+    "src/lib/jpegtran-rotate.ts",
+    "src/lib/tiff-processing.ts",
+    "src/lib/raster-image.ts",
+    "src/lib/runtime-capability-policy.ts",
+    "src/lib/capabilities.ts"
   ]
 }

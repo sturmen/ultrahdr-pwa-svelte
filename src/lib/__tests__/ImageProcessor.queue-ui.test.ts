@@ -97,8 +97,10 @@ describe('ImageProcessor queue-centric workflow cards', () => {
 
     const cards = [screen.getByTestId('workflow-card-0'), screen.getByTestId('workflow-card-1')];
     expect(cards).toHaveLength(2);
-    expect(within(screen.getByTestId('workflow-card-0')).getByText('Generating gain map 42%')).toBeInTheDocument();
-    expect(within(screen.getByTestId('workflow-card-0')).getByTestId('workflow-card-progress-0')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(screen.getByTestId('workflow-card-0')).getByText('Generating gain map 42%')).toBeInTheDocument();
+      expect(within(screen.getByTestId('workflow-card-0')).getByTestId('workflow-card-progress-0')).toBeInTheDocument();
+    });
     expect(within(screen.getByTestId('workflow-card-1')).getByText('Queued')).toBeInTheDocument();
     expect(within(screen.getByTestId('workflow-card-1')).queryByTestId('workflow-card-progress-1')).not.toBeInTheDocument();
     expect(screen.getByTestId('workflow-card-0')).toHaveClass('pending');

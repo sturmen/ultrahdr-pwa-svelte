@@ -3,8 +3,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/svelte';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import ImageProcessor from '../ImageProcessor.svelte';
-import { storeQueueState } from '../share-store.js';
+import { storeQueuePreviewBlob, storeQueueState } from '../share-store.ts';
 
 const runtimeProcessMock = vi.fn();
 
@@ -24,9 +26,22 @@ vi.mock('../capabilities.js', () => ({
   })),
 }));
 
-vi.mock('../share-store.js', () => ({
+vi.mock('../share-store.ts', () => ({
+  clearSessionQueuePayloads: vi.fn(async () => {}),
   clearQueueState: vi.fn(async () => {}),
+  deleteQueuePayloads: vi.fn(async () => {}),
+  getQueueInputFile: vi.fn(async (queueId) =>
+    new File([`input-${queueId}`], `photo-${queueId}.jpg`, { type: 'image/jpeg' })),
+  getQueueOutputBlob: vi.fn(async () => new Blob(['done'], { type: 'image/jpeg' })),
   loadQueueState: vi.fn(async () => null),
+  shouldPauseForStorageWrite: vi.fn(async () => ({
+    pause: false,
+    remaining: 1024 * 1024 * 1024,
+    requiredBytes: 0,
+  })),
+  storeQueueInputFile: vi.fn(async () => {}),
+  storeQueueOutputBlob: vi.fn(async () => {}),
+  storeQueuePreviewBlob: vi.fn(async () => {}),
   storeQueueState: vi.fn(async () => {}),
 }));
 
@@ -184,5 +199,37 @@ describe('ImageProcessor lifecycle durability', () => {
     });
 
     processingGate.resolve();
+  });
+
+  it('stores a jpeg preview without creating a canvas element', async () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
+      if (String(tagName).toLowerCase() === 'canvas') {
+        throw new Error('canvas should not be used for previews');
+      }
+      return originalCreateElement(tagName, options);
+    });
+    globalThis.createImageBitmap = vi.fn(async () => ({
+      width: 512,
+      height: 256,
+      close: vi.fn(),
+    }));
+
+    const pngBytes = await readFile(path.resolve(process.cwd(), 'media/exif_matrix.png'));
+    render(ImageProcessor, {
+      props: {
+        files: [new File([pngBytes], 'photo.png', { type: 'image/png' })],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(vi.mocked(storeQueuePreviewBlob)).toHaveBeenCalled();
+    });
+
+    const previewBlob = vi.mocked(storeQueuePreviewBlob).mock.calls.at(-1)?.[1];
+    expect(previewBlob).toBeInstanceOf(Blob);
+    expect(previewBlob?.type).toBe('image/jpeg');
+    expect(createElementSpy).not.toHaveBeenCalledWith('canvas');
   });
 });

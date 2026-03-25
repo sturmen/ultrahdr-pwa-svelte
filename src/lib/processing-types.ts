@@ -34,23 +34,18 @@ export interface HdrIntentHeifResult {
   sourceExifBytes: Uint8Array | null;
 }
 
+export interface DecodedRasterImage {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  strideBytes: number;
+  pixelFormat: 'rgba8';
+  bitDepth: number;
+}
+
 export interface PreservedHeifResult {
-  sdr: {
-    data: Uint8Array;
-    width: number;
-    height: number;
-    strideBytes: number;
-    pixelFormat: 'rgba8';
-    bitDepth: number;
-  };
-  gainMap: {
-    data: Uint8Array;
-    width: number;
-    height: number;
-    strideBytes: number;
-    pixelFormat: 'rgba8';
-    bitDepth: number;
-  };
+  sdr: DecodedRasterImage;
+  gainMap: DecodedRasterImage;
   gainMapMetadata?: GainMapMetadata | null;
   gainMapHeadroom?: number | null;
   name: string;

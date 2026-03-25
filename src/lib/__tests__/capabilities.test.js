@@ -20,6 +20,9 @@ function createRuntime(overrides = {}) {
       ...overrides.window,
     },
     Worker: overrides.Worker,
+    createImageBitmap: overrides.createImageBitmap,
+    fetch: overrides.fetch,
+    ImageData: overrides.ImageData,
     OffscreenCanvas: overrides.OffscreenCanvas,
   };
 }
@@ -52,7 +55,9 @@ describe('capabilities', () => {
         deviceMemory: 8,
       },
       Worker: function Worker() {},
-      OffscreenCanvas: class OffscreenCanvas {},
+      createImageBitmap: async () => ({}),
+      fetch: async () => ({}),
+      ImageData,
     });
 
     const caps = getCapabilities(runtime);

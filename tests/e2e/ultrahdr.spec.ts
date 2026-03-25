@@ -5,7 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { createCanvas, loadImage } from 'canvas';
+import { Jimp } from 'jimp';
 import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
 import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOverride } from './runtime-gate.js';
 
@@ -508,16 +508,13 @@ function extractUltraHdrGainMapJpeg(ultraHdrPath, tempDir) {
 }
 
 async function loadBitmap(imagePath) {
-    const image = await loadImage(imagePath);
-    const canvas = createCanvas(image.width, image.height);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(image, 0, 0);
-    const { data, width, height } = ctx.getImageData(0, 0, image.width, image.height);
+    const image = await Jimp.read(fs.readFileSync(imagePath));
+    const { data, width, height } = image.bitmap;
 
     return {
         width,
         height,
-        data
+        data: new Uint8ClampedArray(data)
     };
 }
 

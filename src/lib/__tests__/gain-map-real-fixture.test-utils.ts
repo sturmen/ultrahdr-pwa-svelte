@@ -126,20 +126,19 @@ export async function runHeicFixtureProbe(
   discardGainMap: boolean,
 ): Promise<HeicFixtureProbe> {
   const configPath = path.resolve(process.cwd(), 'vite.config.test.ts');
-  const childProgram = `
+const childProgram = `
 import fs from 'fs';
 import path from 'path';
 import { createServer, loadConfigFromFile, mergeConfig } from 'vite';
-import canvasPkg from 'canvas';
 
 const filename = process.env.HEIC_FIXTURE_FILENAME;
 const discardFlag = process.env.HEIC_DISCARD_GAIN_MAP;
 const discardGainMap = discardFlag === 'true';
 const logs = [];
-const { createCanvas, ImageData } = canvasPkg;
 const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
+const originalImageData = global.ImageData;
 
 console.log = (...args) => {
   logs.push(args.join(' '));
@@ -163,23 +162,17 @@ const config = mergeConfig(loaded.config, {
 });
 const server = await createServer(config);
 const originalFetch = global.fetch;
-const originalDocument = global.document;
-const originalImageData = global.ImageData;
 
-global.document = {
-  createElement(tagName) {
-    if (tagName !== 'canvas') {
-      throw new Error(\`Unsupported element request: \${tagName}\`);
-    }
-    const canvas = createCanvas(1, 1);
-    canvas.toBlob = (callback, type = 'image/png') => {
-      const blob = new Blob([canvas.toBuffer(type)], { type });
-      callback(blob);
-    };
-    return canvas;
-  },
-};
-global.ImageData = ImageData;
+class ImageDataShim {
+  constructor(data, width, height, options = {}) {
+    this.data = data instanceof Uint8ClampedArray ? data : new Uint8ClampedArray(data);
+    this.width = width;
+    this.height = height;
+    this.colorSpace = options.colorSpace || 'srgb';
+  }
+}
+
+global.ImageData = typeof originalImageData === 'function' ? originalImageData : ImageDataShim;
 
 function isMonochrome(imageData, tolerance = 5) {
   const { data, width, height } = imageData;
@@ -244,7 +237,6 @@ try {
   }
 } finally {
   global.fetch = originalFetch;
-  global.document = originalDocument;
   global.ImageData = originalImageData;
   await server.close();
 }

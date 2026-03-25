@@ -87,6 +87,15 @@ vi.mock('../ultrahdr-wasm.js', () => ({
   }),
 }));
 
+vi.mock('../jpegli-decoder.js', () => ({
+  encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+  decodeJpegli: vi.fn(async () => ({
+    width: 16,
+    height: 16,
+    data: new Uint8ClampedArray(16 * 16 * 4).fill(127),
+  })),
+}));
+
 class MockOffscreenCanvas {
   constructor(width, height) {
     this.width = width;

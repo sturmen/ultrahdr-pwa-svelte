@@ -277,12 +277,7 @@ function buildCheckpointMetadata({
 }
 
 export function isGmnetRuntimeSupported(runtime = globalThis) {
-  const hasCanvas =
-    typeof runtime?.OffscreenCanvas !== 'undefined' ||
-    (typeof runtime?.document !== 'undefined' && typeof runtime.document.createElement === 'function');
-
   return (
-    hasCanvas &&
     typeof runtime?.fetch === 'function' &&
     typeof runtime?.ImageData !== 'undefined'
   );

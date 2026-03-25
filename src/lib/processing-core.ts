@@ -11,15 +11,11 @@ import {
 import { extractExifApp1PayloadFromInput } from './input-exif.js';
 import { isGmnetRuntimeSupported, GmnetGainMapGenerator } from './gain-map-generator.js';
 import {
-    createCanvasWithContext,
     resizeImageData,
-    rotateImageData,
     transformImageData,
     loadImageData,
     jpegBytesToImageData,
-    imageDataToJpegBlob,
     blobToUint8Array,
-    readBlobAsDataURL,
     isMonochromeGainMapImageData,
     toMonochromeGainMapImageData,
     isSingleChannelGainMapMetadata,
@@ -37,6 +33,7 @@ import type { GainMapMetadata } from './gain-map-metadata.js';
 import type { PipelineTelemetry } from './pipeline-telemetry.js';
 import type { JpegliEncodeOptions } from './jpegli-decoder.js';
 import type {
+    DecodedRasterImage,
     HdrIntentHeifResult,
     HdrIntentPayload,
     PreservedHeifResult,
@@ -72,7 +69,7 @@ type ResolvedProcessOptions = ProcessOptions & {
     __hasExplicitMaxContentBoost: boolean;
 };
 
-type PreprocessedInput = File | HdrIntentHeifResult | PreservedHeifResult;
+type PreprocessedInput = File | HdrIntentHeifResult | PreservedHeifResult | DecodedRasterImage;
 type EncodedUltraHdrPayload = { sdr: Uint8Array; gainMap: Uint8Array };
 type OrientationDecision = {
     orientation: number;
@@ -107,6 +104,21 @@ function isHdrIntentHeifInput(input: unknown): input is HdrIntentHeifResult {
 
 function isPreservedHeifInput(input: unknown): input is PreservedHeifResult {
     return !!input && typeof input === 'object' && 'sdr' in input;
+}
+
+function isDecodedRasterInput(input: unknown): input is DecodedRasterImage {
+    return !!input
+        && typeof input === 'object'
+        && 'data' in input
+        && 'width' in input
+        && 'height' in input
+        && 'strideBytes' in input
+        && 'pixelFormat' in input
+        && input.pixelFormat === 'rgba8';
+}
+
+function decodedRasterToImageData(input: DecodedRasterImage): ImageData {
+    return new ImageData(new Uint8ClampedArray(input.data), input.width, input.height);
 }
 
 
@@ -204,11 +216,11 @@ const DEFAULT_PROCESS_OPTIONS: ProcessOptions = {
     gmnetCapabilityHint: null,
 };
 let gainMapGenerator: GmnetGainMapGenerator | null = null;
-let processHeicProcessor: ((file: File, options?: { quality?: number; discardGainMap?: boolean }) => Promise<File | HdrIntentHeifResult | PreservedHeifResult>) | null = null;
+let processHeicProcessor: ((file: File, options?: { quality?: number; discardGainMap?: boolean }) => Promise<DecodedRasterImage | HdrIntentHeifResult | PreservedHeifResult>) | null = null;
 let processHeifHdrProcessor: ((file: File) => Promise<HdrIntentHeifResult>) | null = null;
-let processTiffProcessor: ((file: Blob) => Promise<File | Blob>) | null = null;
+let processTiffProcessor: ((file: Blob) => Promise<DecodedRasterImage>) | null = null;
 
-async function getProcessHeic(): Promise<(file: File, options?: { quality?: number; discardGainMap?: boolean }) => Promise<File | HdrIntentHeifResult | PreservedHeifResult>> {
+async function getProcessHeic(): Promise<(file: File, options?: { quality?: number; discardGainMap?: boolean }) => Promise<DecodedRasterImage | HdrIntentHeifResult | PreservedHeifResult>> {
     if (!processHeicProcessor) {
         const module = await import('./heic-processing.js');
         processHeicProcessor = module.processHeic;
@@ -224,7 +236,7 @@ async function getProcessHeifHdr(): Promise<(file: File) => Promise<HdrIntentHei
     return processHeifHdrProcessor;
 }
 
-async function getProcessTiff(): Promise<(file: Blob) => Promise<File | Blob>> {
+async function getProcessTiff(): Promise<(file: Blob) => Promise<DecodedRasterImage>> {
     if (!processTiffProcessor) {
         const module = await import('./tiff-processing.js');
         processTiffProcessor = module.processTiff;
@@ -843,17 +855,22 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
 
         setProcessingPath('generated');
 
-        // Load Data
-        // Prefer Blob/File decode sources to avoid main-thread-only FileReader reliance in workers.
-        const decodeSource = await telemetry.runStage('read-input-data-url', async () =>
-            workingFile instanceof Blob ? workingFile : readFileAsDataURL(workingFile)
-        );
-        console.log('[Process] File loaded and EXIF extraction complete');
-        throwIfAborted(mergedOptions.abortSignal);
+        let workingImageData: ImageData;
+        if (isDecodedRasterInput(workingFile)) {
+            workingImageData = await telemetry.runStage(
+                'decode-image-data',
+                async () => decodedRasterToImageData(workingFile),
+            );
+        } else {
+            const decodeSource = await telemetry.runStage('read-input-data-url', async () =>
+                workingFile instanceof Blob ? workingFile : file
+            );
+            console.log('[Process] File loaded and EXIF extraction complete');
+            throwIfAborted(mergedOptions.abortSignal);
 
-        // Load image pixels
-        const { imageData } = await telemetry.runStage('decode-image-data', async () => loadImageData(decodeSource));
-        let workingImageData = imageData;
+            const { imageData } = await telemetry.runStage('decode-image-data', async () => loadImageData(decodeSource));
+            workingImageData = imageData;
+        }
         console.log('[Process] Image data retrieved');
 
         const constrainedDimensions = getConstrainedDimensions(
@@ -1498,12 +1515,15 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
             };
         };
 
-        const encoderFn = options.useJpegli ?
-            async (data, q, encodeOptions = {}) => await imageDataToJpegBytes(data, q, encodeOptions) :
-            async (data, q) => await blobToUint8Array(await imageDataToJpegBlob(data, q));
+        const encoderFn = async (data, q, encodeOptions = {}) => await imageDataToJpegBytes(data, q, encodeOptions);
 
         console.log("[start] encode-sdr-to-jpeg")
         let sdrJpegBytes;
+        if (telemetry && options.useJpegli) {
+            telemetry.emitStageProgress('encode-sdr-to-jpeg', 0, {
+                note: 'Encoding SDR JPEG 0%',
+            });
+        }
         const canBypassSdrEncoding =
             originalSdrJpegBytes instanceof Uint8Array
             && rotation === 0
@@ -1538,9 +1558,19 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
                     quality,
                     createJpegliProgressOptions('encode-sdr-to-jpeg', 'Encoding SDR JPEG'),
                 );
+            if (telemetry && options.useJpegli) {
+                telemetry.emitStageProgress('encode-sdr-to-jpeg', 100, {
+                    note: 'Encoding SDR JPEG 100%',
+                });
+            }
         }
         console.log("[end] encode-sdr-to-jpeg success")
         console.log("[start] encode-gain-map-to-jpeg")
+        if (telemetry && options.useJpegli) {
+            telemetry.emitStageProgress('encode-gain-map-to-jpeg', 0, {
+                note: 'Encoding gain map JPEG 0%',
+            });
+        }
         const gainMapJpegBytes = telemetry ?
             await telemetry.runStage(
                 'encode-gain-map-to-jpeg',
@@ -1555,6 +1585,11 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
                 quality,
                 createJpegliProgressOptions('encode-gain-map-to-jpeg', 'Encoding gain map JPEG'),
             );
+        if (telemetry && options.useJpegli) {
+            telemetry.emitStageProgress('encode-gain-map-to-jpeg', 100, {
+                note: 'Encoding gain map JPEG 100%',
+            });
+        }
         console.log("[end] encode-gain-map-to-jpeg success")
         let finalExifPayload = exifPayload;
         if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {

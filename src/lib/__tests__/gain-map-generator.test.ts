@@ -54,6 +54,19 @@ function createRuntime() {
 }
 
 describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
+  it('treats fetch-plus-imagedata runtimes as supported even without canvas globals', async () => {
+    const { isGmnetRuntimeSupported } = await import('../gain-map-generator.ts');
+
+    expect(
+      isGmnetRuntimeSupported({
+        fetch,
+        ImageData,
+        document: undefined,
+        OffscreenCanvas: undefined,
+      } as typeof globalThis),
+    ).toBe(true);
+  });
+
   it('throws when GMNet runtime is unsupported', async () => {
     const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
     const session = {

@@ -20,34 +20,14 @@ export function isChromiumRuntime(runtime: typeof globalThis = globalThis): bool
 }
 
 export function hasWebGlSupport(runtime: typeof globalThis = globalThis): boolean {
-  try {
-    if (typeof runtime?.OffscreenCanvas !== 'undefined') {
-      const canvas = new runtime.OffscreenCanvas(1, 1);
-      const context = canvas.getContext('webgl')
-        || (canvas as unknown as { getContext: (contextId: string) => unknown }).getContext('experimental-webgl');
-      if (context) {
-        return true;
-      }
-    }
-  } catch (_error) {
-    // Fall through to DOM canvas probing.
-  }
-
-  try {
-    if (typeof runtime?.document?.createElement === 'function') {
-      const canvas = runtime.document.createElement('canvas');
-      if (canvas && typeof canvas.getContext === 'function') {
-        const context = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (context) {
-          return true;
-        }
-      }
-    }
-  } catch (_error) {
-    // No-op.
-  }
-
-  return false;
+  const runtimeWithWebGl = runtime as typeof globalThis & {
+    WebKitWebGLRenderingContext?: unknown;
+  };
+  return Boolean(
+    runtime?.WebGL2RenderingContext
+    || runtime?.WebGLRenderingContext
+    || runtimeWithWebGl.WebKitWebGLRenderingContext,
+  );
 }
 
 export function isGmnetWebGlSupportedRuntime(runtime: typeof globalThis = globalThis): boolean {

@@ -2,6 +2,8 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import {
   RUNTIME_INIT_ERROR_CODES,
   RUNTIME_INIT_STEP_ORDER,
@@ -58,6 +60,7 @@ function createRuntimeWithGpuAndWebGl() {
     },
     fetch: vi.fn(),
     document: createWebGlDocument(),
+    WebGLRenderingContext: class WebGLRenderingContext {},
     OffscreenCanvas: undefined,
     createImageBitmap: undefined,
     crossOriginIsolated: true,
@@ -357,6 +360,53 @@ describe('runtime initialization', () => {
     });
   });
 
+  it('decodes the default smoke asset without createImageBitmap or canvas support', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    const smokeBytes = await readFile(path.resolve(process.cwd(), 'public/models/gmnet-smoke-128.png'));
+    runtime.fetch.mockResolvedValue(
+      new Response(smokeBytes, {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    runtime.document = {
+      createElement: vi.fn((tagName) => {
+        if (tagName === 'canvas') {
+          throw new Error('canvas should not be used');
+        }
+        return {};
+      }),
+    };
+    runtime.OffscreenCanvas = undefined;
+    runtime.createImageBitmap = undefined;
+
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || null;
+      }),
+      resolveGainMapCapability: vi.fn(),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: null,
+    };
+
+    const result = await initializeRuntime({
+      runtime,
+      sessionFactory: () => session,
+    });
+
+    expect(result.resolvedExecutionProvider).toBe('webgpu');
+    expect(session.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        width: expect.any(Number),
+        height: expect.any(Number),
+        data: expect.any(Uint8ClampedArray),
+      }),
+      expect.any(Object),
+    );
+  });
+
   it('fails with RUNTIME_INIT_SMOKE_ASSET_FAILED when forceSmokeFailure is enabled', async () => {
     const runtime = createRuntimeWithGpuAndWebGl();
     const session = {
@@ -411,10 +461,14 @@ describe('runtime initialization', () => {
       code: RUNTIME_INIT_ERROR_CODES.PROVIDER_FALLBACK_EXHAUSTED,
       stepId: 'gmnet-smoke-run',
       diagnostics: expect.objectContaining({
-        requestedExecutionProviders: ['webgpu', 'wasm'],
+        requestedExecutionProviders: ['webgpu', 'webgl', 'wasm'],
         attemptFailures: [
           expect.objectContaining({
             provider: 'webgpu',
+            errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
+          }),
+          expect.objectContaining({
+            provider: 'webgl',
             errorCode: RUNTIME_INIT_ERROR_CODES.SMOKE_INFERENCE_FAILED,
           }),
           expect.objectContaining({
@@ -494,9 +548,9 @@ describe('runtime initialization', () => {
       forceReload: true,
     });
     expect(init).toHaveBeenNthCalledWith(2, 'realworld', {
-      forceExecutionProviders: ['wasm'],
+      forceExecutionProviders: ['webgl'],
       forceReload: true,
     });
-    expect(result.resolvedExecutionProvider).toBe('wasm');
+    expect(result.resolvedExecutionProvider).toBe('webgl');
   });
 });

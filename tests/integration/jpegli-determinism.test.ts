@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { createCanvas, loadImage } from 'canvas';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetJpegliWasmModuleForTests,
+  decodeJpegli,
   encodeJpegli,
   encodeJpegliLegacyForTests,
 } from '../../src/lib/jpegli-decoder.js';
@@ -35,16 +35,7 @@ function loadWasmFactoryFromAsset() {
 
 async function loadFixtureImageData() {
   const fixtureBytes = fs.readFileSync(FIXTURE_PATH);
-  const image = await loadImage(fixtureBytes);
-  const canvas = createCanvas(image.width, image.height);
-  const context = canvas.getContext('2d');
-  context.drawImage(image, 0, 0);
-  const imageData = context.getImageData(0, 0, image.width, image.height);
-  return {
-    width: imageData.width,
-    height: imageData.height,
-    data: new Uint8ClampedArray(imageData.data),
-  };
+  return decodeJpegli(new Uint8Array(fixtureBytes));
 }
 
 describe('jpegli determinism integration', () => {

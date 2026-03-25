@@ -14,7 +14,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: [],
-    include: ['tests/integration/jpegli-determinism.test.js'],
+    include: ['tests/integration/jpegli-determinism.test.ts'],
     exclude: ['node_modules/', 'dist/', '.history/'],
   },
 });

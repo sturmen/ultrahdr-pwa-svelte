@@ -2,78 +2,23 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canvasToBlob, imageDataToDrawable, imageDataToJpegBlob, transformImageData } from '../image-utils.js';
 
-describe('canvasToBlob', () => {
-  it('prefers convertToBlob over toBlob when both are available', async () => {
-    const expectedBlob = { type: 'image/jpeg', bytes: 123 };
-    const convertToBlob = vi.fn().mockResolvedValue(expectedBlob);
-    const toBlob = vi.fn((callback) => callback({ type: 'legacy' }));
-    const canvas = {
-      convertToBlob,
-      toBlob,
-    };
+vi.mock('../jpegli-decoder.js', () => ({
+  encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+  decodeJpegli: vi.fn(async () => ({
+    width: 2,
+    height: 1,
+    data: new Uint8ClampedArray([
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+    ]),
+  })),
+}));
 
-    const result = await canvasToBlob(canvas, 'image/jpeg', 0.9);
-
-    expect(result).toBe(expectedBlob);
-    expect(convertToBlob).toHaveBeenCalledTimes(1);
-    expect(convertToBlob).toHaveBeenCalledWith({ type: 'image/jpeg', quality: 0.9 });
-    expect(toBlob).not.toHaveBeenCalled();
-  });
-
-  it('falls back to toBlob when convertToBlob is unavailable', async () => {
-    const expectedBlob = { type: 'image/jpeg', bytes: 321 };
-    const toBlob = vi.fn((callback) => callback(expectedBlob));
-    const canvas = {
-      toBlob,
-    };
-
-    const result = await canvasToBlob(canvas, 'image/jpeg', 0.7);
-
-    expect(result).toBe(expectedBlob);
-    expect(toBlob).toHaveBeenCalledTimes(1);
-  });
-
-  it('forwards color-space export options to convertToBlob', async () => {
-    const expectedBlob = { type: 'image/jpeg', bytes: 456 };
-    const convertToBlob = vi.fn().mockResolvedValue(expectedBlob);
-    const canvas = {
-      convertToBlob,
-    };
-
-    const result = await canvasToBlob(canvas, 'image/jpeg', 0.9, { colorSpace: 'display-p3' });
-
-    expect(result).toBe(expectedBlob);
-    expect(convertToBlob).toHaveBeenCalledWith({
-      type: 'image/jpeg',
-      quality: 0.9,
-      colorSpace: 'display-p3',
-    });
-  });
-});
+import { imageDataToJpegBlob, transformImageData } from '../image-utils.js';
 
 describe('imageDataToJpegBlob', () => {
-  afterEach(() => {
-    delete global.document;
-  });
-
-  it('uses display-p3 canvas/export settings when the input image data is tagged display-p3', async () => {
-    const putImageData = vi.fn();
-    const convertToBlob = vi.fn().mockResolvedValue({ type: 'image/jpeg', bytes: 789 });
-    const getContext = vi.fn(() => ({
-      putImageData,
-    }));
-
-    global.document = {
-      createElement: vi.fn(() => ({
-        width: 0,
-        height: 0,
-        getContext,
-        convertToBlob,
-      })),
-    };
-
+  it('returns a jpeg blob without requiring canvas export', async () => {
     const imageData = {
       width: 2,
       height: 1,
@@ -84,84 +29,19 @@ describe('imageDataToJpegBlob', () => {
       ]),
     };
 
-    await imageDataToJpegBlob(imageData, 0.8);
+    const result = await imageDataToJpegBlob(imageData, 0.8);
 
-    expect(getContext).toHaveBeenCalledWith('2d', {
-      willReadFrequently: true,
-      colorSpace: 'display-p3',
-    });
-    expect(putImageData).toHaveBeenCalledWith(expect.any(ImageData), 0, 0);
-    expect(convertToBlob).toHaveBeenCalledWith({
-      type: 'image/jpeg',
-      quality: 0.8,
-      colorSpace: 'display-p3',
-    });
-  });
-});
-
-describe('imageDataToDrawable', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('passes ImageData directly to createImageBitmap when supported', async () => {
-    const drawable = { width: 2, height: 1, close: vi.fn() };
-    const createImageBitmapSpy = vi.spyOn(globalThis, 'createImageBitmap').mockResolvedValue(drawable);
-    const imageData = new ImageData(
-      new Uint8ClampedArray([
-        255, 0, 0, 255,
-        0, 255, 0, 255,
-      ]),
-      2,
-      1,
-    );
-
-    const result = await imageDataToDrawable(imageData);
-
-    expect(result).toBe(drawable);
-    expect(createImageBitmapSpy).toHaveBeenCalledTimes(1);
-    expect(createImageBitmapSpy).toHaveBeenCalledWith(imageData);
+    expect(result).toBeInstanceOf(Blob);
+    expect(result.type).toBe('image/jpeg');
   });
 });
 
 describe('transformImageData', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    delete global.document;
   });
 
-  it('normalizes image-data-shaped inputs before writing them to a canvas context', async () => {
-    const putImageData = vi.fn((value) => {
-      if (!(value instanceof ImageData)) {
-        throw new TypeError("Argument 1 ('imagedata') to OffscreenCanvasRenderingContext2D.putImageData must be an instance of ImageData");
-      }
-    });
-    const getImageData = vi.fn(() => new ImageData(new Uint8ClampedArray([
-      255, 0, 0, 255,
-      0, 255, 0, 255,
-    ]), 2, 1));
-    const drawImage = vi.fn();
-    const save = vi.fn();
-    const restore = vi.fn();
-    const translate = vi.fn();
-    const rotate = vi.fn();
-
-    global.document = {
-      createElement: vi.fn(() => ({
-        width: 0,
-        height: 0,
-        getContext: vi.fn(() => ({
-          putImageData,
-          getImageData,
-          drawImage,
-          save,
-          restore,
-          translate,
-          rotate,
-        })),
-      })),
-    };
-
+  it('normalizes image-data-shaped inputs before running raster transforms', async () => {
     const foreignImageData = {
       width: 2,
       height: 1,
@@ -175,6 +55,7 @@ describe('transformImageData', () => {
     const result = await transformImageData(foreignImageData, { width: 2, height: 1, degrees: 90 });
 
     expect(result).toBeInstanceOf(ImageData);
-    expect(putImageData).toHaveBeenCalledWith(expect.any(ImageData), 0, 0);
+    expect(result.width).toBe(1);
+    expect(result.height).toBe(2);
   });
 });

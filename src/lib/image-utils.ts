@@ -1,134 +1,13 @@
 import type { GainMapMetadata } from './gain-map-metadata.js';
+import { decodeJpegli, encodeJpegli } from './jpegli-decoder.js';
+import { decodeRasterBuffer, resizeRasterImage, rotateRasterImage } from './raster-image.ts';
 
-export type Canvas2DContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-export type CanvasLike = HTMLCanvasElement | OffscreenCanvas;
-export type CanvasBlobExportOptions = {
-    colorSpace?: PredefinedColorSpace;
-};
 export type ImageDataLike = ImageData | {
     width: number;
     height: number;
     data: Uint8ClampedArray;
     colorSpace?: PredefinedColorSpace;
 };
-export type DecodeDrawable = CanvasImageSource & {
-    width: number;
-    height: number;
-    close?: () => void;
-};
-
-type CanvasPoolEntry = {
-    canvas: CanvasLike;
-    ctx: Canvas2DContext;
-};
-
-const canvasPool: CanvasPoolEntry[] = [];
-
-function acquirePooledCanvas(
-    width: number,
-    height: number,
-    errorMessage: string,
-    options: CanvasBlobExportOptions = {},
-): CanvasPoolEntry {
-    const pooled = canvasPool.pop();
-    if (!pooled) {
-        return createCanvasWithContext(width, height, errorMessage, options);
-    }
-
-    pooled.canvas.width = width;
-    pooled.canvas.height = height;
-    return pooled;
-}
-
-function releasePooledCanvas(entry: CanvasPoolEntry | null | undefined): void {
-    if (!entry?.canvas || !entry?.ctx) {
-        return;
-    }
-    entry.canvas.width = 1;
-    entry.canvas.height = 1;
-    if (canvasPool.length < 2) {
-        canvasPool.push(entry);
-    }
-}
-
-export function createCanvasWithContext(
-    width: number,
-    height: number,
-    errorMessage = 'Canvas not available',
-    options: CanvasBlobExportOptions = {},
-): CanvasPoolEntry {
-    const contextOptions: CanvasRenderingContext2DSettings = { willReadFrequently: true };
-    if (typeof options.colorSpace === 'string' && options.colorSpace) {
-        contextOptions.colorSpace = options.colorSpace;
-    }
-    if (typeof document === 'undefined') {
-        if (typeof OffscreenCanvas !== 'undefined') {
-            const canvas = new OffscreenCanvas(width, height);
-            const ctx = canvas.getContext('2d', contextOptions);
-            if (!ctx) {
-                throw new Error(errorMessage);
-            }
-            return { canvas, ctx };
-        }
-        throw new Error(`${errorMessage} (document and OffscreenCanvas are both undefined)`);
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d', contextOptions);
-    if (!ctx) {
-        throw new Error(errorMessage);
-    }
-    return { canvas, ctx };
-}
-
-export async function canvasToBlob(
-    canvas: CanvasLike,
-    type = 'image/jpeg',
-    quality = 0.95,
-    options: CanvasBlobExportOptions = {},
-): Promise<Blob> {
-    const blobOptions: ImageEncodeOptions & { colorSpace?: PredefinedColorSpace } = { type, quality };
-    if (typeof options.colorSpace === 'string' && options.colorSpace) {
-        blobOptions.colorSpace = options.colorSpace;
-    }
-    if ('convertToBlob' in canvas && typeof canvas.convertToBlob === 'function') {
-        return canvas.convertToBlob(blobOptions);
-    }
-    if ('toBlob' in canvas && typeof canvas.toBlob === 'function') {
-        return new Promise((resolve, reject) => {
-            canvas.toBlob((blob) => {
-                if (blob) {
-                    resolve(blob);
-                    return;
-                }
-                reject(new Error('Canvas failed to produce a Blob'));
-            }, type, quality);
-        });
-    }
-    throw new Error('canvas blob export is not available in this environment');
-}
-
-export async function decodeDrawableFromBlob(blob: Blob, config: ImageBitmapOptions = {}): Promise<DecodeDrawable> {
-    if (typeof createImageBitmap === 'function') {
-        const bitmapOptions = { ...config };
-        if (!bitmapOptions.imageOrientation) {
-            bitmapOptions.imageOrientation = 'from-image';
-        }
-        return createImageBitmap(blob, bitmapOptions);
-    }
-    if (typeof document === 'undefined' || typeof Image === 'undefined') {
-        throw new Error('Image decoding requires createImageBitmap or DOM Image support');
-    }
-
-    const dataUrl = await readBlobAsDataURL(blob);
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img as DecodeDrawable);
-        img.onerror = () => reject(new Error('Failed to decode image blob'));
-        img.src = dataUrl;
-    });
-}
 
 export async function loadImageData(
     source: string | Blob,
@@ -138,12 +17,11 @@ export async function loadImageData(
     width: number;
     height: number;
 }> {
-    let drawable: DecodeDrawable;
+    let blob: Blob;
     if (source instanceof Blob) {
-        drawable = await decodeDrawableFromBlob(source, config);
+        blob = source;
     } else {
         const response = await fetch(source);
-        let blob: Blob;
         if (typeof response.blob === 'function') {
             blob = await response.blob();
         } else if (typeof response.arrayBuffer === 'function') {
@@ -151,34 +29,22 @@ export async function loadImageData(
         } else {
             throw new Error('Image decode response does not provide blob() or arrayBuffer()');
         }
-        drawable = await decodeDrawableFromBlob(blob, config);
     }
 
-    const width = drawable.width;
-    const height = drawable.height;
-    const { ctx } = createCanvasWithContext(width, height, 'Canvas not available for loadImageData');
-
-    ctx.drawImage(drawable, 0, 0);
-    const imageData = ctx.getImageData(0, 0, width, height);
-    if (typeof drawable.close === 'function') {
-        drawable.close();
+    if (blob.type === 'image/jpeg') {
+        const decoded = await decodeJpegli(await blobToUint8Array(blob));
+        const width = decoded.width;
+        const height = decoded.height;
+        const copiedData = new Uint8ClampedArray(decoded.data.length);
+        copiedData.set(decoded.data);
+        const imageData = new ImageData(copiedData, width, height);
+        return { imageData, width, height };
     }
+
+    const imageData = await decodeRasterBuffer(await blobToUint8Array(blob));
+    const width = imageData.width;
+    const height = imageData.height;
     return { imageData, width, height };
-}
-
-export async function imageDataToDrawable(imageData: ImageDataLike): Promise<CanvasImageSource> {
-    const normalizedImageData = normalizeImageData(imageData);
-    if (typeof createImageBitmap === 'function') {
-        return createImageBitmap(normalizedImageData);
-    }
-
-    const { canvas, ctx } = createCanvasWithContext(
-        normalizedImageData.width,
-        normalizedImageData.height,
-        'Canvas not available for imageDataToDrawable'
-    );
-    ctx.putImageData(normalizedImageData, 0, 0);
-    return canvas;
 }
 
 function getTransformedDimensions(width: number, height: number, degrees: number): {
@@ -226,31 +92,14 @@ export async function transformImageData(
         return normalizedImageData;
     }
 
-    const surface = acquirePooledCanvas(outputWidth, outputHeight, 'Canvas not available for transform');
-    const sourceSurface = acquirePooledCanvas(
-        normalizedImageData.width,
-        normalizedImageData.height,
-        'Canvas not available for transform source'
-    );
-    sourceSurface.ctx.putImageData(normalizedImageData, 0, 0);
-    const drawable = sourceSurface.canvas;
-
-    try {
-        if (normalizedRotation !== 0) {
-            surface.ctx.save();
-            surface.ctx.translate(outputWidth / 2, outputHeight / 2);
-            surface.ctx.rotate((normalizedRotation * Math.PI) / 180);
-            surface.ctx.drawImage(drawable, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
-            surface.ctx.restore();
-        } else {
-            surface.ctx.drawImage(drawable, 0, 0, targetWidth, targetHeight);
-        }
-
-        return surface.ctx.getImageData(0, 0, outputWidth, outputHeight);
-    } finally {
-        releasePooledCanvas(sourceSurface);
-        releasePooledCanvas(surface);
+    let transformed = normalizedImageData;
+    if (targetWidth !== normalizedImageData.width || targetHeight !== normalizedImageData.height) {
+        transformed = await resizeRasterImage(transformed, targetWidth, targetHeight);
     }
+    if (normalizedRotation !== 0) {
+        transformed = await rotateRasterImage(transformed, normalizedRotation);
+    }
+    return transformed;
 }
 
 export async function resizeImageData(imageData: ImageDataLike, targetWidth: number, targetHeight: number): Promise<ImageData> {
@@ -262,27 +111,17 @@ export async function rotateImageData(imageData: ImageDataLike, degrees: number)
 }
 
 export async function jpegBytesToImageData(jpegBytes: Uint8Array, config: ImageBitmapOptions = {}): Promise<ImageData> {
-    const jpegBytesCopy = new Uint8Array(jpegBytes.byteLength);
-    jpegBytesCopy.set(jpegBytes);
-    const blob = new Blob([jpegBytesCopy], { type: 'image/jpeg' });
-    const { imageData } = await loadImageData(blob, config);
-    return imageData;
+    void config;
+    const decoded = await decodeJpegli(jpegBytes);
+    const copiedData = new Uint8ClampedArray(decoded.data.length);
+    copiedData.set(decoded.data);
+    return new ImageData(copiedData, decoded.width, decoded.height);
 }
 
 export async function imageDataToJpegBlob(imageData: ImageDataLike, quality = 0.95): Promise<Blob> {
     const normalizedImageData = normalizeImageData(imageData);
-    const colorSpace = typeof imageData?.colorSpace === 'string'
-        ? imageData.colorSpace
-        : (typeof normalizedImageData.colorSpace === 'string' ? normalizedImageData.colorSpace : undefined);
-    const canvasOptions = colorSpace ? { colorSpace } : {};
-    const { canvas, ctx } = createCanvasWithContext(
-        normalizedImageData.width,
-        normalizedImageData.height,
-        'Canvas not available for JPEG encoding',
-        canvasOptions
-    );
-    ctx.putImageData(normalizedImageData, 0, 0);
-    return canvasToBlob(canvas, 'image/jpeg', quality, canvasOptions);
+    const bytes = await encodeJpegli(normalizedImageData, Math.round(quality * 100));
+    return new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' });
 }
 
 export async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {

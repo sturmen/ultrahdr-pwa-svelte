@@ -69,7 +69,6 @@ describe('processing worker init timeout', () => {
         workerInitTimeoutMs: 300_000,
         runtimeCapabilities: {
           hasWorker: true,
-          hasOffscreenCanvas: true,
           hasCreateImageBitmap: true,
         },
       },

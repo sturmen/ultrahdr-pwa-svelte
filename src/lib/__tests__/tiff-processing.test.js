@@ -38,7 +38,7 @@ describe('tiff-processing.js', () => {
       await expect(processTiff(mockFile)).rejects.toThrow('No IFDs found in TIFF file');
     });
 
-    it('should process TIFF file and return PNG', async () => {
+    it('should process TIFF file and return decoded raster bytes', async () => {
       utifMock.decode.mockReturnValue([
         {
           width: 100,
@@ -55,9 +55,14 @@ describe('tiff-processing.js', () => {
 
       const result = await processTiff(mockFile);
 
-      expect(result).toBeInstanceOf(File);
-      expect(result.name).toBe('test.png');
-      expect(result.type).toBe('image/png');
+      expect(result).toMatchObject({
+        width: 100,
+        height: 100,
+        strideBytes: 400,
+        pixelFormat: 'rgba8',
+        bitDepth: 8,
+      });
+      expect(result.data).toBeInstanceOf(Uint8Array);
     });
 
     it('should handle .tif extension', async () => {
@@ -77,7 +82,8 @@ describe('tiff-processing.js', () => {
 
       const result = await processTiff(mockFile);
 
-      expect(result.name).toBe('test.png');
+      expect(result.width).toBe(100);
+      expect(result.height).toBe(100);
     });
 
     it('should handle TIFF with different dimensions', async () => {
@@ -96,7 +102,13 @@ describe('tiff-processing.js', () => {
 
       const result = await processTiff(mockFile);
 
-      expect(result).toBeInstanceOf(File);
+      expect(result).toMatchObject({
+        width: 256,
+        height: 128,
+        strideBytes: 1024,
+        pixelFormat: 'rgba8',
+        bitDepth: 8,
+      });
     });
   });
 });

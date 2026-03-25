@@ -79,6 +79,15 @@ vi.mock('../ultrahdr-wasm.js', () => ({
   }),
 }));
 
+vi.mock('../jpegli-decoder.js', () => ({
+  encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+  decodeJpegli: vi.fn(async () => ({
+    width: 8,
+    height: 8,
+    data: new Uint8ClampedArray(8 * 8 * 4).fill(127),
+  })),
+}));
+
 class MockOffscreenCanvas {
   constructor(width, height) {
     this.width = width;
@@ -204,7 +213,14 @@ describe('processImage metadata forwarding', () => {
 
   it('uses generated metadata when a preserved HEIC gain map is discarded', async () => {
     const { processHeic } = await import('../heic-processing.js');
-    processHeic.mockResolvedValueOnce(new File([new Uint8Array([1, 2, 3, 4])], 'input.png', { type: 'image/png' }));
+    processHeic.mockResolvedValueOnce({
+      data: new Uint8Array(8 * 8 * 4).fill(127),
+      width: 8,
+      height: 8,
+      strideBytes: 32,
+      pixelFormat: 'rgba8',
+      bitDepth: 8,
+    });
 
     const { processImage } = await import('../processing-core.js');
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'input.heic', { type: 'image/heic' });

@@ -66,6 +66,12 @@ function renderProcessor(props = {}) {
   return render(ImageProcessor, { props: { runtime: createRuntime(), ...props } });
 }
 
+async function waitForSingleResultCompletion() {
+  await waitFor(() => {
+    expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+  });
+}
+
 describe('ImageProcessor mobile-native UI behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -721,12 +727,12 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     renderProcessor({ files: makeFiles(1) });
 
-    await waitFor(() => {
-      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
-    });
+    await waitForSingleResultCompletion();
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
-    expect(screen.getByText(/^Processing complete$/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/^Processing complete$/i)).toBeInTheDocument();
+    });
     expect(screen.queryByTestId('pipeline-file-name')).not.toBeInTheDocument();
     expect(screen.queryByText(/slowest stage:/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/stage \d+%/i)).not.toBeInTheDocument();
@@ -1022,9 +1028,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('reprocesses selected stale results directly from the stale prompt', async () => {
     renderProcessor({ files: makeFiles(1) });
 
-    await waitFor(() => {
-      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
-    });
+    await waitForSingleResultCompletion();
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
     await fireEvent.input(screen.getByLabelText(/max content boost/i), {
@@ -1090,9 +1094,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
   it('treats HDR strength slider values as stops and converts them to linear maxContentBoost', async () => {
     renderProcessor({ files: makeFiles(1) });
 
-    await waitFor(() => {
-      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
-    });
+    await waitForSingleResultCompletion();
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
     const slider = screen.getByLabelText(/max content boost/i);
@@ -1125,9 +1127,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     window.confirm = vi.fn(() => true);
     renderProcessor({ files: makeFiles(1) });
 
-    await waitFor(() => {
-      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
-    });
+    await waitForSingleResultCompletion();
 
     await fireEvent.click(screen.getByTestId('tab-convert'));
     await fireEvent.input(screen.getByLabelText(/max content boost/i), {
@@ -1139,6 +1139,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await fireEvent.click(screen.getByRole('button', { name: /^discard all$/i }));
 
     await waitFor(() => {
+      expect(screen.getByTestId('tab-convert')).toHaveAttribute('aria-selected', 'true');
       expect(screen.getByLabelText(/max content boost/i)).toHaveValue('3');
     });
   });

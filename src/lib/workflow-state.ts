@@ -43,14 +43,15 @@ export interface QueueItemProgress {
 }
 
 export interface QueueItemResult {
-  blob: Blob;
-  outputUrl: string;
+  blob?: Blob;
+  outputUrl?: string;
   size: number;
+  persisted?: boolean;
 }
 
 export interface QueueItemState {
   id: number;
-  file: File;
+  file?: File | null;
   name: string;
   status: QueueItemStatus;
   settingsVersion: number;
@@ -347,7 +348,7 @@ export function selectQueueControlVisibility(state: WorkflowState): 'pause' | 'r
 
 export function selectExportableQueueIds(state: WorkflowState): number[] {
   return state.queue
-    .filter((item) => Boolean(item.result?.blob))
+    .filter((item) => Boolean(item.result?.blob) || item.result?.persisted === true)
     .map((item) => item.id);
 }
 
@@ -383,7 +384,7 @@ export function selectWorkflowCards(state: WorkflowState): WorkflowCard[] {
     progressPercent: item.status === QUEUE_ITEM_STATES.PROCESSING && item.progress?.visible
       ? item.progress.percent
       : null,
-    hasOutput: Boolean(item.result?.blob),
+    hasOutput: Boolean(item.result?.blob) || item.result?.persisted === true,
     error: item.error,
     isSelectable:
       item.status === QUEUE_ITEM_STATES.COMPLETED ||

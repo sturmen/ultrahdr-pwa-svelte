@@ -2,6 +2,8 @@ import { IMAGE_MAX_LONG_EDGE } from '../constants.js';
 /**
  * @vitest-environment jsdom
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -96,7 +98,12 @@ vi.mock('../jpegli-decoder.js', () => ({
     });
     jpegEncodeCanvasSizes.push({ width: imageData.width, height: imageData.height });
     return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]); // Fake JPEG bytes
-  })
+  }),
+  decodeJpegli: vi.fn(async () => ({
+    width: decodeDimensions.width,
+    height: decodeDimensions.height,
+    data: new Uint8ClampedArray(decodeDimensions.width * decodeDimensions.height * 4).fill(128),
+  })),
 }));
 
 vi.mock('../jpegtran-rotate.js', () => ({
@@ -121,6 +128,8 @@ const exifPayloadOrientation6 = new Uint8Array([
   0x06, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00,
 ]);
+
+const validPngBytes = fs.readFileSync(path.resolve(process.cwd(), 'media/exif_matrix.png'));
 
 function buildJpegWithExif(exifPayload, imageData = new Uint8Array([0x11, 0x22, 0x33])) {
   const exifLength = exifPayload.length + 2;
@@ -236,7 +245,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     const { processImage } = await import('../processing-core.js');
     const { extractExifApp1PayloadFromInput } = await import('../input-exif.js');
     extractExifApp1PayloadFromInput.mockReturnValueOnce(exifPayloadOrientation6);
-    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
+    const file = new File([validPngBytes], 'input.png', { type: 'image/png' });
 
     await processImage(file, {
       rotation: 90,
@@ -392,7 +401,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     decodeDimensions.height = 2400;
     const onProgress = vi.fn();
     const { processImage } = await import('../processing-core.js');
-    const file = new File([new Uint8Array([1, 2, 3])], 'input.png', { type: 'image/png' });
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
 
     await processImage(file, {
       rotation: 0,
@@ -419,7 +428,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     decodeDimensions.height = 4000;
 
     const { processImage } = await import('../processing-core.js');
-    const file = new File([new Uint8Array([1, 2, 3])], 'input.png', { type: 'image/png' });
+    const file = new File([new Uint8Array([1, 2, 3])], 'input.jpg', { type: 'image/jpeg' });
 
     await processImage(file, {
       rotation: 0,

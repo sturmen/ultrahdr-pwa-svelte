@@ -1,13 +1,26 @@
 export interface ResultRecord {
   originalName: string;
-  blob: Blob;
-  url: string;
+  blob?: Blob;
+  url?: string;
   size: number;
   index: number;
   queueId: number;
   settingsVersion?: number;
   rotation?: number;
   processingPath?: string;
+}
+
+export interface StoredResultRecord extends Omit<ResultRecord, 'blob'> {
+  blob?: Blob;
+}
+
+export interface LoadedResultBlobRecord {
+  result: StoredResultRecord;
+  blob: Blob;
+}
+
+interface ResultBlobLoader {
+  loadResultBlob: (queueId: number) => Promise<Blob | null>;
 }
 
 function normalizeJpegName(originalName: string) {
@@ -62,4 +75,39 @@ export async function buildShareFiles(results: ResultRecord[], selectedIds: Set<
       type: 'image/jpeg',
     });
   });
+}
+
+export async function loadSelectedResultBlobs(
+  results: StoredResultRecord[],
+  selectedIds: Set<number>,
+  { loadResultBlob }: ResultBlobLoader,
+): Promise<LoadedResultBlobRecord[]> {
+  const selectedResults = getSelectedResults(results, selectedIds);
+  const loaded = await Promise.all(
+    selectedResults.map(async (result) => {
+      const blob = result.blob ?? await loadResultBlob(result.queueId);
+      if (!blob) {
+        return null;
+      }
+      return {
+        result,
+        blob,
+      };
+    }),
+  );
+
+  return loaded.filter((entry): entry is LoadedResultBlobRecord => entry !== null);
+}
+
+export async function buildShareFilesFromStorage(
+  results: StoredResultRecord[],
+  selectedIds: Set<number>,
+  loader: ResultBlobLoader,
+) {
+  const loadedResults = await loadSelectedResultBlobs(results, selectedIds, loader);
+  return loadedResults.map(({ result, blob }) =>
+    new File([blob], normalizeJpegName(result.originalName), {
+      type: 'image/jpeg',
+    }),
+  );
 }

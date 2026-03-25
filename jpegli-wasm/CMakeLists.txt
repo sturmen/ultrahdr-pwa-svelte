@@ -78,6 +78,6 @@ target_link_options(jpegli_wasm PRIVATE
     -sWASM_ASYNC_COMPILATION=0
     -sSINGLE_FILE=0
     "-sENVIRONMENT=web,worker,node"
-    "-sEXPORTED_FUNCTIONS=['_jpegli_wasm_encoder_create','_jpegli_wasm_encoder_start','_jpegli_wasm_encoder_process_rows','_jpegli_wasm_encoder_finish','_jpegli_wasm_encoder_get_next_scanline','_jpegli_wasm_encoder_get_image_height','_jpegli_wasm_encode','_jpegli_wasm_get_output_data','_jpegli_wasm_get_output_size','_jpegli_wasm_encoder_destroy','_malloc','_free']"
+    "-sEXPORTED_FUNCTIONS=['_jpegli_wasm_encoder_create','_jpegli_wasm_encoder_start','_jpegli_wasm_encoder_process_rows','_jpegli_wasm_encoder_finish','_jpegli_wasm_encoder_get_next_scanline','_jpegli_wasm_encoder_get_image_height','_jpegli_wasm_encode','_jpegli_wasm_get_output_data','_jpegli_wasm_get_output_size','_jpegli_wasm_encoder_destroy','_jpegli_wasm_decoder_create','_jpegli_wasm_decoder_destroy','_jpegli_wasm_decode','_jpegli_wasm_decoder_get_width','_jpegli_wasm_decoder_get_height','_jpegli_wasm_decoder_get_output_data','_jpegli_wasm_decoder_get_output_size','_malloc','_free']"
     "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','getValue','setValue','UTF8ToString','HEAPU8','HEAP32','HEAPF32']"
 )
