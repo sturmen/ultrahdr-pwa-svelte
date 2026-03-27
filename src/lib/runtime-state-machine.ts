@@ -1,11 +1,30 @@
-function inferReadyStateFromMode(runtimeMode) {
+function inferReadyStateFromMode(runtimeMode: unknown): 'ready-main-thread' | 'ready-worker' {
   if (runtimeMode === 'main-thread-wasm') {
     return 'ready-main-thread';
   }
   return 'ready-worker';
 }
 
-export function createInitialRuntimeState() {
+export interface RuntimeState {
+  status: string;
+  runtime: (Record<string, unknown> & { runtimeMode?: string }) | null;
+  error: unknown;
+  progress: unknown;
+}
+
+export interface RuntimeEventPayload {
+  runtimeMode?: unknown;
+  runtime?: (Record<string, unknown> & { runtimeMode?: string }) | null;
+  error?: unknown;
+  event?: unknown;
+}
+
+export interface RuntimeEvent {
+  type: string;
+  payload?: RuntimeEventPayload | null;
+}
+
+export function createInitialRuntimeState(): RuntimeState {
   return {
     status: 'idle',
     runtime: null,
@@ -14,7 +33,7 @@ export function createInitialRuntimeState() {
   };
 }
 
-export function runtimeStateReducer(state, event) {
+export function runtimeStateReducer(state: RuntimeState, event: RuntimeEvent | null | undefined): RuntimeState {
   if (!event || typeof event !== 'object' || typeof event.type !== 'string') {
     return state;
   }
@@ -37,7 +56,7 @@ export function runtimeStateReducer(state, event) {
       return {
         ...state,
         status: inferReadyStateFromMode(payload.runtimeMode),
-        runtime: { ...(payload || {}) },
+        runtime: { ...payload },
         error: null,
       };
     case 'INIT_FAILED':

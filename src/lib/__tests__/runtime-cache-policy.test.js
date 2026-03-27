@@ -3,7 +3,7 @@ import {
   buildStartupCapabilityCacheEntry,
   normalizeStartupCapabilityCacheTtlMs,
   parseStartupCapabilityCacheEntry,
-} from '../runtime-cache-policy.js';
+} from '../runtime-cache-policy.ts';
 
 describe('runtime-cache-policy', () => {
   it('normalizes ttl values', () => {

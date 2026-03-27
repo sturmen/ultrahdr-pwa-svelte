@@ -1,4 +1,4 @@
-import { normalizeExecutionProvider } from './runtime-contract.js';
+import { normalizeExecutionProvider } from './runtime-contract.ts';
 
 const DEFAULT_INFERENCE_TIMEOUT_MS = 180_000;
 const FIREFOX_INFERENCE_TIMEOUT_MS = 600_000;

@@ -11,7 +11,7 @@ export type ImageDataLike = ImageData | {
 
 export async function loadImageData(
     source: string | Blob,
-    config: Record<string, never> = {},
+    config: { imageOrientation?: string } & Record<string, unknown> = {},
 ): Promise<{
     imageData: ImageData;
     width: number;
@@ -110,7 +110,10 @@ export async function rotateImageData(imageData: ImageDataLike, degrees: number)
     return transformImageData(imageData, { degrees });
 }
 
-export async function jpegBytesToImageData(jpegBytes: Uint8Array, config: Record<string, never> = {}): Promise<ImageData> {
+export async function jpegBytesToImageData(
+    jpegBytes: Uint8Array,
+    config: { imageOrientation?: string } & Record<string, unknown> = {},
+): Promise<ImageData> {
     void config;
     const decoded = await decodeJpegli(jpegBytes);
     const copiedData = new Uint8ClampedArray(decoded.data.length);

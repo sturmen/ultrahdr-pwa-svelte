@@ -12,32 +12,32 @@ import {
   RUNTIME_INIT_STEP_ORDER,
   normalizeExecutionProvider,
   sanitizeRuntimeInitOptions,
-} from './runtime-contract.js';
+} from './runtime-contract.ts';
 import {
   canUseProcessingWorker,
   resolveInferenceTimeoutMs,
   resolveWorkerInitTimeoutMs,
-} from './runtime-capability-policy.js';
+} from './runtime-capability-policy.ts';
 import {
   STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
   normalizeStartupCapabilityCacheTtlMs,
   readStartupCapabilityCache,
   writeStartupCapabilityCache,
-} from './runtime-cache-policy.js';
+} from './runtime-cache-policy.ts';
 import {
   decideInitializationPath,
   decideWorkerFallback,
   isMainThreadFallbackEnabled,
-} from './runtime-init-policy.js';
+} from './runtime-init-policy.ts';
 import {
   createWorkerJobState,
   deriveInferenceHeartbeatEvent,
   reduceWorkerJobState,
-} from './worker-job-protocol.js';
+} from './worker-job-protocol.ts';
 import {
   createInitialProcessingRuntimeState,
   reduceProcessingRuntimeState,
-} from './processing-runtime-reducer.js';
+} from './processing-runtime-reducer.ts';
 
 const WORKER_SUPPORT_ERROR = 'Processing worker is unavailable in this environment.';
 const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
@@ -53,7 +53,7 @@ const INFERENCE_TIMEOUT_ERROR_MESSAGE = 'Processing worker stalled during GMNet 
 export {
   RUNTIME_INIT_STEP_LABELS,
   RUNTIME_INIT_STEP_ORDER,
-} from './runtime-contract.js';
+} from './runtime-contract.ts';
 
 function createRuntimeContext() {
   return {
@@ -486,7 +486,7 @@ function initializeWorkerClient(context, initOptions = null) {
     let worker;
     let initializationSettled = false;
     try {
-      worker = new Worker(new URL('./processing-worker.js', import.meta.url), { type: 'module' });
+      worker = new Worker(new URL('./processing-worker.ts', import.meta.url), { type: 'module' });
     } catch (error) {
       const wrappedError = new Error(WORKER_INIT_ERROR);
       wrappedError.cause = error;

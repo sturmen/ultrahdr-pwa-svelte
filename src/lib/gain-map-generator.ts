@@ -1,14 +1,75 @@
-// @ts-nocheck
 import {
   GMNET_FALLBACK_EXECUTION_PROVIDER,
   GMNetInferenceSession,
   GMNET_WASM_EXECUTION_PROVIDER,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
+  type GmnetModelVariant,
+  type GmnetTiledContext,
 } from './gmnet-session.ts';
 import { GMNetCheckpointStore } from './gmnet-checkpoint-store.js';
 import { IMAGE_MAX_LONG_EDGE } from './constants.js';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
+import type { GainMapMetadata } from './gain-map-metadata.js';
 
+type GmnetExecutionProvider = string | null;
+type GainMapStats = {
+  pixelCount: number;
+  min: number;
+  max: number;
+  mean: number;
+  stdDev: number;
+  dynamicRange: number;
+};
+type GainMapCompareStats = {
+  maxAbsDiff: number;
+  meanAbsDiff: number;
+  pixelCount: number;
+};
+type GmnetParityCacheEntry = true | { ok: false; stats: GainMapCompareStats };
+type GmnetProgressCallback = (progress: number, note?: string, metadata?: Record<string, unknown>) => void;
+type GmnetRuntime = typeof globalThis & {
+  navigator?: Navigator;
+  fetch?: typeof fetch;
+  performance?: Performance;
+  crossOriginIsolated?: boolean;
+  SharedArrayBuffer?: typeof SharedArrayBuffer;
+  ImageData?: typeof ImageData;
+};
+type GmnetGenerateOptions = {
+  gmnetModelVariant?: GmnetModelVariant;
+  gmnetCheckpointing?: 'off' | 'auto' | 'force';
+  forceExecutionProviders?: string[];
+  useGmnet?: boolean;
+  gmnetCapabilityHint?: string | null;
+  validationProbe?: boolean;
+  onStageProgress?: GmnetProgressCallback;
+  maxContentBoost?: number;
+  imageData?: ImageData;
+} & Record<string, unknown>;
+type GmnetRunOptions = GmnetGenerateOptions & { imageData?: ImageData };
+type GmnetCheckpointMetadataInput = {
+  checkpointingEnabled: boolean;
+  checkpointResumed: boolean;
+  tileCompleted: Uint8Array | null | undefined;
+  tileTotal: number;
+  fallbackCompletedTileCount: number | null | undefined;
+};
+type GmnetSessionLike = {
+  activeExecutionProvider?: string | null;
+  on: GMNetInferenceSession['on'];
+  off: GMNetInferenceSession['off'];
+  prepareTiledInference?: GMNetInferenceSession['prepareTiledInference'];
+  runTileStep?: GMNetInferenceSession['runTileStep'];
+  finalizeTiledInference?: (context: GmnetTiledContext, options?: Record<string, unknown>) => Uint8ClampedArray;
+  run: GMNetInferenceSession['run'];
+};
+type GmnetErrorWithDiagnostics = Error & { diagnostics?: Record<string, unknown> };
+type GmnetCheckpointSnapshot = {
+  accumIngm: Float32Array;
+  tileCompleted: Uint8Array;
+  sourceWidth: number;
+  sourceHeight: number;
+};
 const INFERENCE_START_NOTE = 'Starting inference; application may appear hung while AI model executes.';
 const WEBGL_FALLBACK_RETRY_NOTE = 'WebGPU produced an invalid gain map; retrying with WebGL.';
 const WEBGL_FALLBACK_ERROR_RETRY_NOTE = 'WebGPU inference failed; retrying with WebGL.';
@@ -24,7 +85,7 @@ const GMNET_CHECKPOINTING_OFF = 'off';
 const GMNET_CHECKPOINTING_AUTO = 'auto';
 const GMNET_CHECKPOINTING_FORCE = 'force';
 
-function normalizeExecutionProviderName(value) {
+function normalizeExecutionProviderName(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -32,7 +93,7 @@ function normalizeExecutionProviderName(value) {
   return trimmed || null;
 }
 
-function formatExecutionProviderNote(provider) {
+function formatExecutionProviderNote(provider: unknown): string {
   const normalizedProvider = normalizeExecutionProviderName(provider);
   if (!normalizedProvider) {
     return INFERENCE_START_NOTE;
@@ -40,7 +101,7 @@ function formatExecutionProviderNote(provider) {
   return `${INFERENCE_START_NOTE} Runtime: ${normalizedProvider}.`;
 }
 
-function normalizeMaxContentBoost(value) {
+function normalizeMaxContentBoost(value: unknown): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) {
     return DEFAULT_MAX_CONTENT_BOOST;
@@ -48,8 +109,9 @@ function normalizeMaxContentBoost(value) {
   return Math.max(1.0, numeric);
 }
 
-function analyzeGainMapRgba(rgba) {
-  const pixelCount = Math.floor((rgba?.length || 0) / 4);
+function analyzeGainMapRgba(rgba: ArrayLike<number> | null | undefined): GainMapStats {
+  const source = rgba ?? [];
+  const pixelCount = Math.floor((source.length || 0) / 4);
   if (pixelCount <= 0) {
     return {
       pixelCount: 0,
@@ -66,7 +128,7 @@ function analyzeGainMapRgba(rgba) {
   let sum = 0;
   let sumSq = 0;
   for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
-    const value = rgba[pixelIndex * 4];
+    const value = source[pixelIndex * 4] ?? 0;
     min = Math.min(min, value);
     max = Math.max(max, value);
     sum += value;
@@ -86,7 +148,7 @@ function analyzeGainMapRgba(rgba) {
   };
 }
 
-function createDeterministicParityProbeImageData(width = WEBGL_PARITY_PROBE_SIZE, height = WEBGL_PARITY_PROBE_SIZE) {
+function createDeterministicParityProbeImageData(width = WEBGL_PARITY_PROBE_SIZE, height = WEBGL_PARITY_PROBE_SIZE): ImageData {
   const normalizedWidth = Math.max(32, Math.floor(Number(width) || WEBGL_PARITY_PROBE_SIZE));
   const normalizedHeight = Math.max(32, Math.floor(Number(height) || WEBGL_PARITY_PROBE_SIZE));
   const data = new Uint8ClampedArray(normalizedWidth * normalizedHeight * 4);
@@ -108,9 +170,11 @@ function createDeterministicParityProbeImageData(width = WEBGL_PARITY_PROBE_SIZE
   return new ImageData(data, normalizedWidth, normalizedHeight);
 }
 
-function compareGainMapRgba(leftRgba, rightRgba) {
-  const leftLength = leftRgba?.length || 0;
-  const rightLength = rightRgba?.length || 0;
+function compareGainMapRgba(leftRgba: ArrayLike<number> | null | undefined, rightRgba: ArrayLike<number> | null | undefined): GainMapCompareStats {
+  const left = leftRgba ?? [];
+  const right = rightRgba ?? [];
+  const leftLength = left.length || 0;
+  const rightLength = right.length || 0;
   if (leftLength !== rightLength || leftLength % 4 !== 0) {
     return {
       maxAbsDiff: Number.POSITIVE_INFINITY,
@@ -124,7 +188,7 @@ function compareGainMapRgba(leftRgba, rightRgba) {
   let sumAbsDiff = 0;
   for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
     const rgbaOffset = pixelIndex * 4;
-    const absDiff = Math.abs((leftRgba[rgbaOffset] ?? 0) - (rightRgba[rgbaOffset] ?? 0));
+    const absDiff = Math.abs((left[rgbaOffset] ?? 0) - (right[rgbaOffset] ?? 0));
     if (absDiff > maxAbsDiff) {
       maxAbsDiff = absDiff;
     }
@@ -138,15 +202,15 @@ function compareGainMapRgba(leftRgba, rightRgba) {
   };
 }
 
-function isWithinWebglParityTolerance(stats) {
+function isWithinWebglParityTolerance(stats: GainMapCompareStats): boolean {
   return stats.maxAbsDiff <= WEBGL_PARITY_MAX_ABS_DIFF
     && stats.meanAbsDiff <= WEBGL_PARITY_MEAN_ABS_DIFF;
 }
 
-function createWebglParityError(stats, provider = GMNET_FALLBACK_EXECUTION_PROVIDER) {
+function createWebglParityError(stats: GainMapCompareStats, provider: string = GMNET_FALLBACK_EXECUTION_PROVIDER): GmnetErrorWithDiagnostics {
   const error = new Error(
     `GMNet ${provider} parity check failed (max_abs_diff=${stats.maxAbsDiff}, mean_abs_diff=${stats.meanAbsDiff}).`,
-  );
+  ) as GmnetErrorWithDiagnostics;
   error.name = 'GmnetWebGlParityError';
   error.diagnostics = {
     provider,
@@ -159,7 +223,7 @@ function createWebglParityError(stats, provider = GMNET_FALLBACK_EXECUTION_PROVI
   return error;
 }
 
-function isNearFlatGainMap(stats) {
+function isNearFlatGainMap(stats: GainMapStats | null | undefined): boolean {
   if (!stats || typeof stats !== 'object') {
     return true;
   }
@@ -175,7 +239,7 @@ function isNearFlatGainMap(stats) {
   );
 }
 
-function resolveCurrentExecutionProvider(runtimeExecutionProvider, session) {
+function resolveCurrentExecutionProvider(runtimeExecutionProvider: unknown, session: GmnetSessionLike | null | undefined): string | null {
   return (
     normalizeExecutionProviderName(runtimeExecutionProvider)
     || normalizeExecutionProviderName(session?.activeExecutionProvider)
@@ -183,7 +247,7 @@ function resolveCurrentExecutionProvider(runtimeExecutionProvider, session) {
   );
 }
 
-function normalizeCheckpointingMode(value) {
+function normalizeCheckpointingMode(value: unknown): 'off' | 'auto' | 'force' {
   if (typeof value !== 'string') {
     return GMNET_CHECKPOINTING_OFF;
   }
@@ -194,7 +258,7 @@ function normalizeCheckpointingMode(value) {
   return GMNET_CHECKPOINTING_OFF;
 }
 
-function shouldUseCheckpointing(mode) {
+function shouldUseCheckpointing(mode: 'off' | 'auto' | 'force'): boolean {
   return mode === GMNET_CHECKPOINTING_AUTO || mode === GMNET_CHECKPOINTING_FORCE;
 }
 
@@ -203,7 +267,12 @@ function buildCheckpointKey({
   provider,
   width,
   height,
-}) {
+}: {
+  modelVariant: unknown;
+  provider: unknown;
+  width: number;
+  height: number;
+}): string {
   const variant = typeof modelVariant === 'string' && modelVariant.trim().length > 0
     ? modelVariant.trim().toLowerCase()
     : 'realworld';
@@ -211,7 +280,7 @@ function buildCheckpointKey({
   return `gmnet:v1:${variant}:${resolvedProvider}:${width}x${height}`;
 }
 
-function countCompletedTiles(tileCompleted, tileTotal) {
+function countCompletedTiles(tileCompleted: Uint8Array | null | undefined, tileTotal: number): number {
   if (!(tileCompleted instanceof Uint8Array)) {
     return 0;
   }
@@ -225,26 +294,28 @@ function countCompletedTiles(tileCompleted, tileTotal) {
   return completed;
 }
 
-function canRestoreCheckpointSnapshot(snapshot, context, tileTotal) {
+function canRestoreCheckpointSnapshot(snapshot: unknown, context: GmnetTiledContext | GmnetCheckpointSnapshot | null | undefined, tileTotal: number): snapshot is GmnetCheckpointSnapshot {
   if (!snapshot || typeof snapshot !== 'object' || !context || typeof context !== 'object') {
     return false;
   }
-  if (!(context.accumIngm instanceof Float32Array) || !(context.tileCompleted instanceof Uint8Array)) {
+  const snapshotRecord = snapshot as Partial<GmnetCheckpointSnapshot> & { [key: string]: unknown };
+  const contextRecord = context as Partial<GmnetTiledContext> & { [key: string]: unknown };
+  if (!(contextRecord.accumIngm instanceof Float32Array) || !(contextRecord.tileCompleted instanceof Uint8Array)) {
     return false;
   }
-  if (!(snapshot.accumIngm instanceof Float32Array) || !(snapshot.tileCompleted instanceof Uint8Array)) {
+  if (!(snapshotRecord.accumIngm instanceof Float32Array) || !(snapshotRecord.tileCompleted instanceof Uint8Array)) {
     return false;
   }
-  if (snapshot.accumIngm.length !== context.accumIngm.length) {
+  if (snapshotRecord.accumIngm.length !== contextRecord.accumIngm.length) {
     return false;
   }
-  if (snapshot.tileCompleted.length < tileTotal) {
+  if (snapshotRecord.tileCompleted.length < tileTotal) {
     return false;
   }
-  if (Number(snapshot.sourceWidth) !== Number(context.sourceWidth)) {
+  if (Number(snapshotRecord.sourceWidth) !== Number(contextRecord.sourceWidth)) {
     return false;
   }
-  if (Number(snapshot.sourceHeight) !== Number(context.sourceHeight)) {
+  if (Number(snapshotRecord.sourceHeight) !== Number(contextRecord.sourceHeight)) {
     return false;
   }
   return true;
@@ -256,7 +327,7 @@ function buildCheckpointMetadata({
   tileCompleted,
   tileTotal,
   fallbackCompletedTileCount,
-}) {
+}: GmnetCheckpointMetadataInput): Record<string, unknown> {
   const checkpointTilesTotal = Math.max(0, Math.floor(Number(tileTotal) || 0));
   const derivedCompleted = countCompletedTiles(tileCompleted, checkpointTilesTotal);
   const normalizedFallbackCount = Math.max(0, Math.floor(Number(fallbackCompletedTileCount) || 0));
@@ -276,7 +347,7 @@ function buildCheckpointMetadata({
     };
 }
 
-export function isGmnetRuntimeSupported(runtime = globalThis) {
+export function isGmnetRuntimeSupported(runtime: GmnetRuntime = globalThis): boolean {
   return (
     typeof runtime?.fetch === 'function' &&
     typeof runtime?.ImageData !== 'undefined'
@@ -284,13 +355,28 @@ export function isGmnetRuntimeSupported(runtime = globalThis) {
 }
 
 export class GmnetGainMapGenerator {
+  sessionFactory: () => GmnetSessionLike;
+  checkpointStoreFactory: ({ runtime }: { runtime: GmnetRuntime }) => GMNetCheckpointStore;
+  buildMetadata: (maxContentBoost?: number) => GainMapMetadata;
+  runtime: GmnetRuntime;
+  isSupported: (runtime?: GmnetRuntime) => boolean;
+  session: GmnetSessionLike | null;
+  checkpointStore: GMNetCheckpointStore | null;
+  webglParityCache: Map<string, GmnetParityCacheEntry>;
+
   constructor({
     sessionFactory = () => new GMNetInferenceSession(),
-    checkpointStoreFactory = ({ runtime }) => new GMNetCheckpointStore({ runtime }),
+    checkpointStoreFactory = ({ runtime }: { runtime: GmnetRuntime }) => new GMNetCheckpointStore({ runtime }),
     buildMetadata,
     runtime = globalThis,
     isSupported = isGmnetRuntimeSupported,
-  } = {}) {
+  }: {
+    sessionFactory?: () => GmnetSessionLike;
+    checkpointStoreFactory?: ({ runtime }: { runtime: GmnetRuntime }) => GMNetCheckpointStore;
+    buildMetadata: (maxContentBoost?: number) => GainMapMetadata;
+    runtime?: GmnetRuntime;
+    isSupported?: (runtime?: GmnetRuntime) => boolean;
+  }) {
     if (typeof sessionFactory !== 'function') {
       throw new Error('GmnetGainMapGenerator requires a sessionFactory function.');
     }
@@ -314,26 +400,32 @@ export class GmnetGainMapGenerator {
     this.webglParityCache = new Map();
   }
 
-  getSession() {
+  getSession(): GmnetSessionLike {
     if (!this.session) {
       this.session = this.sessionFactory();
     }
     return this.session;
   }
 
-  getCheckpointStore() {
+  getCheckpointStore(): GMNetCheckpointStore {
     if (!this.checkpointStore) {
       this.checkpointStore = this.checkpointStoreFactory({ runtime: this.runtime });
     }
     return this.checkpointStore;
   }
 
-  async resolveCapability(options = {}) {
+  async resolveCapability(options: GmnetGenerateOptions = {}): Promise<{
+    provider: string;
+    gainMapMaxLongEdge: number;
+    outputMaxLongEdge: number;
+    source: string;
+    attempts: unknown[];
+  }> {
     const session = this.getSession();
     const normalizedForcedProviders = Array.isArray(options?.forceExecutionProviders)
       ? options.forceExecutionProviders
         .map((provider) => normalizeExecutionProviderName(provider))
-        .filter(Boolean)
+        .filter((provider): provider is string => Boolean(provider))
       : [];
     const requestedProvider = normalizedForcedProviders.length === 1
       ? normalizedForcedProviders[0]
@@ -360,7 +452,10 @@ export class GmnetGainMapGenerator {
    * @param {(progress: number, note?: string, metadata?: Object) => void} [options.onStageProgress]
    * @returns {Promise<{gainMapImageData: ImageData, metadata: Object}>}
    */
-  async generate(imageData, options = {}) {
+  async generate(imageData: ImageData, options: GmnetGenerateOptions = {}): Promise<{
+    gainMapImageData: ImageData;
+    metadata: GainMapMetadata;
+  }> {
     if (options?.useGmnet === false) {
       throw new Error('GMNet is required; heuristic gain map generation has been removed.');
     }
@@ -373,7 +468,7 @@ export class GmnetGainMapGenerator {
     const normalizedForcedProviders = Array.isArray(options?.forceExecutionProviders)
       ? options.forceExecutionProviders
         .map((provider) => normalizeExecutionProviderName(provider))
-        .filter(Boolean)
+        .filter((provider): provider is string => Boolean(provider))
       : [];
     const requestedProvider = normalizedForcedProviders.length === 1
       ? normalizedForcedProviders[0]
@@ -383,24 +478,28 @@ export class GmnetGainMapGenerator {
       typeof options.onStageProgress === 'function' ? options.onStageProgress : null;
     const capability = await this.resolveCapability({
       gmnetModelVariant: options.gmnetModelVariant,
-      forceExecutionProviders: hasExplicitBackendSelection ? [requestedProvider] : options.forceExecutionProviders,
+      forceExecutionProviders: hasExplicitBackendSelection && requestedProvider
+        ? [requestedProvider]
+        : options.forceExecutionProviders,
       capabilityHint: options.gmnetCapabilityHint,
     });
 
     let progressHandler = null;
     let runtimeHandler = null;
-    let runtimeExecutionProvider = null;
+    let runtimeExecutionProvider: string | null = null;
     if (onStageProgress) {
-      progressHandler = (event) => {
-        if (event.total > 0) {
-          onStageProgress((event.loaded / event.total) * 100, 'Downloading AI Model...');
+      progressHandler = (event: { loaded?: number; total?: number }) => {
+        const total = Number(event.total ?? 0);
+        const loaded = Number(event.loaded ?? 0);
+        if (total > 0) {
+          onStageProgress((loaded / total) * 100, 'Downloading AI Model...');
         } else {
           onStageProgress(0, 'Initializing AI...');
         }
       };
       session.on('progress', progressHandler);
 
-      runtimeHandler = (event) => {
+      runtimeHandler = (event: { executionProvider?: string | null }) => {
         runtimeExecutionProvider = normalizeExecutionProviderName(event?.executionProvider);
         onStageProgress(
           1,
@@ -414,7 +513,7 @@ export class GmnetGainMapGenerator {
     }
 
     try {
-      const executeInference = async (runOptions = {}) => {
+      const executeInference = async (runOptions: GmnetRunOptions = {}) => {
         const sourceImageData = runOptions.imageData instanceof ImageData
           ? runOptions.imageData
           : imageData;
@@ -431,11 +530,14 @@ export class GmnetGainMapGenerator {
         const supportsTileStepApi = typeof session.prepareTiledInference === 'function'
           && typeof session.runTileStep === 'function'
           && typeof session.finalizeTiledInference === 'function';
-        let gainMapRgba;
+        let gainMapRgba: Uint8ClampedArray;
         if (supportsTileStepApi) {
-          const tiledContext = await session.prepareTiledInference(sourceImageData, {
+          const prepareTiledInference = session.prepareTiledInference!;
+          const runTileStep = session.runTileStep!;
+          const finalizeTiledInference = session.finalizeTiledInference!;
+          const tiledContext = await prepareTiledInference(sourceImageData, {
             ...sessionRunOptions,
-          });
+          }) as GmnetTiledContext;
           const tileTotal = Math.max(0, Number(tiledContext?.tiles?.length) || 0);
           const checkpointingMode = normalizeCheckpointingMode(options.gmnetCheckpointing);
           const checkpointingEnabled = shouldUseCheckpointing(checkpointingMode);
@@ -457,8 +559,8 @@ export class GmnetGainMapGenerator {
           if (checkpointStore && checkpointKey) {
             const snapshot = await checkpointStore.loadSnapshot(checkpointKey);
             if (canRestoreCheckpointSnapshot(snapshot, tiledContext, tileTotal)) {
-              tiledContext.accumIngm.set(snapshot.accumIngm);
-              tiledContext.tileCompleted.set(snapshot.tileCompleted.subarray(0, tileTotal));
+              tiledContext.accumIngm!.set(snapshot.accumIngm);
+              tiledContext.tileCompleted!.set(snapshot.tileCompleted.subarray(0, tileTotal));
               tiledContext.completedTileCount = countCompletedTiles(tiledContext.tileCompleted, tileTotal);
               checkpointResumed = tiledContext.completedTileCount > 0;
             }
@@ -468,7 +570,7 @@ export class GmnetGainMapGenerator {
             if (checkpointingEnabled && tiledContext?.tileCompleted?.[tileIndex]) {
               continue;
             }
-            const tileMetadata = await session.runTileStep(tiledContext, tileIndex);
+            const tileMetadata = await runTileStep(tiledContext, tileIndex);
             if (tiledContext?.tileCompleted instanceof Uint8Array && !tiledContext.tileCompleted[tileIndex]) {
               tiledContext.tileCompleted[tileIndex] = 1;
             }
@@ -506,7 +608,7 @@ export class GmnetGainMapGenerator {
               );
             }
           }
-          gainMapRgba = session.finalizeTiledInference(tiledContext, {
+          gainMapRgba = finalizeTiledInference(tiledContext, {
             ...sessionRunOptions,
           });
           if (checkpointStore && checkpointKey) {
@@ -533,7 +635,7 @@ export class GmnetGainMapGenerator {
         };
       };
 
-      const ensureWebglParity = async (runOptions = {}) => {
+      const ensureWebglParity = async (runOptions: GmnetRunOptions = {}) => {
         const modelVariant = typeof runOptions.gmnetModelVariant === 'string' && runOptions.gmnetModelVariant.trim().length > 0
           ? runOptions.gmnetModelVariant.trim().toLowerCase()
           : 'realworld';
@@ -569,7 +671,7 @@ export class GmnetGainMapGenerator {
         this.webglParityCache.set(modelVariant, true);
       };
 
-      const runInference = async (runOptions = {}) => {
+      const runInference = async (runOptions: GmnetRunOptions = {}) => {
         const forcedProviders = Array.isArray(runOptions.forceExecutionProviders)
           ? runOptions.forceExecutionProviders
           : [];
@@ -592,7 +694,7 @@ export class GmnetGainMapGenerator {
           gmnetExecutionProvider: runtimeExecutionProvider || capability.provider || null,
         },
       );
-      const runWebglFallback = async (note) => {
+      const runWebglFallback = async (note: string) => {
         onStageProgress?.(
           2,
           note,
@@ -605,7 +707,7 @@ export class GmnetGainMapGenerator {
         });
       };
 
-      const runWasmFallback = async (note) => {
+      const runWasmFallback = async (note: string) => {
         onStageProgress?.(
           2,
           note,
@@ -638,7 +740,7 @@ export class GmnetGainMapGenerator {
         return [GMNET_FALLBACK_EXECUTION_PROVIDER, GMNET_WASM_EXECUTION_PROVIDER];
       };
 
-      const attemptedFallbackProviders = new Set();
+      const attemptedFallbackProviders = new Set<string>();
       const runNextFallback = async (reason = 'error') => {
         const fallbackProviders = resolveAutoFallbackProviders(reason).filter(
           (provider) => !attemptedFallbackProviders.has(provider),
@@ -676,11 +778,13 @@ export class GmnetGainMapGenerator {
       try {
         inferenceResult = await runInference(
           hasExplicitBackendSelection
-            ? { forceExecutionProviders: [requestedProvider] }
+            ? (requestedProvider ? { forceExecutionProviders: [requestedProvider] } : {})
             : {},
         );
       } catch (error) {
-        const fallbackReason = error?.name === 'GmnetWebGlParityError' ? 'webgl-parity' : 'error';
+        const fallbackReason = error instanceof Error && error.name === 'GmnetWebGlParityError'
+          ? 'webgl-parity'
+          : 'error';
         const fallbackResult = await runNextFallback(fallbackReason);
         if (!fallbackResult) {
           throw error;
@@ -712,7 +816,7 @@ export class GmnetGainMapGenerator {
       );
 
       return {
-        gainMapImageData: new ImageData(gainMapRgba, imageData.width, imageData.height),
+        gainMapImageData: new ImageData(new Uint8ClampedArray(gainMapRgba), imageData.width, imageData.height),
         metadata: this.buildMetadata(normalizeMaxContentBoost(options.maxContentBoost)),
       };
     } finally {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   DEFAULT_GMNET_MODEL_VARIANT,
   GMNET_FALLBACK_EXECUTION_PROVIDER,
@@ -14,7 +13,7 @@ import {
   RUNTIME_INIT_STEP_LABELS,
   RUNTIME_INIT_STEP_ORDER,
   normalizeExecutionProvider,
-} from './runtime-contract.js';
+} from './runtime-contract.ts';
 
 const DEFAULT_SMOKE_ASSET_PATH = 'models/gmnet-smoke-128.png';
 const DEFAULT_SMOKE_IMAGE_WIDTH = 128;
@@ -25,7 +24,7 @@ const DEFAULT_GMNET_SESSION_INIT_TIMEOUT_MS = 45_000;
 const DEFAULT_GMNET_SMOKE_RUN_TIMEOUT_MS = 30_000;
 const OFFLINE_RUNTIME_STEP_TIMEOUT_MS = 12_000;
 
-export { RUNTIME_INIT_ERROR_CODES, RUNTIME_INIT_STEP_LABELS, RUNTIME_INIT_STEP_ORDER } from './runtime-contract.js';
+export { RUNTIME_INIT_ERROR_CODES, RUNTIME_INIT_STEP_LABELS, RUNTIME_INIT_STEP_ORDER } from './runtime-contract.ts';
 
 function normalizeExecutionProviderList(values) {
   if (!Array.isArray(values)) {

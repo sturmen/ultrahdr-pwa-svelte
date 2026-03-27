@@ -5,9 +5,11 @@ export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'gmnet-provider-verify',
   'gmnet-smoke-run',
   'startup-ready',
-]);
+] as const);
 
-export const RUNTIME_INIT_STEP_LABELS = Object.freeze({
+export type RuntimeInitStepId = (typeof RUNTIME_INIT_STEP_ORDER)[number];
+
+export const RUNTIME_INIT_STEP_LABELS: Readonly<Record<RuntimeInitStepId, string>> = Object.freeze({
   'onnx-load': 'Load ONNX Runtime',
   'webgpu-check': 'Check WebGPU availability',
   'gmnet-session-init': 'Initialize GMNet session',
@@ -27,9 +29,19 @@ export const RUNTIME_INIT_ERROR_CODES = Object.freeze({
   OFFLINE_BUNDLE_NOT_READY: 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY',
   BUNDLE_VALIDATION_FAILED: 'RUNTIME_INIT_BUNDLE_VALIDATION_FAILED',
   BUNDLE_REPAIR_FAILED: 'RUNTIME_INIT_BUNDLE_REPAIR_FAILED',
-});
+} as const);
 
-export function normalizeExecutionProvider(value) {
+export interface SanitizedRuntimeInitOptions {
+  preferCompatibilityStartup?: true;
+  smokeAssetPath?: string;
+  modelVariant?: string;
+  forceSmokeFailure?: true;
+  allowWasmOnly?: false;
+  forceExecutionProviders?: string[];
+  smokeBypassProviders?: string[];
+}
+
+export function normalizeExecutionProvider(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -37,32 +49,33 @@ export function normalizeExecutionProvider(value) {
   return normalized || null;
 }
 
-export function sanitizeRuntimeInitOptions(rawOptions) {
+export function sanitizeRuntimeInitOptions(rawOptions: unknown): SanitizedRuntimeInitOptions {
   if (!rawOptions || typeof rawOptions !== 'object') {
     return {};
   }
 
-  const normalized = {};
+  const source = rawOptions as Record<string, unknown>;
+  const normalized: SanitizedRuntimeInitOptions = {};
 
-  if (rawOptions.preferCompatibilityStartup === true) {
+  if (source.preferCompatibilityStartup === true) {
     normalized.preferCompatibilityStartup = true;
   }
 
-  if (typeof rawOptions.smokeAssetPath === 'string') {
-    const smokeAssetPath = rawOptions.smokeAssetPath.trim();
+  if (typeof source.smokeAssetPath === 'string') {
+    const smokeAssetPath = source.smokeAssetPath.trim();
     if (smokeAssetPath.length > 0) {
       normalized.smokeAssetPath = smokeAssetPath;
     }
   }
 
-  if (typeof rawOptions.modelVariant === 'string') {
-    const modelVariant = rawOptions.modelVariant.trim();
+  if (typeof source.modelVariant === 'string') {
+    const modelVariant = source.modelVariant.trim();
     if (modelVariant.length > 0) {
       normalized.modelVariant = modelVariant;
     }
   }
 
-  const forceSmokeFailure = rawOptions.forceSmokeFailure;
+  const forceSmokeFailure = source.forceSmokeFailure;
   if (
     forceSmokeFailure === true
     || forceSmokeFailure === 1
@@ -72,20 +85,20 @@ export function sanitizeRuntimeInitOptions(rawOptions) {
     normalized.forceSmokeFailure = true;
   }
 
-  if (rawOptions.allowWasmOnly === false) {
+  if (source.allowWasmOnly === false) {
     normalized.allowWasmOnly = false;
   }
 
-  if (Array.isArray(rawOptions.forceExecutionProviders) && rawOptions.forceExecutionProviders.length > 0) {
-    normalized.forceExecutionProviders = rawOptions.forceExecutionProviders.filter(
-      (provider) => typeof provider === 'string' && provider.trim().length > 0,
+  if (Array.isArray(source.forceExecutionProviders) && source.forceExecutionProviders.length > 0) {
+    normalized.forceExecutionProviders = source.forceExecutionProviders.filter(
+      (provider): provider is string => typeof provider === 'string' && provider.trim().length > 0,
     );
   }
 
-  if (Array.isArray(rawOptions.smokeBypassProviders) && rawOptions.smokeBypassProviders.length > 0) {
-    const smokeBypassProviders = rawOptions.smokeBypassProviders
+  if (Array.isArray(source.smokeBypassProviders) && source.smokeBypassProviders.length > 0) {
+    const smokeBypassProviders = source.smokeBypassProviders
       .map((provider) => normalizeExecutionProvider(provider))
-      .filter(Boolean);
+      .filter((provider): provider is string => Boolean(provider));
     if (smokeBypassProviders.length > 0) {
       normalized.smokeBypassProviders = Array.from(new Set(smokeBypassProviders));
     }

@@ -4,7 +4,7 @@ import {
   decideWorkerFallback,
   isMainThreadFallbackEnabled,
   isWorkerCompatibilityError,
-} from '../runtime-init-policy.js';
+} from '../runtime-init-policy.ts';
 
 describe('runtime-init-policy', () => {
   it('detects fallback toggle from options', () => {

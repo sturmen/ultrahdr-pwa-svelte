@@ -1,5 +1,5 @@
-// @ts-nocheck
 import * as ortWebGpu from 'onnxruntime-web/webgpu';
+import type { Env, InferenceSession, Tensor as OrtTensor } from 'onnxruntime-common';
 import { GMNET_MAX_LONG_EDGE, IMAGE_MAX_LONG_EDGE } from './constants.js';
 import { hasWebGlSupport, isChromiumRuntime, isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
 import { resizeRasterImageSync } from './raster-image.ts';
@@ -13,24 +13,165 @@ export const SUPPORTED_GMNET_EXECUTION_PROVIDERS = Object.freeze([
     GMNET_WASM_EXECUTION_PROVIDER,
 ]);
 
-function resolveOrtAssetBasePath() {
+type GmnetRuntime = typeof globalThis & {
+    navigator?: Navigator & {
+        gpu?: unknown;
+    };
+    fetch?: typeof fetch;
+    performance?: Performance;
+    crossOriginIsolated?: boolean;
+    SharedArrayBuffer?: typeof SharedArrayBuffer;
+    ImageData?: typeof ImageData;
+};
+
+type GmnetStorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+type GmnetAssetDiagnostics = {
+    assetLabel: string;
+    assetUrl: string | null;
+    startedAtMs: number | null;
+    endedAtMs: number | null;
+    durationMs: number | null;
+    status: number | null;
+    byteLength: number | null;
+    contentType: string | null;
+    attemptIndex: number | null;
+};
+
+type GmnetError = Error & {
+    diagnostics?: Record<string, unknown>;
+    cause?: unknown;
+    requestedExecutionProviders?: string[];
+    resolvedExecutionProvider?: string | null;
+};
+
+type GmnetAssetPayload = {
+    payload: Uint8Array;
+    diagnostics: GmnetAssetDiagnostics;
+};
+
+type GmnetModelPayloads = {
+    modelPayload: ArrayBuffer | Uint8Array;
+    externalDataPayload: ArrayBuffer | Uint8Array | null;
+    modelLoadDiagnostics: GmnetAssetDiagnostics[];
+    includeExternalData: boolean;
+};
+
+type GmnetExecutionProvider = string | null;
+
+type GmnetSessionLike = {
+    executionProviders?: string[];
+    executionProvider?: string;
+    handler?: { executionProvider?: string };
+} & InferenceSession;
+
+type TensorLike = OrtTensor;
+
+type OrtModuleLike = {
+    env?: {
+        wasm?: Env.WebAssemblyFlags;
+        webgpu?: {
+            powerPreference?: string;
+        };
+    };
+} & typeof ortWebGpu;
+
+export type GmnetModelVariant = 'realworld' | 'synthetic';
+type GmnetCheckpointingMode = 'off' | 'auto' | 'force';
+type GmnetProgressEvent = { loaded?: number; total?: number };
+type GmnetRuntimeEvent = {
+    executionProvider?: string | null;
+    requestedExecutionProviders?: string[];
+    modelVariant?: string;
+};
+export type GmnetTileMetadata = {
+    tileIndex?: number;
+    tileTotal?: number;
+    gmnetTileIndex?: number;
+    gmnetTileTotal?: number;
+    gmnetTileX?: number;
+    gmnetTileY?: number;
+    gmnetTileWidth?: number;
+    gmnetTileHeight?: number;
+    gmnetTileHaloPx?: number;
+};
+type GmnetEventPayloadMap = {
+    progress: GmnetProgressEvent;
+    runtime: GmnetRuntimeEvent;
+    complete: Record<string, never>;
+    error: unknown;
+    'capability-probe': unknown;
+    'tile-step': GmnetTileMetadata;
+};
+type GmnetEventName = keyof GmnetEventPayloadMap;
+type GmnetEventCallback<E extends GmnetEventName = GmnetEventName> = (data: GmnetEventPayloadMap[E]) => void;
+type GmnetTile = {
+    tileIndex: number;
+    coreX: number;
+    coreY: number;
+    coreWidth: number;
+    coreHeight: number;
+    inputWidth: number;
+    inputHeight: number;
+    sampleStartX: number;
+    sampleStartY: number;
+    coreOffsetX: number;
+    coreOffsetY: number;
+    haloPx: number;
+    atLeftEdge: boolean;
+    atRightEdge: boolean;
+    atTopEdge: boolean;
+    atBottomEdge: boolean;
+    weightX: Float32Array;
+    weightY: Float32Array;
+};
+type GmnetTileConfig = {
+    tileInputSize: number;
+    haloPx: number;
+    nominalCoreSize: number;
+    fixedInputSize: boolean;
+};
+type GmnetGlobalContext = {
+    wker: TensorLike;
+    wchn: TensorLike;
+    qmax: TensorLike;
+    qmaxScalar: number;
+};
+export type GmnetTiledContext = {
+    provider: string;
+    sourceWidth: number;
+    sourceHeight: number;
+    sourceImageData: ImageData | null;
+    tileInputSize: number;
+    tileHaloPx: number;
+    tiles: GmnetTile[] | null;
+    tileCompleted: Uint8Array | null;
+    completedTileCount: number;
+    pendingTileCount: number;
+    accumIngm: Float32Array | null;
+    global: GmnetGlobalContext | null;
+    destroyed?: boolean;
+    destroyContext?: boolean;
+};
+
+function resolveOrtAssetBasePath(): string {
     const baseUrl = import.meta.env.BASE_URL || '/';
     return baseUrl.endsWith('/') ? `${baseUrl}assets/` : `${baseUrl}/assets/`;
 }
 
-function resolveModelBasePath() {
+function resolveModelBasePath(): string {
     const baseUrl = import.meta.env.BASE_URL || '/';
     return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 }
 
-function isWindowsRuntime(runtime = globalThis) {
+function isWindowsRuntime(runtime: GmnetRuntime = globalThis): boolean {
     const navigatorRef = runtime?.navigator;
     const userAgent = String(navigatorRef?.userAgent || '').toLowerCase();
     const platform = String(navigatorRef?.platform || '').toLowerCase();
     return userAgent.includes('windows') || platform.startsWith('win');
 }
 
-function isWebKitRuntime(runtime = globalThis) {
+function isWebKitRuntime(runtime: GmnetRuntime = globalThis): boolean {
     const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
     if (!userAgent.includes('applewebkit')) {
         return false;
@@ -40,7 +181,7 @@ function isWebKitRuntime(runtime = globalThis) {
         && !userAgent.includes('edg/');
 }
 
-function isFirefoxRuntime(runtime = globalThis) {
+function isFirefoxRuntime(runtime: GmnetRuntime = globalThis): boolean {
     const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
     return userAgent.includes('firefox/');
 }
@@ -53,11 +194,11 @@ const DEFAULT_PROBE_TIMEOUT_MS = 12_000;
 const PROBE_MIN_DYNAMIC_RANGE = 2;
 const PROBE_MIN_STD_DEV = 0.25;
 const PROBE_STATE_STORAGE_KEY = 'ultrahdr:probe-state:v1';
-let ortWebGlModulePromise = null;
-let ortWasmModulePromise = null;
-const configuredOrtModules = new WeakSet();
+let ortWebGlModulePromise: Promise<unknown> | null = null;
+let ortWasmModulePromise: Promise<unknown> | null = null;
+const configuredOrtModules = new WeakSet<object>();
 
-function appendAssetVersionQuery(url) {
+function appendAssetVersionQuery(url: string): string {
     const appAssetVersion = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
         ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
         : '';
@@ -68,16 +209,18 @@ function appendAssetVersionQuery(url) {
     return `${url}${separator}v=${encodeURIComponent(appAssetVersion)}`;
 }
 
-function resolveWebglRuntimeModuleUrl() {
+function resolveWebglRuntimeModuleUrl(): string {
     return appendAssetVersionQuery(`${resolveOrtAssetBasePath()}ort.webgl.min.mjs`);
 }
 
 export class ProbeStateManager {
-    constructor({ storage = null } = {}) {
+    storage: GmnetStorageLike | null;
+
+    constructor({ storage = null }: { storage?: GmnetStorageLike | null } = {}) {
         this.storage = storage;
     }
 
-    writeBeforeProbe(candidateLongEdge, provider) {
+    writeBeforeProbe(candidateLongEdge: number, provider: string): void {
         const state = {
             candidate: candidateLongEdge,
             provider,
@@ -88,7 +231,7 @@ export class ProbeStateManager {
         this._write(state);
     }
 
-    writeAfterProbe(candidateLongEdge, provider, status) {
+    writeAfterProbe(candidateLongEdge: number, provider: string, status: string): void {
         const state = {
             candidate: candidateLongEdge,
             provider,
@@ -99,7 +242,7 @@ export class ProbeStateManager {
         this._write(state);
     }
 
-    detectCrash() {
+    detectCrash(): Record<string, unknown> | null {
         const state = this._read();
         if (!state || typeof state !== 'object') {
             return null;
@@ -110,7 +253,7 @@ export class ProbeStateManager {
         return null;
     }
 
-    clearState() {
+    clearState(): void {
         try {
             if (this.storage && typeof this.storage.removeItem === 'function') {
                 this.storage.removeItem(PROBE_STATE_STORAGE_KEY);
@@ -120,7 +263,7 @@ export class ProbeStateManager {
         }
     }
 
-    _write(state) {
+    _write(state: Record<string, unknown>): void {
         try {
             if (this.storage && typeof this.storage.setItem === 'function') {
                 this.storage.setItem(PROBE_STATE_STORAGE_KEY, JSON.stringify(state));
@@ -130,7 +273,7 @@ export class ProbeStateManager {
         }
     }
 
-    _read() {
+    _read(): Record<string, unknown> | null {
         try {
             if (!this.storage || typeof this.storage.getItem !== 'function') {
                 return null;
@@ -150,7 +293,7 @@ export class ProbeStateManager {
     }
 }
 
-export function isMobileDevice(runtime = globalThis) {
+export function isMobileDevice(runtime: GmnetRuntime = globalThis): boolean {
     const navigatorRef = runtime?.navigator;
     const userAgent = String(navigatorRef?.userAgent || '').toLowerCase();
     const maxTouchPoints = Number(navigatorRef?.maxTouchPoints || 0) || 0;
@@ -165,7 +308,11 @@ export function isMobileDevice(runtime = globalThis) {
     return false;
 }
 
-export async function binarySearchMaxCapability(low, high, evaluate) {
+export async function binarySearchMaxCapability(
+    low: number,
+    high: number,
+    evaluate: (candidate: number) => Promise<boolean>,
+): Promise<number | null> {
     let best = null;
 
     while (low <= high) {
@@ -183,13 +330,13 @@ export async function binarySearchMaxCapability(low, high, evaluate) {
 }
 
 
-function supportsWasmThreading(runtime = globalThis) {
+function supportsWasmThreading(runtime: GmnetRuntime = globalThis): boolean {
     const hasIsolatedContext = runtime?.crossOriginIsolated === true;
     const hasSharedArrayBuffer = typeof runtime?.SharedArrayBuffer !== 'undefined';
     return hasIsolatedContext && hasSharedArrayBuffer;
 }
 
-function resolveHardwareConcurrency(runtime = globalThis) {
+function resolveHardwareConcurrency(runtime: GmnetRuntime = globalThis): number {
     const hardwareConcurrency = Number(runtime?.navigator?.hardwareConcurrency);
     if (!Number.isFinite(hardwareConcurrency) || hardwareConcurrency < 1) {
         return 1;
@@ -197,7 +344,7 @@ function resolveHardwareConcurrency(runtime = globalThis) {
     return Math.floor(hardwareConcurrency);
 }
 
-function resolveWasmThreadCount(runtime = globalThis) {
+function resolveWasmThreadCount(runtime: GmnetRuntime = globalThis): number {
     // WebKit workers are still unreliable with threaded ORT startup in our startup-gate path.
     if (isWebKitRuntime(runtime)) {
         return DEFAULT_WASM_THREAD_COUNT;
@@ -210,68 +357,70 @@ function resolveWasmThreadCount(runtime = globalThis) {
     return Math.max(2, boundedCount);
 }
 
-function configureOrtRuntime(ortModule, runtime = globalThis) {
+function configureOrtRuntime(ortModule: unknown, runtime: GmnetRuntime = globalThis): void {
     if (!ortModule || typeof ortModule !== 'object') {
         return;
     }
-    if (configuredOrtModules.has(ortModule)) {
-        return;
-    }
-
-    if (!ortModule.env || typeof ortModule.env !== 'object') {
-        return;
-    }
-
-    if (!ortModule.env.wasm || typeof ortModule.env.wasm !== 'object') {
-        ortModule.env.wasm = {};
-    }
-
-    ortModule.env.wasm.numThreads = resolveWasmThreadCount(runtime);
-    ortModule.env.wasm.simd = !isWebKitRuntime(runtime);
-    const ortAssetBasePath = resolveOrtAssetBasePath();
-    ortModule.env.wasm.wasmPaths = {
-        'ort-wasm-simd-threaded.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.wasm`,
-        'ort-wasm-simd-threaded.jsep.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jsep.wasm`,
-        'ort-wasm-simd-threaded.asyncify.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.asyncify.wasm`,
-        'ort-wasm-simd-threaded.jspi.wasm': `${ortAssetBasePath}ort-wasm-simd-threaded.jspi.wasm`
+    const moduleRef = ortModule as {
+        env?: {
+            wasm?: Env.WebAssemblyFlags;
+            webgpu?: {
+                powerPreference?: string;
+            };
+        };
     };
-    // Disable proxy to prevent ONNX from trying to spawn another worker or check for document.
-    ortModule.env.wasm.proxy = false;
+    if (configuredOrtModules.has(moduleRef as object)) {
+        return;
+    }
 
-    if (!ortModule.env.webgpu || typeof ortModule.env.webgpu !== 'object') {
-        ortModule.env.webgpu = {};
+    if (!moduleRef.env || typeof moduleRef.env !== 'object') {
+        return;
+    }
+
+    if (!moduleRef.env.wasm || typeof moduleRef.env.wasm !== 'object') {
+        moduleRef.env.wasm = {};
+    }
+
+    moduleRef.env.wasm.numThreads = resolveWasmThreadCount(runtime);
+    moduleRef.env.wasm.simd = !isWebKitRuntime(runtime);
+    moduleRef.env.wasm.wasmPaths = resolveOrtAssetBasePath();
+    // Disable proxy to prevent ONNX from trying to spawn another worker or check for document.
+    moduleRef.env.wasm.proxy = false;
+
+    if (!moduleRef.env.webgpu || typeof moduleRef.env.webgpu !== 'object') {
+        moduleRef.env.webgpu = {};
     }
     // Prefer the high-performance adapter for GMNet inference when WebGPU is available.
     // Skip this hint on Windows where Chromium currently ignores it and emits noisy warnings.
     if (!isWindowsRuntime(runtime)) {
-        ortModule.env.webgpu.powerPreference = 'high-performance';
+        moduleRef.env.webgpu.powerPreference = 'high-performance';
     }
 
-    configuredOrtModules.add(ortModule);
+    configuredOrtModules.add(moduleRef as object);
 }
 
-async function loadOrtWebGlModule(runtime = globalThis) {
+async function loadOrtWebGlModule(runtime: GmnetRuntime = globalThis): Promise<OrtModuleLike> {
     if (!ortWebGlModulePromise) {
         const testSpecifier = ['onnxruntime-web', 'webgl'].join('/');
         ortWebGlModulePromise = import.meta.env?.VITEST
             ? import(testSpecifier)
             : import(/* @vite-ignore */ resolveWebglRuntimeModuleUrl());
     }
-    const ortWebGlModule = await ortWebGlModulePromise;
+    const ortWebGlModule = await ortWebGlModulePromise as OrtModuleLike;
     configureOrtRuntime(ortWebGlModule, runtime);
-    return ortWebGlModule;
+    return ortWebGlModule as OrtModuleLike;
 }
 
-async function loadOrtWasmModule(runtime = globalThis) {
+async function loadOrtWasmModule(runtime: GmnetRuntime = globalThis): Promise<OrtModuleLike> {
     if (!ortWasmModulePromise) {
         ortWasmModulePromise = import('onnxruntime-web/wasm');
     }
-    const ortWasmModule = await ortWasmModulePromise;
+    const ortWasmModule = await ortWasmModulePromise as OrtModuleLike;
     configureOrtRuntime(ortWasmModule, runtime);
-    return ortWasmModule;
+    return ortWasmModule as OrtModuleLike;
 }
 
-async function resolveOrtModuleForProvider(provider, runtime = globalThis) {
+async function resolveOrtModuleForProvider(provider: string, runtime: GmnetRuntime = globalThis): Promise<OrtModuleLike> {
     if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
         return loadOrtWebGlModule(runtime);
     }
@@ -285,9 +434,12 @@ async function resolveOrtModuleForProvider(provider, runtime = globalThis) {
 export async function preloadGmnetRuntimeDependencies({
     runtime = globalThis,
     provider = REQUIRED_GMNET_EXECUTION_PROVIDER,
-} = {}) {
+}: {
+    runtime?: GmnetRuntime;
+    provider?: string;
+} = {}): Promise<{ provider: string }> {
     const normalizedProvider = normalizeExecutionProvider(provider);
-    if (!SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(normalizedProvider)) {
+    if (!normalizedProvider || !SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(normalizedProvider)) {
         throw new Error(`Unsupported GMNet execution provider: ${String(provider)}`);
     }
     await resolveOrtModuleForProvider(normalizedProvider, runtime);
@@ -319,9 +471,9 @@ const MODEL_VARIANT_CONFIG = Object.freeze({
     }
 });
 
-function normalizeModelVariant(variant) {
-    return SUPPORTED_MODEL_VARIANTS.includes(variant)
-        ? variant
+function normalizeModelVariant(variant: unknown): GmnetModelVariant {
+    return SUPPORTED_MODEL_VARIANTS.includes(variant as GmnetModelVariant)
+        ? (variant as GmnetModelVariant)
         : DEFAULT_GMNET_MODEL_VARIANT;
 }
 
@@ -332,11 +484,11 @@ const GMNET_MEMORY_CONSERVATIVE_SESSION_OPTIONS = Object.freeze({
     executionMode: 'sequential',
 });
 
-export function hasWebGpuSupport(runtime = globalThis) {
+export function hasWebGpuSupport(runtime: GmnetRuntime = globalThis): boolean {
     return typeof runtime?.navigator?.gpu !== 'undefined';
 }
 
-function resolveExecutionProviders(runtime = globalThis) {
+function resolveExecutionProviders(runtime: GmnetRuntime = globalThis): string[] {
     if (hasWebGpuSupport(runtime)) {
         return [REQUIRED_GMNET_EXECUTION_PROVIDER];
     }
@@ -346,7 +498,7 @@ function resolveExecutionProviders(runtime = globalThis) {
     return [];
 }
 
-function nowMs(runtime = globalThis) {
+function nowMs(runtime: GmnetRuntime = globalThis): number {
     const performanceNow = runtime?.performance?.now;
     if (typeof performanceNow === 'function') {
         return Math.floor(performanceNow.call(runtime?.performance));
@@ -363,7 +515,16 @@ function buildAssetDiagnostics({
     byteLength,
     contentType,
     attemptIndex,
-}) {
+}: {
+    assetLabel: unknown;
+    assetUrl: unknown;
+    startedAtMs: unknown;
+    endedAtMs: unknown;
+    fetchStatus?: unknown;
+    byteLength?: unknown;
+    contentType?: unknown;
+    attemptIndex: unknown;
+}): GmnetAssetDiagnostics {
     const startedMs = Number.isFinite(Number(startedAtMs)) ? Math.floor(Number(startedAtMs)) : null;
     const endedMs = Number.isFinite(Number(endedAtMs)) ? Math.floor(Number(endedAtMs)) : null;
     const status = Number.isFinite(Number(fetchStatus)) ? Math.floor(Number(fetchStatus)) : null;
@@ -382,7 +543,7 @@ function buildAssetDiagnostics({
     };
 }
 
-function attachAssetDiagnostics(error = null, diagnostics = {}) {
+function attachAssetDiagnostics(error: GmnetError | null = null, diagnostics: Record<string, unknown> = {}): GmnetError | null {
     if (!error || typeof error !== 'object') {
         return error;
     }
@@ -396,7 +557,7 @@ function attachAssetDiagnostics(error = null, diagnostics = {}) {
     return error;
 }
 
-function normalizeExecutionProvider(value) {
+function normalizeExecutionProvider(value: unknown): string | null {
     if (typeof value !== 'string') {
         return null;
     }
@@ -404,7 +565,12 @@ function normalizeExecutionProvider(value) {
     return normalized || null;
 }
 
-async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = null) {
+async function loadBinaryAsset(
+    runtime: GmnetRuntime,
+    assetUrl: string,
+    assetLabel: string,
+    attemptIndex: number | null = null,
+): Promise<GmnetAssetPayload> {
     const fetchFn = runtime?.fetch || globalThis.fetch;
     const startedAtMs = nowMs(runtime);
     if (typeof fetchFn !== 'function') {
@@ -429,7 +595,7 @@ async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = nul
         response = await fetchFn.call(runtime, assetUrl, { credentials: 'same-origin' });
     } catch (cause) {
         const endedAtMs = nowMs(runtime);
-        const error = new Error(cause?.message || `Failed to load ${assetLabel}.`);
+        const error = new Error(((cause as { message?: string })?.message) || `Failed to load ${assetLabel}.`);
         error.name = 'GmnetModelAssetFetchFailedError';
         error.cause = cause;
         attachAssetDiagnostics(error, {
@@ -441,7 +607,7 @@ async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = nul
                 attemptIndex,
             }),
             errorContext: 'asset_fetch_failed',
-            errorMessage: cause?.message || `Failed to load ${assetLabel}.`,
+            errorMessage: ((cause as { message?: string })?.message) || `Failed to load ${assetLabel}.`,
         });
         throw error;
     }
@@ -493,7 +659,7 @@ async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = nul
         buffer = await response.arrayBuffer();
     } catch (cause) {
         const endedAtMs = nowMs(runtime);
-        const error = new Error(cause?.message || `Failed to read ${assetLabel} payload.`);
+        const error = new Error(((cause as { message?: string })?.message) || `Failed to read ${assetLabel} payload.`);
         error.name = 'GmnetModelAssetReadFailedError';
         error.cause = cause;
         attachAssetDiagnostics(error, {
@@ -507,7 +673,7 @@ async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = nul
                 contentType: response?.headers?.get?.('content-type'),
             }),
             errorContext: 'asset_array_buffer_failed',
-            errorMessage: cause?.message || `Failed to read ${assetLabel} payload.`,
+            errorMessage: ((cause as { message?: string })?.message) || `Failed to read ${assetLabel} payload.`,
         });
         throw error;
     }
@@ -549,13 +715,13 @@ async function loadBinaryAsset(runtime, assetUrl, assetLabel, attemptIndex = nul
 }
 
 async function resolveModelAndExternalDataPayloads(
-    runtime,
-    provider,
-    modelUrl,
-    externalDataUrl,
-    attemptIndex = null,
-) {
-    const modelLoadDiagnostics = [];
+    runtime: GmnetRuntime,
+    provider: string,
+    modelUrl: string,
+    externalDataUrl: string,
+    attemptIndex: number | null = null,
+): Promise<GmnetModelPayloads> {
+    const modelLoadDiagnostics: GmnetAssetDiagnostics[] = [];
     if (provider === GMNET_FALLBACK_EXECUTION_PROVIDER) {
         const modelAsset = await loadBinaryAsset(
             runtime,
@@ -595,15 +761,31 @@ async function resolveModelAndExternalDataPayloads(
         };
     }
 
+    const externalDataAsset = await loadBinaryAsset(
+        runtime,
+        externalDataUrl,
+        'GMNet ONNX model external data',
+        attemptIndex,
+    );
+    modelLoadDiagnostics.push(externalDataAsset.diagnostics);
+
+    const modelAsset = await loadBinaryAsset(
+        runtime,
+        modelUrl,
+        'GMNet ONNX model',
+        attemptIndex,
+    );
+    modelLoadDiagnostics.push(modelAsset.diagnostics);
+
     return {
-        modelPayload: modelUrl,
-        externalDataPayload: externalDataUrl,
+        modelPayload: modelAsset.payload,
+        externalDataPayload: externalDataAsset.payload,
         modelLoadDiagnostics,
         includeExternalData: true,
     };
 }
 
-function resolveActiveExecutionProvider(session, requestedExecutionProviders = []) {
+function resolveActiveExecutionProvider(session: GmnetSessionLike | null | undefined, requestedExecutionProviders: string[] = []): string {
     const sessionProviders = Array.isArray(session?.executionProviders)
         ? session.executionProviders
         : null;
@@ -625,7 +807,7 @@ function resolveActiveExecutionProvider(session, requestedExecutionProviders = [
     return requestedExecutionProviders[0] || 'unknown';
 }
 
-function safeDisposeTensor(tensor) {
+function safeDisposeTensor(tensor: TensorLike | null | undefined): void {
     if (!tensor || typeof tensor !== 'object') {
         return;
     }
@@ -638,8 +820,19 @@ function safeDisposeTensor(tensor) {
     }
 }
 
-function createOrtSessionOptions(requestedExecutionProviders, externalDataOptions = null) {
-    const sessionOptions = {
+type OrtSessionOptions = {
+    executionProviders: string[];
+    enableMemPattern: boolean;
+    enableCpuMemArena: boolean;
+    executionMode: 'sequential';
+    externalData?: Array<{ path: string; data: Uint8Array | ArrayBuffer }>;
+};
+
+function createOrtSessionOptions(
+    requestedExecutionProviders: string[],
+    externalDataOptions: { path: string; data: Uint8Array | ArrayBuffer } | null = null,
+): OrtSessionOptions {
+    const sessionOptions: OrtSessionOptions = {
         executionProviders: requestedExecutionProviders,
         ...GMNET_MEMORY_CONSERVATIVE_SESSION_OPTIONS,
     };
@@ -649,7 +842,18 @@ function createOrtSessionOptions(requestedExecutionProviders, externalDataOption
     return sessionOptions;
 }
 
-function logExecutionProviderSelection(provider, modelVariant, requestedExecutionProviders = []) {
+function normalizeExternalDataPayload(payload: unknown): Uint8Array | ArrayBuffer | undefined {
+    if (payload instanceof Uint8Array || payload instanceof ArrayBuffer) {
+        return payload;
+    }
+    return undefined;
+}
+
+function normalizeModelPayload(payload: ArrayBuffer | Uint8Array): Uint8Array {
+    return payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+}
+
+function logExecutionProviderSelection(provider: string | null | undefined, modelVariant: string, requestedExecutionProviders: string[] = []): void {
     const normalizedProvider = typeof provider === 'string' && provider ? provider : 'unknown';
     const requestedProviders = Array.isArray(requestedExecutionProviders) && requestedExecutionProviders.length > 0
         ? requestedExecutionProviders.join(', ')
@@ -659,13 +863,13 @@ function logExecutionProviderSelection(provider, modelVariant, requestedExecutio
     );
 }
 
-function createSessionCacheKey(modelVariant, provider) {
+function createSessionCacheKey(modelVariant: unknown, provider: unknown): string {
     const normalizedVariant = normalizeModelVariant(modelVariant);
     const normalizedProvider = normalizeExecutionProvider(provider) || 'unknown';
     return `${normalizedVariant}:${normalizedProvider}`;
 }
 
-function normalizeLongEdgeLimit(value, fallback) {
+function normalizeLongEdgeLimit(value: unknown, fallback: number): number {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric < 1) {
         return fallback;
@@ -673,7 +877,7 @@ function normalizeLongEdgeLimit(value, fallback) {
     return Math.floor(numeric);
 }
 
-function resolveScaledDimensionsForLongEdge(width, height, maxLongEdge) {
+function resolveScaledDimensionsForLongEdge(width: number, height: number, maxLongEdge: number): { width: number; height: number; changed: boolean } {
     const sourceWidth = Math.max(1, Math.floor(Number(width) || 1));
     const sourceHeight = Math.max(1, Math.floor(Number(height) || 1));
     const normalizedMax = normalizeLongEdgeLimit(maxLongEdge, 0);
@@ -694,8 +898,16 @@ function resolveScaledDimensionsForLongEdge(width, height, maxLongEdge) {
     };
 }
 
-function analyzeRgbaOutputStats(rgba) {
-    const pixelCount = Math.floor((rgba?.length || 0) / 4);
+function analyzeRgbaOutputStats(rgba: ArrayLike<number> | null | undefined): {
+    pixelCount: number;
+    min: number;
+    max: number;
+    mean: number;
+    stdDev: number;
+    dynamicRange: number;
+} {
+    const source = rgba ?? [];
+    const pixelCount = Math.floor((source.length || 0) / 4);
     if (pixelCount <= 0) {
         return {
             pixelCount: 0,
@@ -713,7 +925,7 @@ function analyzeRgbaOutputStats(rgba) {
     let sumSq = 0;
 
     for (let index = 0; index < pixelCount; index += 1) {
-        const value = rgba[index * 4];
+        const value = source[index * 4] ?? 0;
         if (value < min) {
             min = value;
         }
@@ -737,7 +949,7 @@ function analyzeRgbaOutputStats(rgba) {
     };
 }
 
-function isProbeOutputNearFlat(stats) {
+function isProbeOutputNearFlat(stats: { dynamicRange?: number; stdDev?: number } | null | undefined): boolean {
     if (!stats || typeof stats !== 'object') {
         return true;
     }
@@ -747,11 +959,11 @@ function isProbeOutputNearFlat(stats) {
     ) {
         return true;
     }
-    return stats.dynamicRange < PROBE_MIN_DYNAMIC_RANGE || stats.stdDev < PROBE_MIN_STD_DEV;
+    return (stats.dynamicRange ?? 0) < PROBE_MIN_DYNAMIC_RANGE || (stats.stdDev ?? 0) < PROBE_MIN_STD_DEV;
 }
 
-function createCapabilityProbeError(message, diagnostics = {}, cause = null) {
-    const error = new Error(message || 'Failed to resolve GMNet gain-map capability.');
+function createCapabilityProbeError(message: string, diagnostics: Record<string, unknown> = {}, cause: unknown = null): GmnetError {
+    const error = new Error(message || 'Failed to resolve GMNet gain-map capability.') as GmnetError;
     error.name = 'GmnetCapabilityProbeError';
     error.diagnostics = diagnostics;
     if (cause) {
@@ -760,13 +972,13 @@ function createCapabilityProbeError(message, diagnostics = {}, cause = null) {
     return error;
 }
 
-function yieldToEventLoop() {
+function yieldToEventLoop(): Promise<void> {
     return new Promise((resolve) => {
         setTimeout(resolve, 0);
     });
 }
 
-function runWithTimeout(promise, timeoutMs, timeoutMessage = 'Operation timed out') {
+function runWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage = 'Operation timed out'): Promise<T> {
     const normalizedTimeoutMs = Number(timeoutMs);
     if (!Number.isFinite(normalizedTimeoutMs) || normalizedTimeoutMs <= 0) {
         return promise;
@@ -790,17 +1002,17 @@ function runWithTimeout(promise, timeoutMs, timeoutMessage = 'Operation timed ou
     });
 }
 
-function resizeImageData(imageData, targetWidth, targetHeight) {
+function resizeImageData(imageData: ImageData, targetWidth: number, targetHeight: number): ImageData {
     return resizeRasterImageSync(imageData, targetWidth, targetHeight);
 }
 
-function resizeRgbaBuffer(rgba, width, height, targetWidth, targetHeight) {
-    const sourceImageData = new ImageData(rgba, width, height);
+function resizeRgbaBuffer(rgba: Uint8ClampedArray, width: number, height: number, targetWidth: number, targetHeight: number): Uint8ClampedArray {
+    const sourceImageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
     const resized = resizeImageData(sourceImageData, targetWidth, targetHeight);
     return resized.data;
 }
 
-function resolveOutputDimensions(tensor, fallbackWidth, fallbackHeight) {
+function resolveOutputDimensions(tensor: TensorLike | null | undefined, fallbackWidth: number, fallbackHeight: number): { width: number; height: number } {
     const dataLength = tensor?.data?.length ?? 0;
     const dims = tensor?.dims;
     if (Array.isArray(dims) && dims.length >= 4) {
@@ -820,7 +1032,7 @@ function resolveOutputDimensions(tensor, fallbackWidth, fallbackHeight) {
     return { width: fallbackWidth, height: fallbackHeight };
 }
 
-function clampNumber(value, minValue, maxValue) {
+function clampNumber(value: unknown, minValue: number, maxValue: number): number {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
         return minValue;
@@ -828,7 +1040,7 @@ function clampNumber(value, minValue, maxValue) {
     return Math.max(minValue, Math.min(maxValue, Math.floor(numeric)));
 }
 
-function reflectCoordinate(index, length) {
+function reflectCoordinate(index: unknown, length: number): number {
     const normalizedLength = Math.max(1, Math.floor(Number(length) || 1));
     if (normalizedLength <= 1) {
         return 0;
@@ -844,10 +1056,10 @@ function reflectCoordinate(index, length) {
     return cursor;
 }
 
-function buildTileStarts(length, coreTileSize) {
+function buildTileStarts(length: number, coreTileSize: number): number[] {
     const normalizedLength = Math.max(1, Math.floor(Number(length) || 1));
     const normalizedCore = Math.max(1, Math.floor(Number(coreTileSize) || 1));
-    const starts = [];
+    const starts: number[] = [];
     let cursor = 0;
     while (cursor < normalizedLength) {
         let start = cursor;
@@ -866,7 +1078,7 @@ function buildTileStarts(length, coreTileSize) {
     return starts;
 }
 
-function buildFeatherWeights(length, overlap, atStartEdge, atEndEdge) {
+function buildFeatherWeights(length: number, overlap: number, atStartEdge: boolean, atEndEdge: boolean): Float32Array {
     const normalizedLength = Math.max(1, Math.floor(Number(length) || 1));
     const weights = new Float32Array(normalizedLength);
     weights.fill(1);
@@ -890,7 +1102,26 @@ function buildFeatherWeights(length, overlap, atStartEdge, atEndEdge) {
 }
 
 export class GMNetInferenceSession {
-    constructor({ runtime = globalThis } = {}) {
+    runtime: GmnetRuntime;
+    session: GmnetSessionLike | null;
+    globalSession: GmnetSessionLike | null;
+    localSession: GmnetSessionLike | null;
+    sessionsByVariantAndProvider: Map<string, { globalSession: GmnetSessionLike; localSession: GmnetSessionLike }>;
+    executionProviderByVariantAndProvider: Map<string, string | null>;
+    activeModelVariant: GmnetModelVariant;
+    activeExecutionProvider: string | null;
+    activeOrtModule: OrtModuleLike;
+    downloadProgress: number;
+    eventListeners: {
+        progress: GmnetEventCallback<'progress'>[];
+        runtime: GmnetEventCallback<'runtime'>[];
+        complete: GmnetEventCallback<'complete'>[];
+        error: GmnetEventCallback<'error'>[];
+        'capability-probe': GmnetEventCallback<'capability-probe'>[];
+        'tile-step': GmnetEventCallback<'tile-step'>[];
+    };
+
+    constructor({ runtime = globalThis }: { runtime?: GmnetRuntime } = {}) {
         this.runtime = runtime;
         this.session = null;
         this.globalSession = null;
@@ -901,35 +1132,60 @@ export class GMNetInferenceSession {
         this.activeExecutionProvider = null;
         this.activeOrtModule = ortWebGpu;
         this.downloadProgress = 0;
-        this.eventListeners = Object.create(null);
-        this.eventListeners.progress = [];
-        this.eventListeners.complete = [];
-        this.eventListeners.error = [];
-        this.eventListeners.runtime = [];
-        this.eventListeners['capability-probe'] = [];
-        this.eventListeners['tile-step'] = [];
+        this.eventListeners = {
+            progress: [],
+            runtime: [],
+            complete: [],
+            error: [],
+            'capability-probe': [],
+            'tile-step': [],
+        };
     }
 
-    on(event, callback) {
+    private getEventListeners<E extends GmnetEventName>(event: E): GmnetEventCallback<E>[] {
+        switch (event) {
+            case 'progress':
+                return this.eventListeners.progress as GmnetEventCallback<E>[];
+            case 'runtime':
+                return this.eventListeners.runtime as GmnetEventCallback<E>[];
+            case 'complete':
+                return this.eventListeners.complete as GmnetEventCallback<E>[];
+            case 'error':
+                return this.eventListeners.error as GmnetEventCallback<E>[];
+            case 'capability-probe':
+                return this.eventListeners['capability-probe'] as GmnetEventCallback<E>[];
+            case 'tile-step':
+                return this.eventListeners['tile-step'] as GmnetEventCallback<E>[];
+            default:
+                return [];
+        }
+    }
+
+    on<E extends GmnetEventName>(event: E, callback: GmnetEventCallback<E>): void {
         if (typeof event !== 'string' || event.length === 0 || typeof callback !== 'function') return;
-        if (!Array.isArray(this.eventListeners[event])) this.eventListeners[event] = [];
-        this.eventListeners[event].push(callback);
+        this.getEventListeners(event).push(callback);
     }
 
-    off(event, callback) {
+    off<E extends GmnetEventName>(event: E, callback: GmnetEventCallback<E>): void {
         if (typeof event !== 'string' || event.length === 0 || typeof callback !== 'function') return;
-        if (!Array.isArray(this.eventListeners[event])) return;
-        this.eventListeners[event] = this.eventListeners[event].filter(cb => cb !== callback);
+        const listeners = this.getEventListeners(event);
+        const index = listeners.findIndex((listener) => listener === callback);
+        if (index >= 0) {
+            listeners.splice(index, 1);
+        }
     }
 
-    emit(event, data) {
+    emit<E extends GmnetEventName>(event: E, data: GmnetEventPayloadMap[E]): void {
         if (typeof event !== 'string' || event.length === 0) return;
-        if (!Array.isArray(this.eventListeners[event])) return;
-        const listeners = [...this.eventListeners[event]];
+        const listeners = [...this.getEventListeners(event)];
         listeners.forEach((callback) => callback(data));
     }
 
-    async init(modelVariant = DEFAULT_GMNET_MODEL_VARIANT, options = {}) {
+    async init(modelVariant: GmnetModelVariant = DEFAULT_GMNET_MODEL_VARIANT, options: {
+        attemptIndex?: number | null;
+        forceExecutionProviders?: string[];
+        forceReload?: boolean;
+    } = {}): Promise<void> {
         const normalizedVariant = normalizeModelVariant(modelVariant);
         const attemptIndex = Number.isFinite(Number(options?.attemptIndex))
             ? Math.floor(Number(options.attemptIndex))
@@ -972,7 +1228,7 @@ export class GMNetInferenceSession {
         const sessionCacheKey = createSessionCacheKey(normalizedVariant, requestedProvider);
         const forceReload = Boolean(options.forceReload);
         if (!forceReload && this.sessionsByVariantAndProvider.has(sessionCacheKey)) {
-            const cachedSessions = this.sessionsByVariantAndProvider.get(sessionCacheKey) || {};
+            const cachedSessions = this.sessionsByVariantAndProvider.get(sessionCacheKey) || { globalSession: null, localSession: null };
             this.globalSession = cachedSessions.globalSession || null;
             this.localSession = cachedSessions.localSession || null;
             this.session = this.localSession;
@@ -987,8 +1243,8 @@ export class GMNetInferenceSession {
                     `GMNet requires "${requestedProvider}" execution provider; cached provider is "${this.activeExecutionProvider || 'unknown'}".`
                 );
                 cachedProviderError.name = 'GmnetExecutionProviderMismatchError';
-                cachedProviderError.requestedExecutionProviders = requestedExecutionProviders;
-                cachedProviderError.resolvedExecutionProvider = this.activeExecutionProvider || null;
+                (cachedProviderError as GmnetError).requestedExecutionProviders = requestedExecutionProviders;
+                (cachedProviderError as GmnetError).resolvedExecutionProvider = this.activeExecutionProvider || null;
                 throw cachedProviderError;
             }
             logExecutionProviderSelection(
@@ -1011,8 +1267,8 @@ export class GMNetInferenceSession {
                     `GMNet requires "${requestedProvider}" execution provider; active provider is "${this.activeExecutionProvider || 'unknown'}".`
                 );
                 providerError.name = 'GmnetExecutionProviderMismatchError';
-                providerError.requestedExecutionProviders = requestedExecutionProviders;
-                providerError.resolvedExecutionProvider = this.activeExecutionProvider || null;
+                (providerError as GmnetError).requestedExecutionProviders = requestedExecutionProviders;
+                (providerError as GmnetError).resolvedExecutionProvider = this.activeExecutionProvider || null;
                 throw providerError;
             }
             this.activeOrtModule = ortModule;
@@ -1070,32 +1326,30 @@ export class GMNetInferenceSession {
             console.log(`[GMNet] Loading ${normalizedVariant} global model from ${globalModelUrl}...`);
             console.log(`[GMNet] Loading ${normalizedVariant} local model from ${localModelUrl}...`);
 
-            const globalSessionOptions = createOrtSessionOptions(
-                requestedExecutionProviders,
-                globalPayloads.includeExternalData
-                    ? {
-                        path: variantConfig.globalDataFilename,
-                        data: globalPayloads.externalDataPayload
-                    }
-                    : null,
-            );
-            const localSessionOptions = createOrtSessionOptions(
-                requestedExecutionProviders,
-                localPayloads.includeExternalData
-                    ? {
-                        path: variantConfig.localDataFilename,
-                        data: localPayloads.externalDataPayload
-                    }
-                    : null,
-            );
+            const globalSessionOptions = createOrtSessionOptions(requestedExecutionProviders);
+            const globalExternalDataPayload = normalizeExternalDataPayload(globalPayloads.externalDataPayload);
+            if (globalExternalDataPayload) {
+                globalSessionOptions.externalData = [{
+                    path: variantConfig.globalDataFilename,
+                    data: globalExternalDataPayload,
+                }];
+            }
+            const localSessionOptions = createOrtSessionOptions(requestedExecutionProviders);
+            const localExternalDataPayload = normalizeExternalDataPayload(localPayloads.externalDataPayload);
+            if (localExternalDataPayload) {
+                localSessionOptions.externalData = [{
+                    path: variantConfig.localDataFilename,
+                    data: localExternalDataPayload,
+                }];
+            }
 
             const createdGlobalSession = await ortModule.InferenceSession.create(
-                globalPayloads.modelPayload,
+                normalizeModelPayload(globalPayloads.modelPayload),
                 globalSessionOptions,
             );
             this.emit('progress', { loaded: 1, total: 2 });
             const createdLocalSession = await ortModule.InferenceSession.create(
-                localPayloads.modelPayload,
+                normalizeModelPayload(localPayloads.modelPayload),
                 localSessionOptions,
             );
             const resolvedExecutionProvider = normalizeExecutionProvider(resolveActiveExecutionProvider(
@@ -1107,8 +1361,8 @@ export class GMNetInferenceSession {
                     `GMNet requires "${requestedProvider}" execution provider; resolved "${resolvedExecutionProvider || 'unknown'}".`
                 );
                 providerMismatchError.name = 'GmnetExecutionProviderMismatchError';
-                providerMismatchError.requestedExecutionProviders = requestedExecutionProviders;
-                providerMismatchError.resolvedExecutionProvider = resolvedExecutionProvider || null;
+                (providerMismatchError as GmnetError).requestedExecutionProviders = requestedExecutionProviders;
+                (providerMismatchError as GmnetError).resolvedExecutionProvider = resolvedExecutionProvider || null;
                 throw providerMismatchError;
             }
 
@@ -1140,10 +1394,11 @@ export class GMNetInferenceSession {
         } catch (e) {
             console.error('[GMNet] init error:', e);
             if (e && typeof e === 'object') {
-                const existingDiagnostics = e.diagnostics && typeof e.diagnostics === 'object'
-                    ? e.diagnostics
+                const gmnetError = e as GmnetError;
+                const existingDiagnostics = gmnetError.diagnostics && typeof gmnetError.diagnostics === 'object'
+                    ? gmnetError.diagnostics
                     : {};
-                e.diagnostics = {
+                gmnetError.diagnostics = {
                     ...existingDiagnostics,
                     requestedExecutionProviders,
                     resolvedExecutionProvider: normalizeExecutionProvider(requestedProvider),
@@ -1160,7 +1415,7 @@ export class GMNetInferenceSession {
         }
     }
 
-    createProbeImageData(size, forceSquare = false) {
+    createProbeImageData(size: number, forceSquare = false): ImageData {
         const width = Math.max(1, Math.floor(Number(size) || 1));
         // For WebGL inline models (which require square inputs), use square dimensions
         // Otherwise use 4:3 aspect ratio for more realistic testing
@@ -1182,11 +1437,15 @@ export class GMNetInferenceSession {
         return new ImageData(data, width, height);
     }
 
-    hasSplitSessions() {
+    hasSplitSessions(): boolean {
         return Boolean(this.globalSession && this.localSession);
     }
 
-    resolveTileConfiguration(provider, sourceWidth, sourceHeight, options = {}) {
+    resolveTileConfiguration(provider: string | null, sourceWidth: number, sourceHeight: number, options: {
+        gmnetTileInputSize?: number;
+        gmnetTileHaloPx?: number;
+        localInputMaxLongEdge?: number;
+    } = {}): GmnetTileConfig {
         const normalizedProvider = normalizeExecutionProvider(provider);
         const sourceLongEdge = Math.max(sourceWidth, sourceHeight);
         const requestedTileInputSize = normalizeLongEdgeLimit(options?.gmnetTileInputSize, 0);
@@ -1229,7 +1488,7 @@ export class GMNetInferenceSession {
         };
     }
 
-    createTilePlan(sourceWidth, sourceHeight, tileConfig) {
+    createTilePlan(sourceWidth: number, sourceHeight: number, tileConfig: GmnetTileConfig): GmnetTile[] {
         const xStarts = buildTileStarts(sourceWidth, tileConfig.nominalCoreSize);
         const yStarts = buildTileStarts(sourceHeight, tileConfig.nominalCoreSize);
         const tiles = [];
@@ -1272,7 +1531,7 @@ export class GMNetInferenceSession {
         return tiles;
     }
 
-    createLocalTensorFromSourceTile(sourceImageData, tile) {
+    createLocalTensorFromSourceTile(sourceImageData: ImageData, tile: GmnetTile): TensorLike {
         const inputWidth = tile.inputWidth;
         const inputHeight = tile.inputHeight;
         const planeSize = inputWidth * inputHeight;
@@ -1297,7 +1556,7 @@ export class GMNetInferenceSession {
         return new ortModule.Tensor('float32', float32Data, [1, 3, inputHeight, inputWidth]);
     }
 
-    resolveQmaxScalar(tensor) {
+    resolveQmaxScalar(tensor: TensorLike | null | undefined): number {
         const value = Number(tensor?.data?.[0]);
         if (!Number.isFinite(value) || value <= 0) {
             return 1;
@@ -1305,16 +1564,22 @@ export class GMNetInferenceSession {
         return value;
     }
 
-    async prepareTiledInference(imageData, options = {}) {
+    async prepareTiledInference(imageData: ImageData, options: {
+        gmnetModelVariant?: GmnetModelVariant;
+        forceExecutionProviders?: string[];
+        localInputMaxLongEdge?: number;
+        gmnetTileInputSize?: number;
+        gmnetTileHaloPx?: number;
+    } = {}): Promise<GmnetTiledContext> {
         const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
         const forceExecutionProviders = Array.isArray(options?.forceExecutionProviders)
             ? options.forceExecutionProviders
             : undefined;
-        const normalizedForcedProviders = Array.isArray(forceExecutionProviders)
-            ? forceExecutionProviders
-                .map((provider) => normalizeExecutionProvider(provider))
-                .filter((provider) => SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider))
-            : [];
+            const normalizedForcedProviders = Array.isArray(forceExecutionProviders)
+                ? forceExecutionProviders
+                    .map((provider) => normalizeExecutionProvider(provider))
+                    .filter((provider): provider is string => provider !== null && SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider as string))
+                : [];
         const forcedProvider = normalizedForcedProviders.length === 1
             ? normalizedForcedProviders[0]
             : null;
@@ -1335,7 +1600,7 @@ export class GMNetInferenceSession {
         const globalTensor = await this.preprocessGlobal(imageData);
         let globalResults;
         try {
-            globalResults = await this.globalSession.run({
+            globalResults = await this.globalSession!.run({
                 global_input: globalTensor,
             });
         } finally {
@@ -1371,21 +1636,22 @@ export class GMNetInferenceSession {
         };
     }
 
-    async runTileStep(context, tileIndex) {
+    async runTileStep(context: GmnetTiledContext, tileIndex: number): Promise<GmnetTileMetadata> {
         if (!context || !Array.isArray(context.tiles)) {
             throw new Error('GMNet tile context is invalid.');
         }
+        const tiles = context.tiles!;
         const normalizedTileIndex = Math.floor(Number(tileIndex));
-        if (!Number.isFinite(normalizedTileIndex) || normalizedTileIndex < 0 || normalizedTileIndex >= context.tiles.length) {
+        if (!Number.isFinite(normalizedTileIndex) || normalizedTileIndex < 0 || normalizedTileIndex >= tiles.length) {
             throw new Error(`GMNet tile index out of range: ${tileIndex}`);
         }
-        if (context.tileCompleted[normalizedTileIndex] === 1) {
-            const completedTile = context.tiles[normalizedTileIndex];
+        if (context.tileCompleted?.[normalizedTileIndex] === 1) {
+            const completedTile = tiles[normalizedTileIndex];
             return {
                 tileIndex: normalizedTileIndex,
-                tileTotal: context.tiles.length,
+                tileTotal: tiles.length,
                 gmnetTileIndex: normalizedTileIndex,
-                gmnetTileTotal: context.tiles.length,
+                gmnetTileTotal: tiles.length,
                 gmnetTileX: completedTile.coreX,
                 gmnetTileY: completedTile.coreY,
                 gmnetTileWidth: completedTile.coreWidth,
@@ -1394,14 +1660,14 @@ export class GMNetInferenceSession {
             };
         }
 
-        const tile = context.tiles[normalizedTileIndex];
-        const localTensor = this.createLocalTensorFromSourceTile(context.sourceImageData, tile);
+        const tile = tiles[normalizedTileIndex];
+        const localTensor = this.createLocalTensorFromSourceTile(context.sourceImageData!, tile);
         let outputTensor = null;
         try {
-            const localResults = await this.localSession.run({
+            const localResults = await this.localSession!.run({
                 local_input: localTensor,
-                wker: context.global.wker,
-                wchn: context.global.wchn,
+                wker: context.global!.wker,
+                wchn: context.global!.wchn,
             });
             outputTensor = localResults.ingm || localResults.gain_map;
             if (!outputTensor || !outputTensor.data) {
@@ -1429,7 +1695,7 @@ export class GMNetInferenceSession {
                     const targetX = tile.coreX + coreX;
                     const targetIndex = targetRowOffset + targetX;
                     const weight = tile.weightX[coreX] * weightY;
-                    context.accumIngm[targetIndex] += value * weight;
+                    context.accumIngm![targetIndex] += value * weight;
                 }
             }
         } finally {
@@ -1437,14 +1703,14 @@ export class GMNetInferenceSession {
             safeDisposeTensor(outputTensor);
         }
 
-        context.tileCompleted[normalizedTileIndex] = 1;
+        context.tileCompleted![normalizedTileIndex] = 1;
         context.completedTileCount += 1;
-        context.pendingTileCount = Math.max(0, context.tiles.length - context.completedTileCount);
+        context.pendingTileCount = Math.max(0, tiles.length - context.completedTileCount);
         const metadata = {
             tileIndex: normalizedTileIndex,
-            tileTotal: context.tiles.length,
+            tileTotal: tiles.length,
             gmnetTileIndex: normalizedTileIndex,
-            gmnetTileTotal: context.tiles.length,
+            gmnetTileTotal: tiles.length,
             gmnetTileX: tile.coreX,
             gmnetTileY: tile.coreY,
             gmnetTileWidth: tile.coreWidth,
@@ -1455,7 +1721,7 @@ export class GMNetInferenceSession {
         return metadata;
     }
 
-    destroyTiledContext(context) {
+    destroyTiledContext(context: Partial<GmnetTiledContext> & { destroyed?: boolean } | null | undefined): void {
         if (!context || typeof context !== 'object' || context.destroyed === true) {
             return;
         }
@@ -1472,7 +1738,7 @@ export class GMNetInferenceSession {
         context.pendingTileCount = 0;
     }
 
-    finalizeTiledInference(context, options = {}) {
+    finalizeTiledInference(context: GmnetTiledContext, options: { destroyContext?: boolean } = {}): Uint8ClampedArray {
         if (!context || !context.accumIngm || !Array.isArray(context.tiles)) {
             throw new Error('GMNet tile context is invalid.');
         }
@@ -1482,7 +1748,7 @@ export class GMNetInferenceSession {
             const output = new Uint8ClampedArray(pixelCount * 4);
             const weightAccumulator = new Float32Array(pixelCount);
             const sourceWidth = context.sourceWidth;
-            for (const tile of context.tiles) {
+            for (const tile of context.tiles!) {
                 for (let coreY = 0; coreY < tile.coreHeight; coreY += 1) {
                     const weightY = tile.weightY[coreY];
                     const targetY = tile.coreY + coreY;
@@ -1500,7 +1766,7 @@ export class GMNetInferenceSession {
             for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
                 const weight = weightAccumulator[pixelIndex];
                 const normalizedIng = weight > 0
-                    ? context.accumIngm[pixelIndex] / weight
+                    ? context.accumIngm![pixelIndex] / weight
                     : 0;
                 const igm = Math.max(0, Math.min(1, normalizedIng * qmaxScalar));
                 const encoded = Math.floor(igm * 255);
@@ -1518,7 +1784,10 @@ export class GMNetInferenceSession {
         }
     }
 
-    async runLegacyMonolithic(imageData, options = {}) {
+    async runLegacyMonolithic(imageData: ImageData, options: {
+        probeMode?: boolean;
+        localInputMaxLongEdge?: number;
+    } & Record<string, unknown> = {}): Promise<Uint8ClampedArray> {
         // imageData is RGBA Uint8ClampedArray
         const sourceWidth = imageData.width;
         const sourceHeight = imageData.height;
@@ -1560,11 +1829,11 @@ export class GMNetInferenceSession {
 
         const globalTensor = await this.preprocessGlobal(imageData);
         const localTensor = this.preprocessLocal(inferenceImageData, inferenceWidth, inferenceHeight);
-        const results = await this.session.run({
+        const results = await this.session!.run({
             local_input: localTensor,
             global_input: globalTensor
         });
-        const outputTensor = results.gain_map;
+        const outputTensor = results.gain_map!;
         const modelOutputDimensions = resolveOutputDimensions(outputTensor, inferenceWidth, inferenceHeight);
         let inferenceOutput = this.postprocess(
             outputTensor,
@@ -1595,7 +1864,16 @@ export class GMNetInferenceSession {
         return inferenceOutput;
     }
 
-    async resolveGainMapCapability(options = {}) {
+    async resolveGainMapCapability(options: {
+        gmnetModelVariant?: GmnetModelVariant;
+        forceExecutionProviders?: string[];
+    } = {}): Promise<{
+        provider: string;
+        gainMapMaxLongEdge: number;
+        outputMaxLongEdge: number;
+        source: string;
+        attempts: unknown[];
+    }> {
         const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
         const requestedProviders = Array.isArray(options?.forceExecutionProviders)
             ? options.forceExecutionProviders
@@ -1603,7 +1881,7 @@ export class GMNetInferenceSession {
         const normalizedRequestedProviders = Array.isArray(requestedProviders)
             ? requestedProviders
                 .map((provider) => normalizeExecutionProvider(provider))
-                .filter((provider) => SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider))
+                .filter((provider): provider is string => provider !== null && SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider as string))
             : [];
         const requestedProvider = normalizedRequestedProviders.length === 1
             ? normalizedRequestedProviders[0]
@@ -1637,7 +1915,10 @@ export class GMNetInferenceSession {
     }
 
 
-    async run(imageData, options = {}) {
+    async run(imageData: ImageData, options: {
+        gmnetModelVariant?: GmnetModelVariant;
+        forceExecutionProviders?: string[];
+    } = {}): Promise<Uint8ClampedArray> {
         console.log('[GMNet session] run called');
         const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
         const forceExecutionProviders = Array.isArray(options?.forceExecutionProviders)
@@ -1646,7 +1927,7 @@ export class GMNetInferenceSession {
         const normalizedForcedProviders = Array.isArray(forceExecutionProviders)
             ? forceExecutionProviders
                 .map((provider) => normalizeExecutionProvider(provider))
-                .filter((provider) => SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider))
+                .filter((provider): provider is string => provider !== null && SUPPORTED_GMNET_EXECUTION_PROVIDERS.includes(provider as string))
             : [];
         const forcedProvider = normalizedForcedProviders.length === 1
             ? normalizedForcedProviders[0]
@@ -1670,7 +1951,7 @@ export class GMNetInferenceSession {
 
         const context = await this.prepareTiledInference(imageData, options);
         try {
-            for (let tileIndex = 0; tileIndex < context.tiles.length; tileIndex += 1) {
+            for (let tileIndex = 0; tileIndex < context.tiles!.length; tileIndex += 1) {
                 await this.runTileStep(context, tileIndex);
             }
             return this.finalizeTiledInference(context);
@@ -1680,7 +1961,7 @@ export class GMNetInferenceSession {
         }
     }
 
-    preprocessLocal(imageData, width, height) {
+    preprocessLocal(imageData: ImageData, width: number, height: number): TensorLike {
         // Convert RGBA URL to CHW Float32 [0,1]
         // Input: width * height * 4
         // Output: 1 * 3 * height * width
@@ -1703,21 +1984,21 @@ export class GMNetInferenceSession {
         return new ortModule.Tensor('float32', float32Data, [1, 3, height, width]);
     }
 
-    async preprocessGlobal(imageData) {
+    async preprocessGlobal(imageData: ImageData): Promise<TensorLike> {
         // Resize to 256x256
         const targetSize = 256;
         const resizedData = resizeImageData(imageData, targetSize, targetSize);
         return this.preprocessLocal(resizedData, targetSize, targetSize);
     }
 
-    postprocess(tensor, width, height) {
+    postprocess(tensor: TensorLike, width: number, height: number): Uint8ClampedArray {
         // Tensor is 1 x 1 x H x W (Float32)
         // Convert to Uint8Array [0, 255]
         // returned as single channel? 
         // generateGainMapData in processing.js usually returns RGBA data or just the gain map pixels.
         // I need to check processing.js to see what it returns.
 
-        const data = tensor.data;
+        const data = tensor.data ?? new Float32Array(0);
         const length = data.length; // H * W
         const expectedLength = width * height;
         if (length !== expectedLength) {
@@ -1726,10 +2007,10 @@ export class GMNetInferenceSession {
         const output = new Uint8ClampedArray(length * 4);
 
         for (let i = 0; i < length; i++) {
-            let val = data[i];
+            const val = Number(data[i] ?? 0);
             // Clip 0-1
-            val = Math.max(0, Math.min(1, val));
-            const encoded = Math.floor(val * 255);
+            const clipped = Math.max(0, Math.min(1, val));
+            const encoded = Math.floor(clipped * 255);
             const idx = i * 4;
             output[idx] = encoded;
             output[idx + 1] = encoded;

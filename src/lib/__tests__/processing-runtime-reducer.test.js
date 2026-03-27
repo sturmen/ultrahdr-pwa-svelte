@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createInitialProcessingRuntimeState,
   reduceProcessingRuntimeState,
-} from '../processing-runtime-reducer.js';
+} from '../processing-runtime-reducer.ts';
 
 describe('processing-runtime-reducer', () => {
   it('emits init command from idle state', () => {

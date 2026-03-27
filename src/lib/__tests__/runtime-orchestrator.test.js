@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createRuntimeOrchestrator } from '../runtime-orchestrator.js';
+import { createRuntimeOrchestrator } from '../runtime-orchestrator.ts';
 
 describe('runtime-orchestrator', () => {
   it('uses worker adapter when available', async () => {

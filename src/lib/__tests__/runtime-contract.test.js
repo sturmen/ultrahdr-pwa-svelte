@@ -4,7 +4,7 @@ import {
   RUNTIME_INIT_STEP_ORDER,
   normalizeExecutionProvider,
   sanitizeRuntimeInitOptions,
-} from '../runtime-contract.js';
+} from '../runtime-contract.ts';
 
 describe('runtime-contract', () => {
   it('exposes runtime init step labels for every step', () => {

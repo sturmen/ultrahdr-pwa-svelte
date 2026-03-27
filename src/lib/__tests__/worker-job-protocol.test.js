@@ -3,7 +3,7 @@ import {
   createWorkerJobState,
   deriveInferenceHeartbeatEvent,
   reduceWorkerJobState,
-} from '../worker-job-protocol.js';
+} from '../worker-job-protocol.ts';
 
 describe('worker-job-protocol', () => {
   it('creates immutable baseline job state', () => {

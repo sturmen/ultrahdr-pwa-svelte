@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialRuntimeState, runtimeStateReducer } from '../runtime-state-machine.js';
+import { createInitialRuntimeState, runtimeStateReducer } from '../runtime-state-machine.ts';
 
 describe('runtime-state-machine', () => {
   it('transitions from idle to initializing and then ready-worker', () => {

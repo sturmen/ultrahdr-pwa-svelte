@@ -1,12 +1,33 @@
-import { normalizeExecutionProvider } from './runtime-contract.js';
+import { normalizeExecutionProvider } from './runtime-contract.ts';
 
 export const STARTUP_CAPABILITY_CACHE_KEY = 'ultrahdr:runtime-startup-cache:v1';
 export const STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS = 86_400_000;
 
+export interface StartupCapabilityCacheContext {
+  userAgent?: string;
+  appVersion?: string;
+  assetVersion?: string;
+  wasmAssetVersion?: string;
+}
+
+export interface StartupCapabilityCacheEntry {
+  updatedAtMs: number;
+  resolvedExecutionProvider: string;
+  userAgent?: string;
+  appVersion?: string;
+  assetVersion?: string;
+  wasmAssetVersion?: string;
+}
+
+export interface ParsedStartupCapabilityCacheEntry {
+  provider: string;
+  updatedAtMs: number;
+}
+
 export function normalizeStartupCapabilityCacheTtlMs(
-  value,
+  value: unknown,
   defaultTtlMs = STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
-) {
+): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
     return defaultTtlMs;
@@ -14,7 +35,11 @@ export function normalizeStartupCapabilityCacheTtlMs(
   return Math.floor(numeric);
 }
 
-export function buildStartupCapabilityCacheEntry(resolvedExecutionProvider, nowMs, context) {
+export function buildStartupCapabilityCacheEntry(
+  resolvedExecutionProvider: unknown,
+  nowMs: number,
+  context: StartupCapabilityCacheContext = {},
+): StartupCapabilityCacheEntry | null {
   const provider = normalizeExecutionProvider(resolvedExecutionProvider);
   if (!provider) {
     return null;
@@ -27,13 +52,17 @@ export function buildStartupCapabilityCacheEntry(resolvedExecutionProvider, nowM
 }
 
 export function parseStartupCapabilityCacheEntry(
-  raw,
+  raw: unknown,
   {
     nowMs = Date.now(),
     ttlMs = STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
     expectedContext,
+  }: {
+    nowMs?: number;
+    ttlMs?: number;
+    expectedContext?: StartupCapabilityCacheContext;
   } = {},
-) {
+): ParsedStartupCapabilityCacheEntry | null {
   if (ttlMs <= 0) {
     return null;
   }
@@ -42,7 +71,7 @@ export function parseStartupCapabilityCacheEntry(
   }
 
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<StartupCapabilityCacheEntry> | null;
     if (!parsed || typeof parsed !== 'object') {
       return null;
     }
@@ -82,13 +111,17 @@ export function parseStartupCapabilityCacheEntry(
 }
 
 export function readStartupCapabilityCache(
-  runtime = globalThis,
+  runtime: Pick<Window & typeof globalThis, 'localStorage'> | typeof globalThis = globalThis,
   {
     ttlMs = STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
     cacheKey = STARTUP_CAPABILITY_CACHE_KEY,
     expectedContext,
+  }: {
+    ttlMs?: number;
+    cacheKey?: string;
+    expectedContext?: StartupCapabilityCacheContext;
   } = {},
-) {
+): ParsedStartupCapabilityCacheEntry | null {
   if (ttlMs <= 0) {
     return null;
   }
@@ -105,15 +138,20 @@ export function readStartupCapabilityCache(
 }
 
 export function writeStartupCapabilityCache(
-  resolvedExecutionProvider,
-  runtime = globalThis,
+  resolvedExecutionProvider: unknown,
+  runtime: Pick<Window & typeof globalThis, 'localStorage'> | typeof globalThis = globalThis,
   {
     ttlMs = STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
     cacheKey = STARTUP_CAPABILITY_CACHE_KEY,
     context,
     nowMs = Date.now(),
+  }: {
+    ttlMs?: number;
+    cacheKey?: string;
+    context?: StartupCapabilityCacheContext;
+    nowMs?: number;
   } = {},
-) {
+): void {
   if (ttlMs <= 0) {
     return;
   }

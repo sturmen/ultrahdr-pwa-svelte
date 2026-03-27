@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createPipelineTelemetry } from './pipeline-telemetry.js';
 import { UHDREncoder, UHDRDecoder, isWasmLoaded, isAvailable, isUhdrImage } from './ultrahdr-wasm.js';
 import {
@@ -24,6 +23,10 @@ import {
 import { rotateJpeg } from './jpegtran-rotate.js';
 import { IMAGE_MAX_LONG_EDGE } from './constants.js';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
+import {
+    decideGeneratedSdrEncodingStrategy,
+    decidePreservedUltraHdrRoute,
+} from './processing-route-plan.ts';
 import {
     buildGainMapMetadata,
     parseHdrGainMapMetadataFromBuffer,
@@ -475,7 +478,7 @@ function extractEmbeddedJpegStreams(fileBuffer: Uint8Array): EmbeddedJpegStream[
             continue;
         }
         const endOffset = parseJpegEndOffset(fileBuffer, index);
-        if (!Number.isInteger(endOffset) || endOffset <= index + 2) {
+        if (endOffset == null || endOffset <= index + 2) {
             continue;
         }
         const bytes = fileBuffer.slice(index, endOffset);
@@ -514,8 +517,10 @@ export function extractPreservedJpegComponentsFromMarkers(fileBuffer: Uint8Array
     }
 
     const rankedStreams = [...streams].sort((left, right) => {
-        const leftArea = left.dimensions.width * left.dimensions.height;
-        const rightArea = right.dimensions.width * right.dimensions.height;
+        const leftDimensions = left.dimensions ?? { width: 0, height: 0 };
+        const rightDimensions = right.dimensions ?? { width: 0, height: 0 };
+        const leftArea = leftDimensions.width * leftDimensions.height;
+        const rightArea = rightDimensions.width * rightDimensions.height;
         return rightArea - leftArea;
     });
 
@@ -568,7 +573,7 @@ export {
 function createGainMapGenerator(): GmnetGainMapGenerator {
     return new GmnetGainMapGenerator({
         buildMetadata: buildGainMapMetadata
-    });
+    } as unknown as ConstructorParameters<typeof GmnetGainMapGenerator>[0]);
 }
 
 function getGainMapGenerator(): GmnetGainMapGenerator {
@@ -632,7 +637,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             : payload
     );
 
-    const telemetry = createPipelineTelemetry({
+    const telemetry: PipelineTelemetry = createPipelineTelemetry({
         fileName: file.name,
         fileSize: file.size,
         fileIndex: mergedOptions.fileIndex,
@@ -720,8 +725,14 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                         setProcessingPath('preserved');
                         preserveDecisionMade = true;
                         console.log('[Process] Gain map decision: preserving existing gain map from source input');
-                        if (mergedOptions.rotation === 0) {
+                        if (((mergedOptions.rotation || 0) % 360 + 360) % 360 === 0) {
                             const components = await telemetry.runStage('extract-preserved-components', async () => extractComponentsWithDecoderFallback(fileBuffer, telemetry));
+                            const preservedRoute = decidePreservedUltraHdrRoute({
+                                rotation: mergedOptions.rotation || 0,
+                                baseDimensions: components.baseDimensions || null,
+                                sourceOrientationTransform,
+                                maxLongEdge: IMAGE_MAX_LONG_EDGE,
+                            });
                             const dims = components.baseDimensions;
                             const isTooLarge = dims && (dims.width > IMAGE_MAX_LONG_EDGE || dims.height > IMAGE_MAX_LONG_EDGE);
                             const needsAutoRotation = sourceOrientationTransform !== null;
@@ -729,7 +740,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                                 `[Orientation] Preserved-path auto-rotation requirement: ${needsAutoRotation} (sourceOrientation=${sourceOrientation}, transform=${sourceOrientationTransform || 'none'})`
                             );
 
-                            if (!isTooLarge && !needsAutoRotation) {
+                            if (preservedRoute === 'finalize-preserved') {
                                 console.log('[Process] Input is already UltraHDR JPEG — rebuilding to ensure standard compliance');
                                 const blob = await telemetry.runStage(
                                     'finalize-preserved',
@@ -742,15 +753,15 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                                             telemetry,
                                             sourceExifBytes
                                         );
-                                        return finalizeUltraHDR(rebuilt, mergedOptions.stripExif);
+                                        return finalizeUltraHDR(rebuilt, Boolean(mergedOptions.stripExif));
                                     },
                                     withProcessingPath(),
                                 );
                                 telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'preserve' }));
                                 return blob;
-                            } else {
-                                console.log(`[Process] Input requires alignment (auto:${needsAutoRotation}) or exceeds ${IMAGE_MAX_LONG_EDGE}px (${isTooLarge}) — forcing re-encode path`);
                             }
+
+                            console.log(`[Process] Input requires alignment (auto:${needsAutoRotation}) or exceeds ${IMAGE_MAX_LONG_EDGE}px (${isTooLarge}) — forcing re-encode path`);
                         }
 
                         console.log('[Process] UltraHDR JPEG requires rotation/resizing — extracting components');
@@ -809,7 +820,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             );
             const blob = await telemetry.runStage(
                 'finalize-output',
-                async () => finalizeUltraHDR(sdr, mergedOptions.stripExif),
+                async () => finalizeUltraHDR(sdr, Boolean(mergedOptions.stripExif)),
                 withProcessingPath(),
             );
             telemetry.complete(withProcessingPath({ outputBytes: blob.size, mode: 'hdr-intent-only' }));
@@ -821,13 +832,14 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             setProcessingPath('preserved');
             console.log('[Process] Gain map decision: preserving existing gain map from source input');
             console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
-            let imageData = workingFile.sdr;
-            let gainMapImageData = workingFile.gainMap;
+            let imageData = decodedRasterToImageData(workingFile.sdr);
+            let gainMapImageData = decodedRasterToImageData(workingFile.gainMap);
             // Preserve source gain-map metadata when provided by the preprocessor.
             // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
+            const gainMapHeadroom = workingFile.gainMapHeadroom ?? 0;
             const metadata = workingFile.gainMapMetadata
-                || (Number.isFinite(workingFile.gainMapHeadroom) && workingFile.gainMapHeadroom > 0
-                    ? buildGainMapMetadata(workingFile.gainMapHeadroom)
+                || (Number.isFinite(gainMapHeadroom) && gainMapHeadroom > 0
+                    ? buildGainMapMetadata(gainMapHeadroom)
                     : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST));
 
             const { sdr } = await telemetry.runStage(
@@ -844,7 +856,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             );
             const blob = await telemetry.runStage(
                 'finalize-output',
-                async () => finalizeUltraHDR(sdr, mergedOptions.stripExif),
+                async () => finalizeUltraHDR(sdr, Boolean(mergedOptions.stripExif)),
                 withProcessingPath(),
             );
 
@@ -903,16 +915,17 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             && originalSdrJpegBytes instanceof Uint8Array
             && sourceOrientationTransform !== null
         ) {
+            const normalizedSourceOrientationTransform = sourceOrientationTransform;
             console.log(
-                `[Orientation] Attempting lossless EXIF normalization on source JPEG (transform=${sourceOrientationTransform}, perfect=true)`
+                `[Orientation] Attempting lossless EXIF normalization on source JPEG (transform=${normalizedSourceOrientationTransform}, perfect=true)`
             );
             try {
                 originalSdrJpegBytes = await telemetry.runStage(
                     'lossless-normalize-source-orientation',
-                    async () => rotateJpeg(originalSdrJpegBytes, sourceOrientationTransform, { trim: false, perfect: true }),
+                    async () => rotateJpeg(originalSdrJpegBytes!, normalizedSourceOrientationTransform, { trim: false, perfect: true }),
                     withProcessingPath({
                         sourceOrientation,
-                        sourceOrientationTransform,
+                        sourceOrientationTransform: normalizedSourceOrientationTransform,
                     }),
                 );
                 sourceAutoRotation = 0;
@@ -931,21 +944,24 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
 
         if (normalizedRotation !== 0) {
             const losslessTransform = rotationToJpegTransform(normalizedRotation);
-            const hasSourceAutoTransform = sourceOrientationTransform !== null;
-            const canUseLosslessRotation =
-                originalSdrJpegBytes instanceof Uint8Array &&
-                sourceAutoRotation === 0 &&
-                !hasSourceAutoTransform &&
-                losslessTransform !== null;
+            const generatedStrategy = decideGeneratedSdrEncodingStrategy({
+                originalSdrJpegBytes,
+                rotation: normalizedRotation,
+                sourceAutoRotation,
+                sourceOrientationTransform,
+            });
+            const canUseLosslessRotation = generatedStrategy === 'lossless-rotate-sdr';
             console.log(
                 `[Orientation] User rotation request=${normalizedRotation}, sourceAutoRotation=${formatAutoRotationForLog(sourceAutoRotation)}, sourceOrientationTransform=${sourceOrientationTransform || 'none'}, canUseLosslessRotation=${canUseLosslessRotation}`
             );
 
             if (canUseLosslessRotation) {
                 try {
+                    const losslessSourceBytes = originalSdrJpegBytes!;
+                    const losslessRotationTransform = losslessTransform!;
                     originalSdrJpegBytes = await telemetry.runStage(
                         'lossless-rotate-sdr-jpeg',
-                        async () => rotateJpeg(originalSdrJpegBytes, losslessTransform, { trim: false, perfect: false }),
+                        async () => rotateJpeg(losslessSourceBytes, losslessRotationTransform, { trim: false, perfect: false }),
                         withProcessingPath(),
                     );
                 } catch (error) {
@@ -990,7 +1006,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             'generate-gain-map',
             async () => generateGainMapData(gainMapSourceImageData, {
                 ...mergedOptions,
-                onStageProgress: (stageProgress, note, metadata = null) => {
+                onStageProgress: (stageProgress: number, note?: string, metadata: Record<string, unknown> | null = null) => {
                     telemetry.emitStageProgress('generate-gain-map', stageProgress, withProcessingPath({
                         note,
                         ...(metadata && typeof metadata === 'object' ? metadata : {}),
@@ -1019,7 +1035,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
         // Finalize UltraHDR
         const blob = await telemetry.runStage(
             'finalize-output',
-            async () => finalizeUltraHDR(sdr, mergedOptions.stripExif),
+            async () => finalizeUltraHDR(sdr, Boolean(mergedOptions.stripExif)),
             withProcessingPath(),
         );
         console.log('[Process] Processing complete, returning Blob');
@@ -1044,7 +1060,14 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
  * Rebuilds an UltraHDR JPEG from its compressed components using UHDREncoder.
  * This ensures the output adheres to the latest standards (ISO 21496-1:2025).
  */
-async function rebuildUhdrFromCompressed(baseJpegBytes, gainMapJpegBytes, gainMapMetadata, options, telemetry = null, exifPayload = null) {
+async function rebuildUhdrFromCompressed(
+    baseJpegBytes: Uint8Array,
+    gainMapJpegBytes: Uint8Array,
+    gainMapMetadata: GainMapMetadata | null | undefined,
+    options: ProcessOptions,
+    telemetry: PipelineTelemetry | null = null,
+    exifPayload: Uint8Array | null = null,
+) {
     const encoder = new UHDREncoder();
     if (telemetry) {
         await telemetry.runStage('rebuild-init-encoder', async () => encoder.init());
@@ -1056,21 +1079,22 @@ async function rebuildUhdrFromCompressed(baseJpegBytes, gainMapJpegBytes, gainMa
         const quality = options.quality !== undefined ? options.quality : 0.95;
         const wasmQuality = Math.round(quality * 100);
 
-        const activeMetadata = gainMapMetadata && typeof gainMapMetadata === 'object'
-            ? { ...gainMapMetadata }
+        const activeMetadata: GainMapMetadata = gainMapMetadata && typeof gainMapMetadata === 'object'
+            ? { ...gainMapMetadata } as GainMapMetadata
             : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST);
         const shouldOverrideHeadroom =
             options?.__hasExplicitMaxContentBoost === true
-            && Number.isFinite(options?.maxContentBoost);
+            && Number.isFinite(Number(options?.maxContentBoost));
         if (shouldOverrideHeadroom) {
-            console.log(`[Rebuild] Adjusting headroom metadata to: ${options.maxContentBoost}`);
-            activeMetadata.hdrCapacityMax = options.maxContentBoost;
+            const overrideHeadroom = Number(options.maxContentBoost);
+            console.log(`[Rebuild] Adjusting headroom metadata to: ${overrideHeadroom}`);
+            activeMetadata.hdrCapacityMax = overrideHeadroom;
             // Also update gainMapMax if it was tied to headroom (standard linear gain map)
-            activeMetadata.gainMapMax = [options.maxContentBoost, options.maxContentBoost, options.maxContentBoost];
+            activeMetadata.gainMapMax = [overrideHeadroom, overrideHeadroom, overrideHeadroom];
         }
-        const encoderGainMapMetadata = isSingleChannelGainMapMetadata(activeMetadata)
+        const encoderGainMapMetadata: GainMapMetadata = isSingleChannelGainMapMetadata(activeMetadata)
             ? activeMetadata
-            : toSingleChannelGainMapMetadata(activeMetadata);
+            : toSingleChannelGainMapMetadata(activeMetadata) ?? activeMetadata;
         if (!isSingleChannelGainMapMetadata(activeMetadata)) {
             console.warn(
                 '[Process] Normalizing gain-map payload to single-channel metadata for XMP-compatible encoding'
@@ -1112,10 +1136,13 @@ async function rebuildUhdrFromCompressed(baseJpegBytes, gainMapJpegBytes, gainMa
 /**
  * Extracts compressed base/gain-map components from an UltraHDR JPEG using UHDRDecoder with marker fallback.
  */
-export async function extractComponentsWithDecoderFallback(fileBuffer, telemetry = null) {
-    let baseJpegBytes;
-    let gainMapJpegBytes;
-    let gainMapMetadata;
+export async function extractComponentsWithDecoderFallback(
+    fileBuffer: Uint8Array,
+    telemetry: PipelineTelemetry | null = null,
+) {
+    let baseJpegBytes: Uint8Array;
+    let gainMapJpegBytes: Uint8Array;
+    let gainMapMetadata: GainMapMetadata;
     const decoder = new UHDRDecoder();
     try {
         try {
@@ -1163,14 +1190,19 @@ export async function extractComponentsWithDecoderFallback(fileBuffer, telemetry
     }
 }
 
-export async function processUhdrWithRotation(fileBuffer, options, telemetry = null, sourceExifBytes = null) {
+export async function processUhdrWithRotation(
+    fileBuffer: Uint8Array,
+    options: ProcessOptions,
+    telemetry: PipelineTelemetry | null = null,
+    sourceExifBytes: Uint8Array | null = null,
+) {
     const { baseJpegBytes, gainMapJpegBytes, gainMapMetadata } = await extractComponentsWithDecoderFallback(fileBuffer, telemetry);
 
     console.log('[Process] Extracted compressed components. Base:', baseJpegBytes.length, 'GainMap:', gainMapJpegBytes.length);
 
     const quality = options.quality !== undefined ? options.quality : 0.95;
     const userRotation = ((options.rotation || 0) % 360 + 360) % 360;
-    const exifBytes = options.stripExif ? null : sourceExifBytes;
+    const exifBytes = Boolean(options.stripExif) ? null : sourceExifBytes;
     const baseExif = extractExifPayloadFromJpeg(baseJpegBytes);
     const inputOrientation = baseExif ? extractExifOrientation(baseExif) : 1;
     const autoRotation = orientationToRotation(inputOrientation);
@@ -1230,7 +1262,7 @@ export async function processUhdrWithRotation(fileBuffer, options, telemetry = n
                     null,
                     exifBytes
                 );
-            return await finalizeUltraHDR(rebuilt, options.stripExif);
+            return await finalizeUltraHDR(rebuilt, Boolean(options.stripExif));
         } catch (error) {
             console.warn(
                 '[Process] Lossless preserved-component JPEG rotation failed; falling back to decode/encode path',
@@ -1243,7 +1275,7 @@ export async function processUhdrWithRotation(fileBuffer, options, telemetry = n
     // base and gain-map images remain aligned during pixel-level manipulation.
     // Some browsers ignore imageOrientation: 'none' and auto-rotate the base JPEG 
     // but not the gain map. Stripping EXIF beforehand prevents this completely.
-    const decodeConfig = { imageOrientation: 'none' };
+    const decodeConfig = { imageOrientation: 'none' } as const;
     const nakedBaseBytes = stripExifSegments(baseJpegBytes);
     const nakedGainMapBytes = stripExifSegments(gainMapJpegBytes);
 
@@ -1313,7 +1345,7 @@ export async function processUhdrWithRotation(fileBuffer, options, telemetry = n
             );
 
     // 3. Finalize (handle EXIF)
-    return await finalizeUltraHDR(sdr, options.stripExif);
+    return await finalizeUltraHDR(sdr, Boolean(options.stripExif));
 }
 
 /**
@@ -1322,13 +1354,16 @@ export async function processUhdrWithRotation(fileBuffer, options, telemetry = n
  * @param {Object} options 
  * @returns {Promise<File>}
  */
-async function preprocessFile(file, options) {
+async function preprocessFile(
+    file: File,
+    options: ProcessOptions,
+): Promise<File | HdrIntentHeifResult | DecodedRasterImage | PreservedHeifResult> {
     const name = file.name.toLowerCase();
     if (name.endsWith('.hif')) {
         console.log('[Process] Detected HIF, decoding HDR intent...');
         try {
             const processHeifHdr = await getProcessHeifHdr();
-            return await processHeifHdr(file, options);
+            return await processHeifHdr(file);
         } catch (e) {
             console.error('[Process] HIF HDR-intent decode failed:', e);
             throw e;
@@ -1339,7 +1374,7 @@ async function preprocessFile(file, options) {
             const processHeic = await getProcessHeic();
             const converted = await processHeic(file, options);
             if (converted) {
-                console.log('[Process] Converted HEIC to:', converted.type);
+                console.log('[Process] Converted HEIC to:', converted instanceof File ? converted.type : 'non-file result');
                 return converted;
             }
         } catch (e) {
@@ -1352,7 +1387,7 @@ async function preprocessFile(file, options) {
             const processTiff = await getProcessTiff();
             const converted = await processTiff(file);
             if (converted) {
-                console.log('[Process] Converted TIFF to:', converted.type);
+                console.log('[Process] Converted TIFF to:', converted instanceof File ? converted.type : 'decoded-raster');
                 return converted;
             }
         } catch (e) {
@@ -1368,8 +1403,17 @@ async function preprocessFile(file, options) {
  * @param {string|Blob} source 
  * @returns {Promise<{imageData: ImageData, width: number, height: number}>}
  */
-async function loadImageDataAndExif(source, config = {}) {
-    let blob;
+async function loadImageDataAndExif(
+    source: string | Blob,
+    config: { imageOrientation?: string } & Record<string, unknown> = {},
+): Promise<{
+    imageData: ImageData;
+    width: number;
+    height: number;
+    originalSdrJpegBytes: Uint8Array | null;
+    sourceExifBytes: Uint8Array | null;
+}> {
+    let blob: Blob;
     if (source instanceof Blob) {
         blob = source;
     } else {
@@ -1387,8 +1431,8 @@ async function loadImageDataAndExif(source, config = {}) {
     const arrayBuffer = await blob.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
 
-    let originalSdrJpegBytes = null;
-    let sourceExifBytes = null;
+    let originalSdrJpegBytes: Uint8Array | null = null;
+    let sourceExifBytes: Uint8Array | null = null;
 
     // Check if the source is a JPEG to potentially preserve original bytes and EXIF
     if (blob.type === 'image/jpeg') {
@@ -1424,7 +1468,7 @@ async function loadImageDataAndExif(source, config = {}) {
  *   - Optional granular progress callback.
  * @returns {Promise<{gainMapImageData: ImageData, metadata: Object}>}
  */
-export async function generateGainMapData(imageData, options = {}) {
+export async function generateGainMapData(imageData: ImageData, options: Record<string, unknown> = {}) {
     return getGainMapGenerator().generate(imageData, options);
 }
 
@@ -1440,7 +1484,14 @@ export async function generateGainMapData(imageData, options = {}) {
  * @param {Uint8Array|null} exifPayload
  * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
  */
-export async function compressImages(sdrImageData, gainMapImageData, options, metadata = null, telemetry = null, exifPayload = null) {
+export async function compressImages(
+    sdrImageData: ImageData,
+    gainMapImageData: ImageData,
+    options: ProcessOptions & { originalSdrJpegBytes?: Uint8Array | null; sourceAutoRotation?: number },
+    metadata: GainMapMetadata | null = null,
+    telemetry: PipelineTelemetry | null = null,
+    exifPayload: Uint8Array | null = null,
+) {
     // Convert quality 0-1 to 0-100
     const originalSdrJpegBytes = options.originalSdrJpegBytes || null;
     const sourceAutoRotation = options.sourceAutoRotation ?? 0;
@@ -1485,8 +1536,8 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
         const encoderGainMapImageData = needsSingleChannelNormalization && !gainMapIsMonochrome ?
             toMonochromeGainMapImageData(rotatedGainMapImageData) :
             rotatedGainMapImageData;
-        const encoderGainMapMetadata = needsSingleChannelNormalization ?
-            toSingleChannelGainMapMetadata(compressedMetadata) :
+        const encoderGainMapMetadata: GainMapMetadata = needsSingleChannelNormalization ?
+            toSingleChannelGainMapMetadata(compressedMetadata) ?? compressedMetadata :
             compressedMetadata;
 
         if (needsSingleChannelNormalization) {
@@ -1495,12 +1546,12 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
             );
         }
 
-        const createJpegliProgressOptions = (stage, label) => {
+        const createJpegliProgressOptions = (stage: string, label: string) => {
             if (!telemetry) {
                 return {};
             }
             return {
-                onProgress: (stageProgress, metadata = {}) => {
+                onProgress: (stageProgress: number, metadata: Record<string, unknown> = {}) => {
                     const numericProgress = Number(stageProgress);
                     const clampedProgress = Number.isFinite(numericProgress)
                         ? Math.max(0, Math.min(100, numericProgress))
@@ -1514,7 +1565,8 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
             };
         };
 
-        const encoderFn = async (data, q, encodeOptions = {}) => await imageDataToJpegBytes(data, q, encodeOptions);
+        const encoderFn = async (data: ImageData, q: number, encodeOptions: JpegliEncodeOptions = {}) =>
+            await imageDataToJpegBytes(data, q, encodeOptions);
 
         console.log("[start] encode-sdr-to-jpeg")
         let sdrJpegBytes;
@@ -1523,19 +1575,22 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
                 note: 'Encoding SDR JPEG 0%',
             });
         }
-        const canBypassSdrEncoding =
-            originalSdrJpegBytes instanceof Uint8Array
-            && rotation === 0
-            && sourceAutoRotation === 0;
+        const canBypassSdrEncoding = decideGeneratedSdrEncodingStrategy({
+            originalSdrJpegBytes,
+            rotation,
+            sourceAutoRotation,
+            sourceOrientationTransform: null,
+        }) === 'bypass-sdr-encode';
         console.log(
             `[Orientation] SDR bypass decision: hasOriginal=${originalSdrJpegBytes instanceof Uint8Array}, rotation=${rotation}, sourceAutoRotation=${formatAutoRotationForLog(sourceAutoRotation)}, canBypass=${canBypassSdrEncoding}`
         );
         if (canBypassSdrEncoding) {
             console.log("[Process] Bypassing SDR encoding: Utilizing lossless original SDR JPEG bytes");
+            const originalBytes = originalSdrJpegBytes!;
             if (telemetry) {
-                sdrJpegBytes = await telemetry.runStage('encode-sdr-to-jpeg', async () => stripExifSegments(originalSdrJpegBytes));
+                sdrJpegBytes = await telemetry.runStage('encode-sdr-to-jpeg', async () => stripExifSegments(originalBytes));
             } else {
-                sdrJpegBytes = stripExifSegments(originalSdrJpegBytes);
+                sdrJpegBytes = stripExifSegments(originalBytes);
             }
         } else {
             if (originalSdrJpegBytes instanceof Uint8Array && rotation === 0 && sourceAutoRotation !== 0) {
@@ -1590,7 +1645,7 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
             });
         }
         console.log("[end] encode-gain-map-to-jpeg success")
-        let finalExifPayload = exifPayload;
+        let finalExifPayload: Uint8Array | null = exifPayload;
         if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
             const inputOrientation = extractExifOrientation(finalExifPayload);
             console.log(
@@ -1663,7 +1718,12 @@ export async function compressImages(sdrImageData, gainMapImageData, options, me
  * @param {Uint8Array|null} exifPayload
  * @returns {Promise<{sdr: Uint8Array, gainMap: Uint8Array}>}
  */
-export async function compressHdrIntentOnly(hdrIntent, options, telemetry = null, exifPayload = null) {
+export async function compressHdrIntentOnly(
+    hdrIntent: HdrIntentPayload,
+    options: ProcessOptions,
+    telemetry: PipelineTelemetry | null = null,
+    exifPayload: Uint8Array | null = null,
+) {
     const quality = options.quality !== undefined ? options.quality : 0.95;
     const wasmQuality = Math.round(quality * 100);
     const encoder = new UHDREncoder();
@@ -1702,7 +1762,7 @@ export async function compressHdrIntentOnly(hdrIntent, options, telemetry = null
         }
 
         if (!options.stripExif && exifPayload instanceof Uint8Array && exifPayload.length > 0) {
-            let finalExifPayload = normalizeExifOrientationTo1(exifPayload);
+            let finalExifPayload: Uint8Array | null = normalizeExifOrientationTo1(exifPayload);
             if (finalExifPayload.length + 2 > 0xffff) {
                 finalExifPayload = null;
             }
@@ -1745,7 +1805,11 @@ import {
     encodeJpegli
 } from './jpegli-decoder.js';
 
-async function imageDataToJpegBytes(imageData, quality = 0.95, options = {}) {
+async function imageDataToJpegBytes(
+    imageData: ImageData,
+    quality = 0.95,
+    options: JpegliEncodeOptions = {},
+) {
     // Quality for jpegli is 0-100, normalize from 0-1
     const wasmQuality = Math.max(1, Math.min(100, Math.round(quality * 100)));
     console.log("encoding using jpegli")
@@ -1760,7 +1824,7 @@ async function imageDataToJpegBytes(imageData, quality = 0.95, options = {}) {
  * @param {boolean} stripExif
  * @returns {Promise<Blob>}
  */
-async function finalizeUltraHDR(sdr, stripExif) {
+async function finalizeUltraHDR(sdr: Uint8Array, stripExif: boolean): Promise<Blob> {
     // The WASM encoder embeds metadata directly in the JPEG
     // We only strip metadata when requested.
     let finalJpeg = sdr;
@@ -1769,7 +1833,8 @@ async function finalizeUltraHDR(sdr, stripExif) {
         finalJpeg = stripExifSegments(finalJpeg);
     }
 
-    return new Blob([finalJpeg], { type: 'image/jpeg' });
+    const finalJpegBuffer = finalJpeg.buffer.slice(finalJpeg.byteOffset, finalJpeg.byteOffset + finalJpeg.byteLength) as ArrayBuffer;
+    return new Blob([finalJpegBuffer], { type: 'image/jpeg' });
 }
 
 /**
@@ -1777,10 +1842,16 @@ async function finalizeUltraHDR(sdr, stripExif) {
  * @param {File} file 
  * @returns {Promise<string>}
  */
-export function readFileAsDataURL(file) {
+export function readFileAsDataURL(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
+        reader.onload = () => {
+            if (typeof reader.result === 'string') {
+                resolve(reader.result);
+                return;
+            }
+            reject(new Error('FileReader did not return a data URL'));
+        };
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });

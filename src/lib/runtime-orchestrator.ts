@@ -1,11 +1,34 @@
-import { createInitialRuntimeState, runtimeStateReducer } from './runtime-state-machine.js';
-import { planInitialize, planProcess } from './runtime-planner.js';
+import { createInitialRuntimeState, runtimeStateReducer, type RuntimeState } from './runtime-state-machine.ts';
+import { planInitialize, planProcess, type RuntimePlannerEffect } from './runtime-planner.ts';
 
-function isWorkerCompatibilityError(error) {
+export interface RuntimeAdapter {
+  initialize: (options?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  process: (file: File, options?: Record<string, unknown>) => Promise<Blob>;
+  dispose?: () => Promise<void> | void;
+}
+
+export interface RuntimePlanner {
+  planInitialize: (state: RuntimeState, options?: Record<string, unknown>) => RuntimePlannerEffect[];
+  planProcess: (state: RuntimeState, options?: Record<string, unknown>) => RuntimePlannerEffect[];
+}
+
+export interface RuntimeOrchestratorOptions {
+  workerAdapter: RuntimeAdapter;
+  mainThreadAdapter: RuntimeAdapter;
+  canUseWorker?: () => boolean;
+  planner?: RuntimePlanner;
+}
+
+function isWorkerCompatibilityError(error: unknown): boolean {
   return (
-    error?.name === 'ProcessingWorkerUnavailableError'
-    || error?.name === 'ProcessingWorkerInitError'
-    || error?.name === 'ProcessingWorkerInitTimeout'
+    typeof error === 'object'
+    && error !== null
+    && ('name' in error)
+    && (
+      (error as { name?: unknown }).name === 'ProcessingWorkerUnavailableError'
+      || (error as { name?: unknown }).name === 'ProcessingWorkerInitError'
+      || (error as { name?: unknown }).name === 'ProcessingWorkerInitTimeout'
+    )
   );
 }
 
@@ -14,12 +37,12 @@ export function createRuntimeOrchestrator({
   mainThreadAdapter,
   canUseWorker = () => true,
   planner = { planInitialize, planProcess },
-}) {
+}: RuntimeOrchestratorOptions) {
   let state = createInitialRuntimeState();
-  const listeners = new Set();
-  let activeAdapter = null;
+  const listeners = new Set<(nextState: RuntimeState) => void>();
+  let activeAdapter: RuntimeAdapter | null = null;
 
-  function publish(nextState) {
+  function publish(nextState: RuntimeState): void {
     state = nextState;
     for (const listener of listeners) {
       try {
@@ -30,11 +53,18 @@ export function createRuntimeOrchestrator({
     }
   }
 
-  function dispatch(type, payload = null) {
+  function dispatch(type: string, payload: Record<string, unknown> | null = null): void {
     publish(runtimeStateReducer(state, { type, payload }));
   }
 
-  async function runInitializeAdapterEffect(effect, options = {}) {
+  async function runInitializeAdapterEffect(
+    effect: RuntimePlannerEffect,
+    options: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    if (effect.type !== 'initialize-adapter') {
+      throw new Error(`Unexpected effect passed to initialize handler: ${effect.type}`);
+    }
+
     if (effect.adapter === 'worker') {
       try {
         const runtime = await workerAdapter.initialize(options);
@@ -61,15 +91,18 @@ export function createRuntimeOrchestrator({
       return runtime;
     }
 
-    throw new Error(`Unknown adapter "${effect.adapter}" in runtime initialization effect.`);
+    throw new Error(`Unknown adapter "${String(effect.adapter)}" in runtime initialization effect.`);
   }
 
-  async function runEffects(effects, context = {}) {
-    let lastResult;
+  async function runEffects(
+    effects: RuntimePlannerEffect[],
+    context: { options?: Record<string, unknown>; file?: File } = {},
+  ): Promise<unknown> {
+    let lastResult: unknown;
     for (const effect of effects) {
       switch (effect?.type) {
         case 'dispatch':
-          dispatch(effect.eventType, effect.payload || null);
+          dispatch(effect.eventType, effect.eventType === 'INIT_REQUESTED' ? null : null);
           break;
         case 'initialize-adapter':
           lastResult = await runInitializeAdapterEffect(effect, context.options || {});
@@ -96,7 +129,7 @@ export function createRuntimeOrchestrator({
             throw new Error('Processing adapter is unavailable.');
           }
           try {
-            lastResult = await activeAdapter.process(context.file, context.options || {});
+            lastResult = await activeAdapter.process(context.file as File, context.options || {});
             dispatch('PROCESS_DONE');
           } catch (error) {
             dispatch('PROCESS_FAILED', { error });
@@ -110,20 +143,20 @@ export function createRuntimeOrchestrator({
     return lastResult;
   }
 
-  async function initialize(options = {}) {
+  async function initialize(options: Record<string, unknown> = {}): Promise<unknown> {
     return runEffects(
       planner.planInitialize(state, {
-        allowMainThreadFallback: options?.allowMainThreadFallback !== false,
+        allowMainThreadFallback: (options as { allowMainThreadFallback?: boolean })?.allowMainThreadFallback !== false,
         workerSupported: canUseWorker(),
       }),
       { options },
     );
   }
 
-  async function process(file, options = {}) {
+  async function process(file: File, options: Record<string, unknown> = {}): Promise<unknown> {
     return runEffects(
       planner.planProcess(state, {
-        allowMainThreadFallback: options?.allowMainThreadFallback !== false,
+        allowMainThreadFallback: (options as { allowMainThreadFallback?: boolean })?.allowMainThreadFallback !== false,
         workerSupported: canUseWorker(),
         hasActiveAdapter: Boolean(activeAdapter),
       }),
@@ -131,7 +164,7 @@ export function createRuntimeOrchestrator({
     );
   }
 
-  function subscribe(listener) {
+  function subscribe(listener: (nextState: RuntimeState) => void): () => void {
     if (typeof listener !== 'function') {
       return () => {};
     }
@@ -139,12 +172,12 @@ export function createRuntimeOrchestrator({
     return () => listeners.delete(listener);
   }
 
-  function getSnapshot() {
+  function getSnapshot(): RuntimeState {
     return state;
   }
 
-  async function dispose() {
-    const disposePromises = [];
+  async function dispose(): Promise<void> {
+    const disposePromises: Promise<unknown>[] = [];
     if (typeof workerAdapter?.dispose === 'function') {
       disposePromises.push(Promise.resolve(workerAdapter.dispose()));
     }

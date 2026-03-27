@@ -1,10 +1,39 @@
-function readyStatusFromRuntime(runtime) {
+export interface ProcessingRuntimeState {
+  status: string;
+  runtime: (Record<string, unknown> & { runtimeMode?: string }) | null;
+  error: unknown;
+  progress: unknown;
+}
+
+export interface ProcessingRuntimeEvent {
+  type: string;
+  options?: Record<string, unknown>;
+  runtime?: (Record<string, unknown> & { runtimeMode?: string }) | null;
+  error?: unknown;
+  file?: File;
+  detail?: unknown;
+}
+
+export interface ProcessingRuntimeCommand {
+  type: 'INIT_RUNTIME' | 'PROCESS_IMAGE';
+  options?: Record<string, unknown>;
+  file?: File;
+}
+
+export interface ProcessingRuntimeReduction {
+  state: ProcessingRuntimeState;
+  commands: ProcessingRuntimeCommand[];
+}
+
+function readyStatusFromRuntime(
+  runtime: (Record<string, unknown> & { runtimeMode?: string }) | null | undefined,
+): 'ready-main-thread' | 'ready-worker' {
   return runtime?.runtimeMode === 'main-thread-wasm'
     ? 'ready-main-thread'
     : 'ready-worker';
 }
 
-export function createInitialProcessingRuntimeState() {
+export function createInitialProcessingRuntimeState(): ProcessingRuntimeState {
   return {
     status: 'idle',
     runtime: null,
@@ -13,7 +42,10 @@ export function createInitialProcessingRuntimeState() {
   };
 }
 
-export function reduceProcessingRuntimeState(state, event) {
+export function reduceProcessingRuntimeState(
+  state: ProcessingRuntimeState,
+  event: ProcessingRuntimeEvent | null | undefined,
+): ProcessingRuntimeReduction {
   if (!event || typeof event !== 'object' || typeof event.type !== 'string') {
     return { state, commands: [] };
   }

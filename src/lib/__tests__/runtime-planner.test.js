@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planInitialize, planProcess } from '../runtime-planner.js';
+import { planInitialize, planProcess } from '../runtime-planner.ts';
 
 describe('runtime-planner', () => {
   it('plans worker-first initialization with fallback metadata', () => {
