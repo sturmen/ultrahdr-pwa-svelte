@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from "svelte";
+  import { createEventDispatcher, onMount, tick } from "svelte";
   import DropZone from "./DropZone.svelte";
   import { getCapabilities } from "./capabilities.js";
   import JSZip from "jszip";
@@ -109,10 +109,22 @@
   let viewerTouchStartY = null;
   let viewerTouchCurrentX = null;
   let viewerTouchCurrentY = null;
-  let viewerCornerHover = false;
   let viewerBounceDirection = "none";
   let viewerBounceTimeout = null;
-  let viewerCloseVisible = false;
+  let viewerZoomScale = 1;
+  let viewerPanX = 0;
+  let viewerPanY = 0;
+  let viewerDragActive = false;
+  let viewerDragStartX = 0;
+  let viewerDragStartY = 0;
+  let viewerCompareActive = false;
+  let viewerDesktopChromeVisible = false;
+  let viewerDesktopChromeTimeout = null;
+  let viewerLastTapTime = 0;
+  let viewerLastTapX = 0;
+  let viewerLastTapY = 0;
+  let viewerPinchStartDistance = null;
+  let viewerPinchStartScale = 1;
   let selectionToggleState = "none";
   let queueControlVisibility = "hidden";
   let isDesktopLayout = false;
@@ -143,12 +155,26 @@
   let mobileInferenceAcknowledgedForSession = false;
   let workflowCards = [];
   let exportableQueueIds = new Set();
+  let currentViewerCard = null;
+  let viewerHasComparePreview = false;
+  let viewerPreviewKind = "single";
+  let viewerImageSrc = "";
+  let viewerImageAlt = "";
+  let viewerIsZoomed = false;
+  let viewerFilmstripElement = null;
+  let effectiveViewerDesktopChromeVisible = false;
 
   const capabilities = getCapabilities();
   const dispatch = createEventDispatcher();
   const VIEWER_SWIPE_THRESHOLD_PX = 48;
   const VIEWER_VERTICAL_GUARD_PX = 80;
   const VIEWER_BOUNCE_RESET_MS = 180;
+  const VIEWER_ZOOM_SCALE = 2.5;
+  const VIEWER_MIN_ZOOM_SCALE = 1;
+  const VIEWER_MAX_ZOOM_SCALE = 4;
+  const VIEWER_DOUBLE_TAP_DELAY_MS = 300;
+  const VIEWER_DOUBLE_TAP_DISTANCE_PX = 24;
+  const VIEWER_DESKTOP_CHROME_IDLE_MS = 1600;
   const MOBILE_INFERENCE_ACKNOWLEDGEMENT =
     "I will also try Chrome on Windows or macOS";
 
@@ -280,9 +306,24 @@
   $: if (isDesktopLayout && openSheet === "settings") {
     openSheet = "none";
   }
-  $: viewerCloseVisible = !isDesktopLayout || viewerCornerHover;
+  $: effectiveViewerDesktopChromeVisible =
+    !isDesktopLayout || viewerDesktopChromeVisible;
+  $: currentViewerCard =
+    viewerOpen && viewerIndex >= 0 && viewerIndex < workflowCards.length
+      ? workflowCards[viewerIndex]
+      : null;
+  $: viewerHasComparePreview = Boolean(currentViewerCard?.hasComparePreview);
+  $: viewerPreviewKind = viewerHasComparePreview
+    ? viewerCompareActive
+      ? "source"
+      : "compare"
+    : "single";
+  $: viewerImageSrc = viewerPreviewKind === "source"
+    ? currentViewerCard?.sourcePreviewUrl
+    : currentViewerCard?.comparePreviewUrl || currentViewerCard?.previewUrl || "";
+  $: viewerImageAlt = currentViewerCard?.previewAlt || "";
+  $: viewerIsZoomed = viewerZoomScale > 1;
   $: if (!viewerOpen) {
-    viewerCornerHover = false;
     viewerBounceDirection = "none";
   }
   $: if (viewerOpen && workflowCards.length === 0) {
@@ -290,6 +331,14 @@
   }
   $: if (viewerOpen && viewerIndex >= workflowCards.length && workflowCards.length > 0) {
     viewerIndex = workflowCards.length - 1;
+  }
+  $: if (
+    isDesktopLayout &&
+    viewerOpen &&
+    workflowCards.length > 1 &&
+    viewerIndex >= 0
+  ) {
+    void scrollViewerFilmstripToActive(viewerIndex);
   }
   $: if (!keepScreenAwake) {
     void releaseWakeLock();
@@ -778,20 +827,154 @@
     }, VIEWER_BOUNCE_RESET_MS);
   }
 
+  function resetViewerTransform() {
+    viewerZoomScale = 1;
+    viewerPanX = 0;
+    viewerPanY = 0;
+    viewerDragActive = false;
+    viewerDragStartX = 0;
+    viewerDragStartY = 0;
+    viewerLastTapTime = 0;
+    viewerLastTapX = 0;
+    viewerLastTapY = 0;
+    viewerPinchStartDistance = null;
+    viewerPinchStartScale = 1;
+  }
+
+  function clearViewerDesktopChromeTimeout() {
+    if (viewerDesktopChromeTimeout !== null) {
+      clearTimeout(viewerDesktopChromeTimeout);
+      viewerDesktopChromeTimeout = null;
+    }
+  }
+
+  function scheduleViewerDesktopChromeHide() {
+    if (!isDesktopLayout) return;
+    clearViewerDesktopChromeTimeout();
+    viewerDesktopChromeTimeout = setTimeout(() => {
+      viewerDesktopChromeVisible = false;
+      viewerDesktopChromeTimeout = null;
+    }, VIEWER_DESKTOP_CHROME_IDLE_MS);
+  }
+
+  function resetViewerEphemeralState() {
+    resetViewerTransform();
+    viewerCompareActive = false;
+    viewerDesktopChromeVisible = false;
+    clearViewerDesktopChromeTimeout();
+    viewerLastTapTime = 0;
+    viewerLastTapX = 0;
+    viewerLastTapY = 0;
+    viewerPinchStartDistance = null;
+    viewerPinchStartScale = 1;
+    viewerTouchStartX = null;
+    viewerTouchStartY = null;
+    viewerTouchCurrentX = null;
+    viewerTouchCurrentY = null;
+  }
+
+  function getViewerPanBounds(scale = viewerZoomScale) {
+    const width = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
+    const height = typeof window !== "undefined" ? window.innerHeight || 0 : 0;
+    return {
+      maxX: Math.max(0, ((width * scale) - width) / 2),
+      maxY: Math.max(0, ((height * scale) - height) / 2),
+    };
+  }
+
+  function clampViewerPan(x, y, scale = viewerZoomScale) {
+    const bounds = getViewerPanBounds(scale);
+    return {
+      x: Math.max(-bounds.maxX, Math.min(bounds.maxX, x)),
+      y: Math.max(-bounds.maxY, Math.min(bounds.maxY, y)),
+    };
+  }
+
+  function setViewerPan(x, y) {
+    const next = clampViewerPan(x, y);
+    viewerPanX = next.x;
+    viewerPanY = next.y;
+  }
+
+  function setViewerZoomScale(nextScale) {
+    const boundedScale = Math.max(
+      VIEWER_MIN_ZOOM_SCALE,
+      Math.min(VIEWER_MAX_ZOOM_SCALE, nextScale),
+    );
+    viewerZoomScale = boundedScale > 1 ? boundedScale : 1;
+    if (viewerZoomScale === 1) {
+      viewerPanX = 0;
+      viewerPanY = 0;
+      viewerDragActive = false;
+    } else {
+      setViewerPan(viewerPanX, viewerPanY);
+    }
+  }
+
+  function toggleViewerZoom() {
+    setViewerZoomScale(viewerIsZoomed ? 1 : VIEWER_ZOOM_SCALE);
+  }
+
+  function getTouchDistance(touches) {
+    if (!touches || touches.length < 2) return null;
+    const [firstTouch, secondTouch] = touches;
+    const deltaX = secondTouch.clientX - firstTouch.clientX;
+    const deltaY = secondTouch.clientY - firstTouch.clientY;
+    return Math.hypot(deltaX, deltaY);
+  }
+
+  function isDoubleTap(clientX, clientY) {
+    const now = Date.now();
+    const deltaTime = now - viewerLastTapTime;
+    const deltaX = clientX - viewerLastTapX;
+    const deltaY = clientY - viewerLastTapY;
+    const isNearby =
+      Math.hypot(deltaX, deltaY) <= VIEWER_DOUBLE_TAP_DISTANCE_PX;
+    viewerLastTapTime = now;
+    viewerLastTapX = clientX;
+    viewerLastTapY = clientY;
+    return deltaTime >= 0 && deltaTime <= VIEWER_DOUBLE_TAP_DELAY_MS && isNearby;
+  }
+
+  function beginViewerDrag(clientX, clientY) {
+    if (!viewerIsZoomed) return;
+    viewerDragActive = true;
+    viewerDragStartX = clientX - viewerPanX;
+    viewerDragStartY = clientY - viewerPanY;
+  }
+
+  function updateViewerDrag(clientX, clientY) {
+    if (!viewerDragActive) return;
+    setViewerPan(clientX - viewerDragStartX, clientY - viewerDragStartY);
+  }
+
+  function endViewerDrag() {
+    viewerDragActive = false;
+  }
+
+  function activateViewerCompare() {
+    if (!viewerHasComparePreview) return;
+    viewerCompareActive = true;
+  }
+
+  function deactivateViewerCompare() {
+    viewerCompareActive = false;
+  }
+
   function openViewer(index) {
     if (!Number.isInteger(index) || !workflowCards[index]) return;
     viewerIndex = index;
     viewerOpen = true;
-    viewerCornerHover = false;
     viewerBounceDirection = "none";
+    resetViewerEphemeralState();
   }
 
   function closeViewer() {
     viewerOpen = false;
     viewerIndex = -1;
-    viewerCornerHover = false;
     viewerBounceDirection = "none";
     clearViewerBounceTimeout();
+    resetViewerEphemeralState();
   }
 
   function showPreviousInViewer() {
@@ -802,6 +985,7 @@
     }
     viewerIndex -= 1;
     viewerBounceDirection = "none";
+    resetViewerEphemeralState();
   }
 
   function showNextInViewer() {
@@ -812,11 +996,69 @@
     }
     viewerIndex += 1;
     viewerBounceDirection = "none";
+    resetViewerEphemeralState();
+  }
+
+  function showViewerIndex(index) {
+    if (!viewerOpen) return;
+    if (!Number.isInteger(index) || !workflowCards[index]) return;
+    if (index === viewerIndex) return;
+    viewerIndex = index;
+    viewerBounceDirection = "none";
+    resetViewerEphemeralState();
+  }
+
+  async function scrollViewerFilmstripToActive(index) {
+    await tick();
+    if (!viewerFilmstripElement) return;
+    const activeItem = viewerFilmstripElement.querySelector(
+      `[data-testid="photo-viewer-filmstrip-item-${index}"]`,
+    );
+    if (!(activeItem instanceof HTMLElement)) return;
+    const scrollIntoViewFn =
+      typeof activeItem.scrollIntoView === "function"
+        ? activeItem.scrollIntoView
+        : typeof Element !== "undefined" &&
+            typeof Element.prototype.scrollIntoView === "function"
+          ? Element.prototype.scrollIntoView
+          : null;
+    if (!scrollIntoViewFn) return;
+    scrollIntoViewFn.call(activeItem, {
+      block: "nearest",
+      inline: "center",
+      behavior: "smooth",
+    });
   }
 
   function handleViewerTouchStart(event) {
-    const touch = event?.touches?.[0];
-    if (!touch) return;
+    const touches = event?.touches;
+    if (!touches?.length) return;
+    if (touches.length >= 2) {
+      const distance = getTouchDistance(touches);
+      if (distance !== null) {
+        viewerPinchStartDistance = distance;
+        viewerPinchStartScale = viewerZoomScale;
+      }
+      viewerDragActive = false;
+      viewerTouchStartX = null;
+      viewerTouchStartY = null;
+      viewerTouchCurrentX = null;
+      viewerTouchCurrentY = null;
+      return;
+    }
+    const touch = touches[0];
+    if (isDoubleTap(touch.clientX, touch.clientY)) {
+      toggleViewerZoom();
+      viewerTouchStartX = null;
+      viewerTouchStartY = null;
+      viewerTouchCurrentX = null;
+      viewerTouchCurrentY = null;
+      return;
+    }
+    if (viewerIsZoomed) {
+      beginViewerDrag(touch.clientX, touch.clientY);
+      return;
+    }
     viewerTouchStartX = touch.clientX;
     viewerTouchStartY = touch.clientY;
     viewerTouchCurrentX = touch.clientX;
@@ -824,13 +1066,39 @@
   }
 
   function handleViewerTouchMove(event) {
-    const touch = event?.touches?.[0];
-    if (!touch) return;
+    const touches = event?.touches;
+    if (!touches?.length) return;
+    if (touches.length >= 2) {
+      const distance = getTouchDistance(touches);
+      if (distance !== null && viewerPinchStartDistance !== null) {
+        const pinchScale =
+          viewerPinchStartScale * (distance / viewerPinchStartDistance);
+        setViewerZoomScale(pinchScale);
+      }
+      return;
+    }
+    const touch = touches[0];
+    if (viewerDragActive) {
+      updateViewerDrag(touch.clientX, touch.clientY);
+      return;
+    }
     viewerTouchCurrentX = touch.clientX;
     viewerTouchCurrentY = touch.clientY;
   }
 
   function handleViewerTouchEnd(event) {
+    if (viewerPinchStartDistance !== null) {
+      viewerPinchStartDistance = null;
+      viewerPinchStartScale = viewerZoomScale;
+      if (!event?.touches?.length) {
+        endViewerDrag();
+      }
+      return;
+    }
+    if (viewerDragActive) {
+      endViewerDrag();
+      return;
+    }
     if (viewerTouchStartX === null || viewerTouchStartY === null) return;
     const touch = event?.changedTouches?.[0];
     const endX = touch?.clientX ?? viewerTouchCurrentX ?? viewerTouchStartX;
@@ -852,6 +1120,38 @@
       return;
     }
     showNextInViewer();
+  }
+
+  function handleViewerMouseDown(event) {
+    if (!viewerIsZoomed) return;
+    beginViewerDrag(event.clientX, event.clientY);
+  }
+
+  function handleViewerMouseMove(event) {
+    if (isDesktopLayout) {
+      viewerDesktopChromeVisible = true;
+      scheduleViewerDesktopChromeHide();
+    }
+    if (!viewerDragActive) return;
+    updateViewerDrag(event.clientX, event.clientY);
+  }
+
+  function handleViewerMouseUp() {
+    endViewerDrag();
+  }
+
+  function handleViewerMouseLeave() {
+    handleViewerMouseUp();
+    if (isDesktopLayout) {
+      clearViewerDesktopChromeTimeout();
+      viewerDesktopChromeVisible = false;
+    }
+  }
+
+  function handleViewerChromeFocusIn() {
+    if (!isDesktopLayout) return;
+    viewerDesktopChromeVisible = true;
+    scheduleViewerDesktopChromeHide();
   }
 
   function toggleSelectionSet() {
@@ -2714,11 +3014,15 @@
     </div>
   {/if}
 
-  {#if viewerOpen && workflowCards[viewerIndex]}
+  {#if viewerOpen && currentViewerCard}
     <div
       class="photo-viewer-modal"
       data-testid="photo-viewer-modal"
       data-bounce={viewerBounceDirection}
+      data-zoomed={viewerIsZoomed ? "true" : "false"}
+      data-desktop-chrome-visible={effectiveViewerDesktopChromeVisible
+        ? "true"
+        : "false"}
       role="dialog"
       aria-modal="true"
       aria-label="Photo viewer"
@@ -2726,32 +3030,115 @@
       on:touchstart={handleViewerTouchStart}
       on:touchmove={handleViewerTouchMove}
       on:touchend={handleViewerTouchEnd}
+      on:mousedown={handleViewerMouseDown}
+      on:mousemove={handleViewerMouseMove}
+      on:mouseup={handleViewerMouseUp}
+      on:mouseleave={handleViewerMouseLeave}
     >
       <div class="photo-viewer-stage">
         <img
           class="photo-viewer-image"
           data-testid="photo-viewer-image"
-          src={workflowCards[viewerIndex].previewUrl}
-          alt={workflowCards[viewerIndex].previewAlt}
-          style="max-width: calc(100vw - 1.5rem); max-height: calc(100vh - 1.5rem);"
+          data-preview-kind={viewerPreviewKind}
+          src={viewerImageSrc}
+          alt={viewerImageAlt}
+          style={`max-width: calc(100vw - 1.5rem); max-height: calc(100vh - 1.5rem); transform: translate3d(${viewerPanX}px, ${viewerPanY}px, 0) scale(${viewerZoomScale});`}
+          on:dblclick={toggleViewerZoom}
         />
       </div>
-      <button
-        type="button"
-        class="photo-viewer-corner-hotspot"
-        data-testid="photo-viewer-corner-hotspot"
-        aria-label="Show close button"
-        on:mouseenter={() => (viewerCornerHover = true)}
-        on:mouseleave={() => (viewerCornerHover = false)}
-      ></button>
+      {#if viewerHasComparePreview}
+        <button
+          type="button"
+          class="photo-viewer-compare"
+          data-testid="photo-viewer-compare"
+          aria-label="Hold to compare with source preview"
+          aria-pressed={viewerCompareActive ? "true" : "false"}
+          on:mousedown|stopPropagation={activateViewerCompare}
+          on:mouseup|stopPropagation={deactivateViewerCompare}
+          on:mouseleave|stopPropagation={deactivateViewerCompare}
+          on:touchstart|stopPropagation={activateViewerCompare}
+          on:touchend|stopPropagation={deactivateViewerCompare}
+          on:touchcancel|stopPropagation={deactivateViewerCompare}
+          on:blur={deactivateViewerCompare}
+        >
+          Hold for Original
+        </button>
+      {/if}
+      {#if viewerIsZoomed}
+        <button
+          type="button"
+          class="photo-viewer-reset"
+          data-testid="photo-viewer-reset-zoom"
+          aria-label="Reset zoom"
+          on:click={resetViewerTransform}
+        >
+          Reset Zoom
+        </button>
+      {/if}
+      {#if isDesktopLayout && workflowCards.length > 1}
+        <div
+          class="photo-viewer-position"
+          data-testid="photo-viewer-position"
+          data-visible={effectiveViewerDesktopChromeVisible ? "true" : "false"}
+          aria-live="polite"
+        >
+          {viewerIndex + 1} / {workflowCards.length}
+        </div>
+        <button
+          type="button"
+          class="photo-viewer-nav photo-viewer-nav-prev"
+          data-testid="photo-viewer-prev"
+          data-visible={effectiveViewerDesktopChromeVisible ? "true" : "false"}
+          aria-label="Previous photo"
+          disabled={viewerIndex <= 0}
+          on:focus={handleViewerChromeFocusIn}
+          on:click={showPreviousInViewer}
+        >
+          ‹
+        </button>
+        <button
+          type="button"
+          class="photo-viewer-nav photo-viewer-nav-next"
+          data-testid="photo-viewer-next"
+          data-visible={effectiveViewerDesktopChromeVisible ? "true" : "false"}
+          aria-label="Next photo"
+          disabled={viewerIndex >= workflowCards.length - 1}
+          on:focus={handleViewerChromeFocusIn}
+          on:click={showNextInViewer}
+        >
+          ›
+        </button>
+        <div
+          class="photo-viewer-filmstrip"
+          data-testid="photo-viewer-filmstrip"
+          data-visible={effectiveViewerDesktopChromeVisible ? "true" : "false"}
+          bind:this={viewerFilmstripElement}
+        >
+          {#each workflowCards as card, index}
+            <button
+              type="button"
+              class="photo-viewer-filmstrip-item"
+              class:active={index === viewerIndex}
+              data-testid={`photo-viewer-filmstrip-item-${index}`}
+              data-active={index === viewerIndex ? "true" : "false"}
+              aria-label={`View ${card.filename}`}
+              aria-current={index === viewerIndex ? "true" : undefined}
+              on:focus={handleViewerChromeFocusIn}
+              on:click={() => showViewerIndex(index)}
+            >
+              <img src={card.previewUrl} alt={card.previewAlt} />
+            </button>
+          {/each}
+        </div>
+      {/if}
       <button
         type="button"
         class="photo-viewer-close"
-        class:visible={viewerCloseVisible}
         data-testid="photo-viewer-close"
-        data-visible={viewerCloseVisible ? "true" : "false"}
+        data-visible={effectiveViewerDesktopChromeVisible ? "true" : "false"}
         aria-label="Close photo viewer"
         style="position: absolute; top: 0.5rem; right: 0.5rem; top: calc(env(safe-area-inset-top, 0px) + 0.5rem); right: calc(env(safe-area-inset-right, 0px) + 0.5rem);"
+        on:focus={handleViewerChromeFocusIn}
         on:click={closeViewer}
       >
         ×
@@ -3827,6 +4214,7 @@
     display: grid;
     place-items: center;
     padding: 0.75rem;
+    overflow: hidden;
   }
 
   .photo-viewer-image {
@@ -3836,19 +4224,133 @@
     max-width: calc(100vw - 1.5rem);
     max-height: calc(100vh - 1.5rem);
     object-fit: contain;
+    transform-origin: center center;
+    transition: transform 0.18s ease;
+    user-select: none;
   }
 
-  .photo-viewer-corner-hotspot {
+  .photo-viewer-modal[data-zoomed="true"] .photo-viewer-image {
+    cursor: grab;
+  }
+
+  .photo-viewer-compare,
+  .photo-viewer-reset {
     position: absolute;
-    top: 0;
-    right: 0;
-    width: 110px;
-    height: 110px;
-    z-index: 1;
-    border: none;
-    background: transparent;
+    left: max(0.75rem, env(safe-area-inset-left, 0px));
+    border: 1px solid color-mix(in srgb, #fff 22%, transparent);
+    background: color-mix(in srgb, #000 45%, transparent);
+    color: #fff;
+    border-radius: 999px;
+    padding: 0.65rem 0.9rem;
+    font: inherit;
+    cursor: pointer;
+    z-index: 2;
+  }
+
+  .photo-viewer-compare {
+    bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .photo-viewer-reset {
+    bottom: max(3.9rem, calc(env(safe-area-inset-bottom, 0px) + 3.9rem));
+  }
+
+  .photo-viewer-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3rem;
+    height: 3rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, #fff 22%, transparent);
+    background: color-mix(in srgb, #000 45%, transparent);
+    color: #fff;
+    font-size: 2rem;
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    z-index: 2;
+    opacity: 1;
+    transition: opacity 0.18s ease;
+  }
+
+  .photo-viewer-nav:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .photo-viewer-nav-prev {
+    left: 0.75rem;
+  }
+
+  .photo-viewer-nav-next {
+    right: 0.75rem;
+  }
+
+  .photo-viewer-position {
+    position: absolute;
+    top: 0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, #fff 18%, transparent);
+    background: color-mix(in srgb, #000 48%, transparent);
+    color: #fff;
+    font-size: 0.95rem;
+    line-height: 1;
+    z-index: 2;
+    opacity: 1;
+    transition: opacity 0.18s ease;
+  }
+
+  .photo-viewer-filmstrip {
+    position: absolute;
+    left: 50%;
+    bottom: 0.75rem;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 0.5rem;
+    max-width: min(80vw, 56rem);
+    padding: 0.5rem 0.75rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, #000 52%, transparent);
+    overflow-x: auto;
+    z-index: 2;
+    opacity: 1;
+    transition: opacity 0.18s ease;
+  }
+
+  .photo-viewer-modal[data-desktop-chrome-visible="false"] .photo-viewer-nav,
+  .photo-viewer-modal[data-desktop-chrome-visible="false"] .photo-viewer-position,
+  .photo-viewer-modal[data-desktop-chrome-visible="false"] .photo-viewer-filmstrip,
+  .photo-viewer-modal[data-desktop-chrome-visible="false"] .photo-viewer-close {
+    opacity: 0.18;
+  }
+
+  .photo-viewer-filmstrip-item {
+    width: 3.5rem;
+    height: 3.5rem;
     padding: 0;
-    margin: 0;
+    border-radius: 0.9rem;
+    border: 1px solid color-mix(in srgb, #fff 16%, transparent);
+    overflow: hidden;
+    background: color-mix(in srgb, #000 20%, transparent);
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+
+  .photo-viewer-filmstrip-item.active {
+    border-color: color-mix(in srgb, #fff 70%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, #fff 24%, transparent);
+  }
+
+  .photo-viewer-filmstrip-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .photo-viewer-close {
@@ -3866,15 +4368,9 @@
     cursor: pointer;
     display: grid;
     place-items: center;
-    opacity: 0;
-    pointer-events: none;
+    opacity: 1;
     transition: opacity 0.15s ease;
     z-index: 2;
-  }
-
-  .photo-viewer-close.visible {
-    opacity: 1;
-    pointer-events: auto;
   }
 
   .photo-viewer-modal[data-bounce="left"] .photo-viewer-stage {

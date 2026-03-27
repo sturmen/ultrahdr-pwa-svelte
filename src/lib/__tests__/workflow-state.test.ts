@@ -3,6 +3,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  createWorkflowState,
+  reduceWorkflowState,
+  selectWorkflowCards,
   WORKFLOW_EVENTS,
   WORKFLOW_STATES,
   transitionWorkflow,
@@ -61,5 +64,42 @@ describe('workflow-state', () => {
 
     expect(resetFromPaused).toBe(WORKFLOW_STATES.EMPTY);
     expect(resetFromDone).toBe(WORKFLOW_STATES.EMPTY);
+  });
+
+  it('exposes input/output previews for compare when an item has completed output', () => {
+    const file = new File(['source'], 'photo-0.jpg', { type: 'image/jpeg' });
+    let state = reduceWorkflowState(createWorkflowState(), {
+      type: 'FILES_ENQUEUED',
+      files: [file],
+    });
+
+    state = reduceWorkflowState(state, {
+      type: 'ITEM_COMPLETED',
+      queueId: 0,
+      result: {
+        blob: new Blob(['output'], { type: 'image/jpeg' }),
+        outputUrl: 'blob:output-preview',
+        size: 1024,
+      },
+    });
+
+    const [card] = selectWorkflowCards(state);
+    expect(card.hasComparePreview).toBe(true);
+    expect(card.previewUrl).toBe('blob:output-preview');
+    expect(card.sourcePreviewUrl).toBe('mock-object-url');
+    expect(card.comparePreviewUrl).toBe('blob:output-preview');
+  });
+
+  it('keeps queued items on input-only preview data without compare availability', () => {
+    const file = new File(['source'], 'photo-0.jpg', { type: 'image/jpeg' });
+    const state = reduceWorkflowState(createWorkflowState(), {
+      type: 'FILES_ENQUEUED',
+      files: [file],
+    });
+
+    const [card] = selectWorkflowCards(state);
+    expect(card.hasComparePreview).toBe(false);
+    expect(card.previewUrl).toBe(card.sourcePreviewUrl);
+    expect(card.comparePreviewUrl).toBeNull();
   });
 });

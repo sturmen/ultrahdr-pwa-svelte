@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte';
 import ImageProcessor from '../ImageProcessor.svelte';
 
@@ -73,6 +73,8 @@ async function waitForSingleResultCompletion() {
 }
 
 describe('ImageProcessor mobile-native UI behavior', () => {
+  let originalScrollIntoView;
+
   beforeEach(() => {
     vi.clearAllMocks();
     runtimeProcessMock.mockClear();
@@ -88,6 +90,12 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       configurable: true,
       value: vi.fn(async () => { }),
     });
+    originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
   });
 
   it('honors launch intent tab=results on initial render', async () => {
@@ -298,7 +306,366 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByTestId('photo-viewer-modal')).not.toBeInTheDocument();
   });
 
-  it('shows close control only when hovering top-right corner on desktop', async () => {
+  it('shows visible previous and next controls for desktop batch review', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(2) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+
+    expect(screen.getByTestId('photo-viewer-prev')).toBeInTheDocument();
+    expect(screen.getByTestId('photo-viewer-next')).toBeInTheDocument();
+    expect(screen.getByTestId('photo-viewer-prev')).toBeDisabled();
+    expect(screen.getByTestId('photo-viewer-next')).not.toBeDisabled();
+  });
+
+  it('navigates with visible previous and next controls and disables them at edges', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(2) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-next'));
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-1.jpg');
+    });
+
+    expect(screen.getByTestId('photo-viewer-prev')).not.toBeDisabled();
+    expect(screen.getByTestId('photo-viewer-next')).toBeDisabled();
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-prev'));
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+    });
+
+    expect(screen.getByTestId('photo-viewer-prev')).toBeDisabled();
+    expect(screen.getByTestId('photo-viewer-next')).not.toBeDisabled();
+  });
+
+  it('shows a desktop filmstrip with all viewer thumbnails and marks the active image', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-1'));
+
+    expect(screen.getByTestId('photo-viewer-filmstrip')).toBeInTheDocument();
+    expect(screen.getByTestId('photo-viewer-filmstrip-item-0')).toBeInTheDocument();
+    expect(screen.getByTestId('photo-viewer-filmstrip-item-1')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('photo-viewer-filmstrip-item-2')).toHaveAttribute('data-active', 'false');
+  });
+
+  it('jumps to a selected image from the desktop filmstrip and updates the active state', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    await fireEvent.click(screen.getByTestId('photo-viewer-filmstrip-item-2'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-2.jpg');
+    });
+
+    expect(screen.getByTestId('photo-viewer-filmstrip-item-2')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('photo-viewer-filmstrip-item-0')).toHaveAttribute('data-active', 'false');
+  });
+
+  it('scrolls the active desktop filmstrip thumbnail into view when navigation changes the current image', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-next'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-filmstrip-item-1')).toHaveAttribute('data-active', 'true');
+    });
+
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('shows current position text for desktop batch review and updates it during navigation', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-1'));
+    expect(screen.getByTestId('photo-viewer-position')).toHaveTextContent('2 / 3');
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-next'));
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-position')).toHaveTextContent('3 / 3');
+    });
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-prev'));
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-position')).toHaveTextContent('2 / 3');
+    });
+  });
+
+  it('fades desktop viewer chrome until hover and reveals it on interaction', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-1'));
+    const modal = screen.getByTestId('photo-viewer-modal');
+
+    expect(modal).toHaveAttribute('data-desktop-chrome-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-prev')).toHaveAttribute('data-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-filmstrip')).toHaveAttribute('data-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-position')).toHaveAttribute('data-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-close')).toHaveAttribute('data-visible', 'false');
+
+    await fireEvent.mouseMove(modal, { clientX: 200, clientY: 160 });
+
+    expect(modal).toHaveAttribute('data-desktop-chrome-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-prev')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-filmstrip')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-position')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-close')).toHaveAttribute('data-visible', 'true');
+  });
+
+  it('fades desktop viewer chrome back out after a short idle period', async () => {
+    vi.useFakeTimers();
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-1'));
+    const modal = screen.getByTestId('photo-viewer-modal');
+
+    await fireEvent.mouseMove(modal, { clientX: 220, clientY: 160 });
+    expect(modal).toHaveAttribute('data-desktop-chrome-visible', 'true');
+
+    await vi.advanceTimersByTimeAsync(1800);
+
+    expect(modal).toHaveAttribute('data-desktop-chrome-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-prev')).toHaveAttribute('data-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-filmstrip')).toHaveAttribute('data-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-position')).toHaveAttribute('data-visible', 'false');
+    expect(screen.getByTestId('photo-viewer-close')).toHaveAttribute('data-visible', 'false');
+
+    vi.useRealTimers();
+  });
+
+  it('reveals desktop viewer chrome when loupe controls receive keyboard focus', async () => {
+    window.matchMedia = createMatchMedia(true);
+    renderProcessor({ files: makeFiles(3) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('results-grid')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-1'));
+    const modal = screen.getByTestId('photo-viewer-modal');
+    const nextButton = screen.getByTestId('photo-viewer-next');
+
+    expect(modal).toHaveAttribute('data-desktop-chrome-visible', 'false');
+
+    await fireEvent.focus(nextButton);
+
+    expect(modal).toHaveAttribute('data-desktop-chrome-visible', 'true');
+    expect(nextButton).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-filmstrip')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-position')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByTestId('photo-viewer-close')).toHaveAttribute('data-visible', 'true');
+  });
+
+  it('supports compare press-and-hold for completed results', async () => {
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitForSingleResultCompletion();
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+
+    const viewerImage = screen.getByTestId('photo-viewer-image');
+    const compareControl = screen.getByTestId('photo-viewer-compare');
+
+    expect(compareControl).toHaveAttribute('aria-pressed', 'false');
+    expect(viewerImage).toHaveAttribute('data-preview-kind', 'compare');
+
+    await fireEvent.mouseDown(compareControl);
+    expect(compareControl).toHaveAttribute('aria-pressed', 'true');
+    expect(viewerImage).toHaveAttribute('data-preview-kind', 'source');
+
+    await fireEvent.mouseUp(compareControl);
+    expect(compareControl).toHaveAttribute('aria-pressed', 'false');
+    expect(viewerImage).toHaveAttribute('data-preview-kind', 'compare');
+  });
+
+  it('hides compare control when the viewer only has an input preview available', async () => {
+    const gate = createDeferred();
+    runtimeProcessMock.mockImplementationOnce(async (_file, options = {}) => {
+      options.onProgress?.({
+        phase: 'stage-progress',
+        stage: 'generate-gain-map',
+        stageProgress: 12,
+        note: 'Generating gain map',
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        elapsedMs: 5,
+        stageDurationsMs: {},
+        timestamp: Date.now(),
+      });
+      await gate.promise;
+      return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+    });
+
+    renderProcessor({ files: makeFiles(1) });
+    await fireEvent.click(screen.getByTestId('tab-results'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('result-thumbnail-0')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    expect(screen.queryByTestId('photo-viewer-compare')).not.toBeInTheDocument();
+
+    gate.resolve();
+  });
+
+  it('toggles zoom on double-click and exposes a reset control while zoomed', async () => {
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitForSingleResultCompletion();
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+
+    const viewerImage = screen.getByTestId('photo-viewer-image');
+    expect(screen.getByTestId('photo-viewer-modal')).toHaveAttribute('data-zoomed', 'false');
+    expect(screen.queryByTestId('photo-viewer-reset-zoom')).not.toBeInTheDocument();
+
+    await fireEvent.dblClick(viewerImage);
+    expect(screen.getByTestId('photo-viewer-modal')).toHaveAttribute('data-zoomed', 'true');
+    expect(screen.getByTestId('photo-viewer-reset-zoom')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-reset-zoom'));
+    expect(screen.getByTestId('photo-viewer-modal')).toHaveAttribute('data-zoomed', 'false');
+    expect(screen.queryByTestId('photo-viewer-reset-zoom')).not.toBeInTheDocument();
+  });
+
+  it('pans while zoomed and blocks swipe navigation until zoom is reset', async () => {
+    renderProcessor({ files: makeFiles(2) });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('2');
+    });
+
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    const modal = screen.getByTestId('photo-viewer-modal');
+    const viewerImage = screen.getByTestId('photo-viewer-image');
+
+    await fireEvent.dblClick(viewerImage);
+    expect(modal).toHaveAttribute('data-zoomed', 'true');
+
+    await fireEvent.mouseDown(viewerImage, { clientX: 220, clientY: 180 });
+    await fireEvent.mouseMove(modal, { clientX: 140, clientY: 130 });
+    await fireEvent.mouseUp(modal, { clientX: 140, clientY: 130 });
+    expect(viewerImage.style.transform).not.toBe('');
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 220, clientY: 120 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 70, clientY: 126 }],
+    });
+    expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+
+    await fireEvent.click(screen.getByTestId('photo-viewer-reset-zoom'));
+    expect(modal).toHaveAttribute('data-zoomed', 'false');
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 220, clientY: 120 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 70, clientY: 126 }],
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-1.jpg');
+    });
+  });
+
+  it('zooms on mobile double-tap', async () => {
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitForSingleResultCompletion();
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+
+    const modal = screen.getByTestId('photo-viewer-modal');
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 180, clientY: 140 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 180, clientY: 140 }],
+    });
+
+    await fireEvent.touchStart(modal, {
+      touches: [{ clientX: 180, clientY: 140 }],
+    });
+    await fireEvent.touchEnd(modal, {
+      changedTouches: [{ clientX: 180, clientY: 140 }],
+    });
+
+    expect(modal).toHaveAttribute('data-zoomed', 'true');
+    expect(screen.getByTestId('photo-viewer-reset-zoom')).toBeInTheDocument();
+  });
+
+  it('supports pinch zoom on touch devices', async () => {
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitForSingleResultCompletion();
+    await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+
+    const modal = screen.getByTestId('photo-viewer-modal');
+
+    await fireEvent.touchStart(modal, {
+      touches: [
+        { clientX: 120, clientY: 140 },
+        { clientX: 220, clientY: 140 },
+      ],
+    });
+    await fireEvent.touchMove(modal, {
+      touches: [
+        { clientX: 90, clientY: 140 },
+        { clientX: 250, clientY: 140 },
+      ],
+    });
+
+    expect(modal).toHaveAttribute('data-zoomed', 'true');
+    expect(screen.getByTestId('photo-viewer-image').style.transform).toContain('scale(');
+  });
+
+  it('keeps desktop close control aligned with shared loupe chrome visibility', async () => {
     window.matchMedia = createMatchMedia(true);
     renderProcessor({ files: makeFiles(1) });
 
@@ -307,13 +674,13 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     });
 
     await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
+    const modal = screen.getByTestId('photo-viewer-modal');
     const closeButton = screen.getByTestId('photo-viewer-close');
-    const hotspot = screen.getByTestId('photo-viewer-corner-hotspot');
 
     expect(closeButton).toHaveAttribute('data-visible', 'false');
-    await fireEvent.mouseEnter(hotspot);
+    await fireEvent.mouseMove(modal, { clientX: 220, clientY: 80 });
     expect(closeButton).toHaveAttribute('data-visible', 'true');
-    await fireEvent.mouseLeave(hotspot);
+    await fireEvent.mouseLeave(modal);
     expect(closeButton).toHaveAttribute('data-visible', 'false');
   });
 
@@ -326,10 +693,9 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
     await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
     const closeButton = screen.getByTestId('photo-viewer-close');
-    const hotspot = screen.getByTestId('photo-viewer-corner-hotspot');
 
     expect(closeButton).toHaveAttribute('data-visible', 'true');
-    await fireEvent.mouseLeave(hotspot);
+    await fireEvent.mouseLeave(screen.getByTestId('photo-viewer-modal'));
     expect(closeButton).toHaveAttribute('data-visible', 'true');
   });
 

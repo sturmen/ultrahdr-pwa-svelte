@@ -95,6 +95,9 @@ export interface WorkflowCard {
   filename: string;
   previewUrl: string;
   previewAlt: string;
+  sourcePreviewUrl: string;
+  comparePreviewUrl: string | null;
+  hasComparePreview: boolean;
   overlayVisible: boolean;
   progressPercent: number | null;
   hasOutput: boolean;
@@ -380,6 +383,9 @@ export function selectWorkflowCards(state: WorkflowState): WorkflowCard[] {
     filename: item.name,
     previewUrl: item.outputPreviewUrl || item.inputPreviewUrl,
     previewAlt: item.name,
+    sourcePreviewUrl: item.inputPreviewUrl,
+    comparePreviewUrl: item.outputPreviewUrl,
+    hasComparePreview: Boolean(item.outputPreviewUrl),
     overlayVisible: item.status === QUEUE_ITEM_STATES.PROCESSING && Boolean(item.progress?.visible),
     progressPercent: item.status === QUEUE_ITEM_STATES.PROCESSING && item.progress?.visible
       ? item.progress.percent
