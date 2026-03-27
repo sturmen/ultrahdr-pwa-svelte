@@ -532,10 +532,7 @@ export class GmnetGainMapGenerator {
           && typeof session.finalizeTiledInference === 'function';
         let gainMapRgba: Uint8ClampedArray;
         if (supportsTileStepApi) {
-          const prepareTiledInference = session.prepareTiledInference!;
-          const runTileStep = session.runTileStep!;
-          const finalizeTiledInference = session.finalizeTiledInference!;
-          const tiledContext = await prepareTiledInference(sourceImageData, {
+          const tiledContext = await session.prepareTiledInference!(sourceImageData, {
             ...sessionRunOptions,
           }) as GmnetTiledContext;
           const tileTotal = Math.max(0, Number(tiledContext?.tiles?.length) || 0);
@@ -570,7 +567,7 @@ export class GmnetGainMapGenerator {
             if (checkpointingEnabled && tiledContext?.tileCompleted?.[tileIndex]) {
               continue;
             }
-            const tileMetadata = await runTileStep(tiledContext, tileIndex);
+            const tileMetadata = await session.runTileStep!(tiledContext, tileIndex);
             if (tiledContext?.tileCompleted instanceof Uint8Array && !tiledContext.tileCompleted[tileIndex]) {
               tiledContext.tileCompleted[tileIndex] = 1;
             }
@@ -608,7 +605,7 @@ export class GmnetGainMapGenerator {
               );
             }
           }
-          gainMapRgba = finalizeTiledInference(tiledContext, {
+          gainMapRgba = session.finalizeTiledInference!(tiledContext, {
             ...sessionRunOptions,
           });
           if (checkpointStore && checkpointKey) {

@@ -146,6 +146,49 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
     expect(result.gainMapImageData.height).toBe(4);
   });
 
+  it('preserves session method binding when invoking tiled inference APIs', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
+
+    const session = {
+      activeExecutionProvider: 'webgpu',
+      async prepareTiledInference() {
+        return {
+          provider: this.activeExecutionProvider,
+          tiles: [{ tileIndex: 0 }],
+        };
+      },
+      async runTileStep(context) {
+        return {
+          tileIndex: 0,
+          tileTotal: context.tiles.length,
+          gmnetTileIndex: 0,
+          gmnetTileTotal: context.tiles.length,
+          provider: this.activeExecutionProvider,
+        };
+      },
+      finalizeTiledInference(context) {
+        expect(context.provider).toBe('webgpu');
+        return createNonFlatGainMapRgba(4, 4);
+      },
+      run: vi.fn(async () => {
+        throw new Error('run() should not be called when tiled APIs are present');
+      }),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+    });
+
+    const result = await generator.generate(createTestImageData(4, 4), {});
+
+    expect(result.gainMapImageData).toBeInstanceOf(ImageData);
+    expect(session.run).not.toHaveBeenCalled();
+  });
+
   it('falls back in auto mode with provider order webgpu -> webgl -> wasm', async () => {
     const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
 
