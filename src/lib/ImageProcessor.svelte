@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
   import DropZone from "./DropZone.svelte";
+  import OfflineReadinessCard from "./OfflineReadinessCard.svelte";
   import { getCapabilities } from "./capabilities.js";
   import JSZip from "jszip";
   import {
@@ -60,6 +61,9 @@
   export let launchIntent = { action: null, tab: null };
   export let runtime = null;
   export let runtimeExecutionProvider = null;
+  export let pwaUpdateState = null;
+  export let onValidateOfflineReadiness = () => {};
+  export let onRepairOfflineReadiness = () => {};
 
   let maxContentBoostStops = DEFAULT_MAX_CONTENT_BOOST_STOPS;
 
@@ -2763,6 +2767,12 @@
                 </select>
               </div>
             </div>
+
+            <OfflineReadinessCard
+              state={pwaUpdateState}
+              onValidate={onValidateOfflineReadiness}
+              onRepair={onRepairOfflineReadiness}
+            />
           </div>
         </div>
       {/if}
@@ -3291,6 +3301,12 @@
             </select>
           </div>
         </div>
+
+        <OfflineReadinessCard
+          state={pwaUpdateState}
+          onValidate={onValidateOfflineReadiness}
+          onRepair={onRepairOfflineReadiness}
+        />
       </div>
     </div>
   {/if}
