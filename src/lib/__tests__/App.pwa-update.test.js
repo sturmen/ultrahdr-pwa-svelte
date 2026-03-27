@@ -58,6 +58,16 @@ vi.mock('../pwa-updater.js', () => {
         config.onDismiss();
       }
     });
+    const validateOfflineReadiness = vi.fn(async () => {
+      if (typeof config.onValidateOfflineReadiness === 'function') {
+        config.onValidateOfflineReadiness();
+      }
+    });
+    const repairOfflineReadiness = vi.fn(async () => {
+      if (typeof config.onRepairOfflineReadiness === 'function') {
+        config.onRepairOfflineReadiness();
+      }
+    });
     const setBusy = vi.fn();
     const dispose = vi.fn();
     onStateChange({ ...state });
@@ -67,7 +77,9 @@ vi.mock('../pwa-updater.js', () => {
       checkForUpdates: vi.fn(async () => true),
       dispose,
       getState: () => ({ ...state }),
+      repairOfflineReadiness,
       setBusy,
+      validateOfflineReadiness,
     };
   };
 
@@ -142,5 +154,36 @@ describe('App PWA update UX', () => {
     await screen.findByTestId('tab-convert');
     expect(screen.getByTestId('pwa-update-snackbar')).toBeInTheDocument();
     expect(screen.getByText(/reload will happen when processing becomes idle/i)).toBeInTheDocument();
+  });
+
+  it('renders an offline readiness card with repair action when the bundle is not ready', async () => {
+    const onRepairOfflineReadiness = vi.fn();
+    globalThis.__PWA_UPDATE_TEST_CONFIG = {
+      initialState: {
+        bundleReady: false,
+        bundleState: 'CORRUPT',
+        bundleLastValidatedAt: 1710000000000,
+        offlineReadinessAction: 'repair',
+        offlineBundleActionInFlight: false,
+        offlineBundleAssetCount: 7,
+        offlineBundleTotalBytes: 15728640,
+        bundleDiagnostics: {
+          missingAssetCount: 1,
+          mismatchedAssetCount: 2,
+        },
+      },
+      onRepairOfflineReadiness,
+    };
+
+    render(App);
+    await screen.findByTestId('tab-convert');
+    expect(screen.getByTestId('offline-readiness-card')).toBeInTheDocument();
+    expect(screen.getByText(/repair needed before offline conversion/i)).toBeInTheDocument();
+    expect(screen.getByText(/7 assets/i)).toBeInTheDocument();
+    expect(screen.getByText(/15 mb/i)).toBeInTheDocument();
+    expect(screen.getByText(/missing assets: 1/i)).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: /repair offline bundle/i }));
+    expect(onRepairOfflineReadiness).toHaveBeenCalledTimes(1);
   });
 });

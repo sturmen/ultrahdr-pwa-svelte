@@ -8,10 +8,28 @@ import {
   createDefaultPwaUpdateState,
   createPwaUpdateCoordinator,
 } from '../pwa-updater.js';
-import { ensureBundleReady, getBundleStatus } from '../offline-runtime-bundle.js';
+import {
+  ensureBundleReady,
+  getBundleManifestSummary,
+  getBundleStatus,
+  repairBundle,
+  validateBundle,
+} from '../offline-runtime-bundle.js';
 
 vi.mock('../offline-runtime-bundle.js', () => ({
   ensureBundleReady: vi.fn(async () => ({
+    ready: true,
+    state: 'READY',
+    validatedAtMs: 123,
+    diagnostics: null,
+  })),
+  validateBundle: vi.fn(async () => ({
+    ready: true,
+    state: 'READY',
+    validatedAtMs: 123,
+    diagnostics: null,
+  })),
+  repairBundle: vi.fn(async () => ({
     ready: true,
     state: 'READY',
     validatedAtMs: 123,
@@ -22,6 +40,11 @@ vi.mock('../offline-runtime-bundle.js', () => ({
     state: 'EMPTY',
     validatedAtMs: null,
     diagnostics: null,
+  })),
+  getBundleManifestSummary: vi.fn(async () => ({
+    bundleVersion: 'bundle-v1',
+    assetCount: 3,
+    totalBytes: 6291456,
   })),
 }));
 
@@ -151,6 +174,10 @@ describe('pwa updater coordinator', () => {
     expect(state.applying).toBe(false);
     expect(state.bundleReady).toBe(false);
     expect(state.bundleState).toBe('EMPTY');
+    expect(state.offlineReadinessAction).toBe('validate');
+    expect(state.offlineBundleAssetCount).toBe(null);
+    expect(state.offlineBundleTotalBytes).toBe(null);
+    expect(state.offlineBundleActionInFlight).toBe(false);
   });
 
   it('checks for updates on startup/focus/visibility/online and every 30m', async () => {
@@ -226,6 +253,63 @@ describe('pwa updater coordinator', () => {
     expect(firstWithBundle).toBeTruthy();
     expect(firstWithBundle.bundleReady).toBe(true);
     expect(firstWithBundle.bundleLastValidatedAt).toBe(999);
+    coordinator.dispose();
+  });
+
+  it('tracks offline readiness validation and repair actions with manifest summary metadata', async () => {
+    getBundleManifestSummary.mockResolvedValue({
+      bundleVersion: 'bundle-v2',
+      assetCount: 5,
+      totalBytes: 10485760,
+    });
+    validateBundle.mockResolvedValueOnce({
+      ready: false,
+      state: 'CORRUPT',
+      validatedAtMs: 456,
+      diagnostics: {
+        missingAssetCount: 0,
+        mismatchedAssetCount: 2,
+      },
+    });
+    repairBundle.mockResolvedValueOnce({
+      ready: true,
+      state: 'READY',
+      validatedAtMs: 789,
+      diagnostics: {
+        missingAssetCount: 0,
+        mismatchedAssetCount: 0,
+      },
+    });
+
+    globalThis.__dynamicImport__ = vi.fn(async (specifier) => {
+      if (specifier === 'virtual:pwa-register') {
+        return { registerSW: registerSWMock };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const snapshots = [];
+    const coordinator = createPwaUpdateCoordinator({
+      onStateChange: (state) => snapshots.push(state),
+      isBusy: () => false,
+    });
+    await flushPromises();
+
+    await coordinator.validateOfflineReadiness();
+    let latest = snapshots.at(-1);
+    expect(validateBundle).toHaveBeenCalled();
+    expect(latest.bundleState).toBe('CORRUPT');
+    expect(latest.offlineReadinessAction).toBe('repair');
+    expect(latest.offlineBundleAssetCount).toBe(5);
+    expect(latest.offlineBundleTotalBytes).toBe(10485760);
+
+    await coordinator.repairOfflineReadiness();
+    latest = snapshots.at(-1);
+    expect(repairBundle).toHaveBeenCalled();
+    expect(latest.bundleReady).toBe(true);
+    expect(latest.bundleState).toBe('READY');
+    expect(latest.offlineReadinessAction).toBe('validate');
+    expect(latest.offlineBundleActionInFlight).toBe(false);
     coordinator.dispose();
   });
 

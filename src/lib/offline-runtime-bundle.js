@@ -505,6 +505,29 @@ export function getBundleStatus(runtime = globalThis) {
   };
 }
 
+export async function getBundleManifestSummary({
+  runtime = globalThis,
+  manifest,
+  loadManifest = loadManifestDefault,
+} = {}) {
+  const resolvedManifest = validateManifest(
+    manifest || (await loadManifest({ runtime })),
+  );
+  const totalBytes = resolvedManifest.requiredAssets.reduce((sum, asset) => {
+    const byteLength = Number(asset?.byteLength);
+    if (!Number.isFinite(byteLength) || byteLength < 0) {
+      return sum;
+    }
+    return sum + byteLength;
+  }, 0);
+
+  return {
+    bundleVersion: resolvedManifest.bundleVersion,
+    assetCount: resolvedManifest.requiredAssets.length,
+    totalBytes,
+  };
+}
+
 export async function validateBundle({
   runtime = globalThis,
   manifest,

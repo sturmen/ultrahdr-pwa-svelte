@@ -1,9 +1,31 @@
-import { ensureBundleReady, getBundleStatus } from './offline-runtime-bundle.js';
+import {
+  ensureBundleReady,
+  getBundleManifestSummary,
+  getBundleStatus,
+  repairBundle,
+  validateBundle,
+} from './offline-runtime-bundle.js';
 
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 const IGNORED_VERSIONS_STORAGE_KEY = 'ultrahdr:pwa-update-ignored-versions:v1';
 const IGNORED_VERSIONS_LIMIT = 100;
 const UHDR_GET_APP_ASSET_VERSION = 'UHDR_GET_APP_ASSET_VERSION';
+
+function isRepairRequiredState(bundleState) {
+  return bundleState === 'CORRUPT'
+    || bundleState === 'FAILED'
+    || bundleState === 'STALE';
+}
+
+function resolveOfflineReadinessAction({ ready, state }) {
+  if (ready === true) {
+    return 'validate';
+  }
+  if (isRepairRequiredState(state)) {
+    return 'repair';
+  }
+  return 'validate';
+}
 
 function now() {
   return Date.now();
@@ -160,8 +182,14 @@ export function createDefaultPwaUpdateState() {
     offlineReady: false,
     bundleReady: false,
     bundleState: 'EMPTY',
+    bundleDiagnostics: null,
     bundleError: null,
     bundleLastValidatedAt: null,
+    offlineReadinessAction: 'validate',
+    offlineBundleAssetCount: null,
+    offlineBundleTotalBytes: null,
+    offlineBundleActionInFlight: false,
+    offlineBundleActionError: null,
     lastCheckAt: null,
     lastError: null,
   };
@@ -195,18 +223,51 @@ export function createPwaUpdateCoordinator({
     if (!bundleResult || typeof bundleResult !== 'object') {
       return;
     }
+    const bundleState = typeof bundleResult.state === 'string' ? bundleResult.state : 'EMPTY';
+    const bundleReady = bundleResult.ready === true;
     patchState({
-      bundleReady: bundleResult.ready === true,
-      bundleState: typeof bundleResult.state === 'string' ? bundleResult.state : 'EMPTY',
+      offlineReady: bundleReady,
+      bundleReady,
+      bundleState,
+      bundleDiagnostics:
+        bundleResult.diagnostics && typeof bundleResult.diagnostics === 'object'
+          ? { ...bundleResult.diagnostics }
+          : null,
       bundleError: bundleResult.error || null,
       bundleLastValidatedAt: Number.isFinite(Number(bundleResult.validatedAtMs))
         ? Math.floor(Number(bundleResult.validatedAtMs))
         : null,
+      offlineReadinessAction: resolveOfflineReadinessAction({
+        ready: bundleReady,
+        state: bundleState,
+      }),
+      offlineBundleActionError: null,
     });
+  }
+
+  async function syncBundleManifestSummary() {
+    try {
+      const manifestSummary = await getBundleManifestSummary({ runtime: globalThis });
+      if (!manifestSummary || typeof manifestSummary !== 'object') {
+        return null;
+      }
+      patchState({
+        offlineBundleAssetCount: Number.isFinite(Number(manifestSummary.assetCount))
+          ? Math.floor(Number(manifestSummary.assetCount))
+          : null,
+        offlineBundleTotalBytes: Number.isFinite(Number(manifestSummary.totalBytes))
+          ? Math.floor(Number(manifestSummary.totalBytes))
+          : null,
+      });
+      return manifestSummary;
+    } catch {
+      return null;
+    }
   }
 
   async function syncBundleReadiness() {
     try {
+      await syncBundleManifestSummary();
       const result = await ensureBundleReady({ runtime: globalThis });
       patchBundleState(result);
       return result;
@@ -218,6 +279,30 @@ export function createPwaUpdateCoordinator({
         error: String(error?.message || error),
       });
       return null;
+    }
+  }
+
+  async function runOfflineBundleAction(action) {
+    const bundleAction = action === 'repair' ? repairBundle : validateBundle;
+    const offlineReadinessAction = action === 'repair' ? 'repair' : 'validate';
+    patchState({
+      offlineBundleActionInFlight: true,
+      offlineBundleActionError: null,
+      offlineReadinessAction,
+    });
+    await syncBundleManifestSummary();
+
+    try {
+      const result = await bundleAction({ runtime: globalThis });
+      patchBundleState(result);
+      return result?.ready === true;
+    } catch (error) {
+      patchState({
+        offlineBundleActionError: String(error?.message || error),
+      });
+      return false;
+    } finally {
+      patchState({ offlineBundleActionInFlight: false });
     }
   }
 
@@ -311,6 +396,7 @@ export function createPwaUpdateCoordinator({
     }
 
     patchBundleState(getBundleStatus(globalThis));
+    void syncBundleManifestSummary();
 
     try {
       const { registerSW } = await loadRegisterSwModule();
@@ -401,6 +487,8 @@ export function createPwaUpdateCoordinator({
     checkForUpdates,
     dispose,
     getState: () => ({ ...state }),
+    repairOfflineReadiness: () => runOfflineBundleAction('repair'),
     setBusy,
+    validateOfflineReadiness: () => runOfflineBundleAction('validate'),
   };
 }

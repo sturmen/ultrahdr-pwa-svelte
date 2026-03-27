@@ -342,6 +342,93 @@
     await pwaUpdateCoordinator?.dismissUpdateNotification?.();
   }
 
+  async function validateOfflineReadiness() {
+    await pwaUpdateCoordinator?.validateOfflineReadiness?.();
+  }
+
+  async function repairOfflineReadiness() {
+    await pwaUpdateCoordinator?.repairOfflineReadiness?.();
+  }
+
+  function formatOfflineBundleBytes(totalBytes) {
+    const normalized = Number(totalBytes);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      return null;
+    }
+    const totalMegabytes = normalized / (1024 * 1024);
+    if (totalMegabytes >= 10) {
+      return `${Math.round(totalMegabytes)} MB`;
+    }
+    return `${totalMegabytes.toFixed(1)} MB`;
+  }
+
+  function formatOfflineValidatedAt(validatedAtMs) {
+    const normalized = Number(validatedAtMs);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      return null;
+    }
+    try {
+      return new Date(normalized).toLocaleString();
+    } catch {
+      return null;
+    }
+  }
+
+  function describeOfflineReadiness(state) {
+    if (!state || typeof state !== "object") {
+      return {
+        title: "Offline bundle not ready yet",
+        tone: "warning",
+      };
+    }
+    if (
+      state.offlineBundleActionInFlight &&
+      state.offlineReadinessAction === "repair"
+    ) {
+      return {
+        title: "Repairing offline bundle",
+        tone: "warning",
+      };
+    }
+    if (
+      state.offlineBundleActionInFlight &&
+      state.offlineReadinessAction === "validate"
+    ) {
+      return {
+        title: "Validating offline bundle",
+        tone: "neutral",
+      };
+    }
+    if (state.bundleReady) {
+      return {
+        title: "Ready for offline conversion",
+        tone: "ready",
+      };
+    }
+    if (
+      state.bundleState === "CORRUPT" ||
+      state.bundleState === "FAILED" ||
+      state.bundleState === "STALE"
+    ) {
+      return {
+        title: "Repair needed before offline conversion",
+        tone: "warning",
+      };
+    }
+    return {
+      title: "Offline bundle not ready yet",
+      tone: "neutral",
+    };
+  }
+
+  $: offlineReadinessSummary = describeOfflineReadiness(pwaUpdateState);
+  $: offlineBundleSizeLabel = formatOfflineBundleBytes(
+    pwaUpdateState.offlineBundleTotalBytes,
+  );
+  $: offlineBundleValidatedAtLabel = formatOfflineValidatedAt(
+    pwaUpdateState.bundleLastValidatedAt,
+  );
+
   function handleRuntimeRetry() {
     void bootApp({ forceRetry: true });
   }
@@ -399,6 +486,78 @@
           Some devices may process more slowly.
         </p>
       {/if}
+      <section
+        class={`offline-readiness-card ${offlineReadinessSummary.tone}`}
+        data-testid="offline-readiness-card"
+        aria-live="polite"
+      >
+        <div class="offline-readiness-copy">
+          <p class="offline-readiness-eyebrow">Offline readiness</p>
+          <h2>{offlineReadinessSummary.title}</h2>
+          <p>
+            Confirm the AI models and encoders are cached before you lose
+            connectivity.
+          </p>
+          <div class="offline-readiness-metadata">
+            {#if pwaUpdateState.offlineBundleAssetCount}
+              <span>{pwaUpdateState.offlineBundleAssetCount} assets</span>
+            {/if}
+            {#if offlineBundleSizeLabel}
+              <span>{offlineBundleSizeLabel}</span>
+            {/if}
+            {#if offlineBundleValidatedAtLabel}
+              <span>Last checked: {offlineBundleValidatedAtLabel}</span>
+            {/if}
+          </div>
+          {#if pwaUpdateState.bundleDiagnostics}
+            <div class="offline-readiness-diagnostics">
+              {#if Number(pwaUpdateState.bundleDiagnostics.missingAssetCount) > 0}
+                <span>
+                  Missing assets: {pwaUpdateState.bundleDiagnostics.missingAssetCount}
+                </span>
+              {/if}
+              {#if Number(pwaUpdateState.bundleDiagnostics.mismatchedAssetCount) > 0}
+                <span>
+                  Corrupt assets: {pwaUpdateState.bundleDiagnostics.mismatchedAssetCount}
+                </span>
+              {/if}
+            </div>
+          {/if}
+          {#if pwaUpdateState.offlineBundleActionError}
+            <p class="offline-readiness-error">
+              {pwaUpdateState.offlineBundleActionError}
+            </p>
+          {/if}
+        </div>
+        <div class="offline-readiness-actions">
+          <button
+            type="button"
+            class="footer-link"
+            on:click={validateOfflineReadiness}
+            disabled={pwaUpdateState.offlineBundleActionInFlight}
+          >
+            {#if pwaUpdateState.offlineBundleActionInFlight &&
+            pwaUpdateState.offlineReadinessAction === "validate"}
+              Validating...
+            {:else}
+              Validate offline bundle
+            {/if}
+          </button>
+          <button
+            type="button"
+            class="footer-link"
+            on:click={repairOfflineReadiness}
+            disabled={pwaUpdateState.offlineBundleActionInFlight}
+          >
+            {#if pwaUpdateState.offlineBundleActionInFlight &&
+            pwaUpdateState.offlineReadinessAction === "repair"}
+              Repairing...
+            {:else}
+              Repair offline bundle
+            {/if}
+          </button>
+        </div>
+      </section>
     {/if}
     {#if runtimeInitState !== "ready"}
       <InitializationGate
@@ -541,6 +700,8 @@
 
   .content-area {
     min-height: 40vh;
+    display: grid;
+    gap: 1rem;
   }
 
   .runtime-ready-marker {
@@ -553,6 +714,64 @@
     clip: rect(0 0 0 0);
     border: 0;
     white-space: nowrap;
+  }
+
+  .offline-readiness-card {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 1rem;
+    border-radius: 1rem;
+    border: 1px solid var(--border-subtle);
+    background:
+      linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.92),
+        rgba(244, 247, 250, 0.96)
+      ),
+      var(--surface);
+    display: grid;
+    gap: 0.9rem;
+  }
+
+  .offline-readiness-card.ready {
+    border-color: rgba(21, 128, 61, 0.28);
+  }
+
+  .offline-readiness-card.warning {
+    border-color: rgba(180, 83, 9, 0.34);
+  }
+
+  .offline-readiness-card h2,
+  .offline-readiness-card p {
+    margin: 0;
+  }
+
+  .offline-readiness-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+  }
+
+  .offline-readiness-metadata,
+  .offline-readiness-diagnostics,
+  .offline-readiness-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+  }
+
+  .offline-readiness-metadata span,
+  .offline-readiness-diagnostics span {
+    padding: 0.35rem 0.55rem;
+    border-radius: 999px;
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+  }
+
+  .offline-readiness-error {
+    color: var(--queue-failed);
   }
 
   .drop-container {
