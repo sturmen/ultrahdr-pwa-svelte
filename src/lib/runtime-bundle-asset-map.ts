@@ -5,6 +5,7 @@ export const WASM_ASSET_CACHE_PREFIX = 'uhdr-wasm-assets';
 export const LIBHEIF_ASSET_CACHE_PREFIX = 'uhdr-libheif-assets';
 export const AI_MODEL_CACHE_PREFIX = 'uhdr-ai-models';
 export const ONNX_WASM_CACHE_PREFIX = 'uhdr-onnx-wasm';
+export const AI_MODEL_CACHE_MAX_ENTRIES = 32;
 
 export type RuntimeBundleCacheNames = {
   runtime: string;

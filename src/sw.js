@@ -6,6 +6,7 @@ import { ExpirationPlugin } from 'workbox-expiration';
 import { storeSharedFiles } from './lib/share-store.js';
 import {
     AI_MODEL_CACHE_PREFIX,
+    AI_MODEL_CACHE_MAX_ENTRIES,
     LIBHEIF_ASSET_CACHE_PREFIX,
     ONNX_WASM_CACHE_PREFIX,
     RUNTIME_CACHE_PREFIX,
@@ -322,7 +323,7 @@ registerRoute(
         cacheName: AI_MODEL_CACHE,
         plugins: [
             new ExpirationPlugin({
-                maxEntries: 2,
+                maxEntries: AI_MODEL_CACHE_MAX_ENTRIES,
                 maxAgeSeconds: 30 * 24 * 60 * 60
             })
         ]
@@ -335,7 +336,7 @@ registerRoute(
         cacheName: AI_MODEL_CACHE,
         plugins: [
             new ExpirationPlugin({
-                maxEntries: 4,
+                maxEntries: AI_MODEL_CACHE_MAX_ENTRIES,
                 maxAgeSeconds: 30 * 24 * 60 * 60
             })
         ]
