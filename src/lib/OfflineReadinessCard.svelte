@@ -20,12 +20,12 @@
 </script>
 
 <section
-  class={`offline-readiness-card ${offlineReadinessSummary.tone}`}
+  class={`offline-readiness-card compact ${offlineReadinessSummary.tone}`}
   data-testid="offline-readiness-card"
   aria-live="polite"
 >
   <div class="offline-readiness-copy">
-    <h2>{offlineReadinessSummary.title}</h2>
+    <p class="offline-readiness-title">{offlineReadinessSummary.title}</p>
     <div class="offline-readiness-metadata">
       {#if state?.offlineBundleAssetCount}
         <span>{state.offlineBundleAssetCount} assets</span>
@@ -89,30 +89,29 @@
 <style>
   .offline-readiness-card {
     display: grid;
-    gap: 0.9rem;
-    padding: 1rem;
-    border-radius: 1rem;
-    border: 1px solid var(--border-subtle);
-    background:
-      linear-gradient(
-        135deg,
-        rgba(255, 255, 255, 0.92),
-        rgba(244, 247, 250, 0.96)
-      ),
-      var(--surface);
+    gap: 0.38rem;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
 
-  .offline-readiness-card.ready {
-    border-color: rgba(21, 128, 61, 0.28);
-  }
-
-  .offline-readiness-card.warning {
-    border-color: rgba(180, 83, 9, 0.34);
-  }
-
-  .offline-readiness-card h2,
   .offline-readiness-card p {
     margin: 0;
+  }
+
+  .offline-readiness-title {
+    font-size: 0.96rem;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .offline-readiness-card.ready .offline-readiness-title {
+    color: color-mix(in srgb, var(--success, #15803d) 80%, var(--text-primary));
+  }
+
+  .offline-readiness-card.warning .offline-readiness-title {
+    color: color-mix(in srgb, #b45309 80%, var(--text-primary));
   }
 
   .offline-readiness-metadata,
@@ -120,25 +119,25 @@
   .offline-readiness-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.65rem;
+    gap: 0.45rem;
   }
 
   .offline-readiness-details {
     display: grid;
-    gap: 0.35rem;
-    margin-top: 0.65rem;
-    font-size: 0.88rem;
+    gap: 0.2rem;
+    margin-top: 0.1rem;
+    font-size: 0.8rem;
     color: var(--text-secondary);
     word-break: break-word;
   }
 
   .offline-readiness-metadata span,
   .offline-readiness-diagnostics span {
-    padding: 0.35rem 0.55rem;
+    padding: 0.2rem 0.45rem;
     border-radius: 999px;
     background: var(--surface-muted);
     color: var(--text-secondary);
-    font-size: 0.88rem;
+    font-size: 0.78rem;
   }
 
   .offline-readiness-details p {
@@ -147,5 +146,10 @@
 
   .offline-readiness-error {
     color: var(--queue-failed);
+    font-size: 0.8rem;
+  }
+
+  .offline-readiness-actions {
+    margin-top: 0.05rem;
   }
 </style>

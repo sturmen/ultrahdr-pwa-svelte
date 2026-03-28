@@ -1,25 +1,31 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import App from '../../App.svelte';
-import { consumeSharedFilesFromLaunch, registerLaunchQueueConsumer } from '../share-target-launch.js';
-import { createProcessingRuntime } from '../processing.js';
+import {
+  consumeSharedFilesFromLaunch,
+  registerLaunchQueueConsumer,
+} from '../share-target-launch.js';
 
-const runtimeInitializeMock = vi.fn(async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' }));
-const runtimeProcessMock = vi.fn(async (_file, options = {}) => {
-  options.onProgress?.({
-    phase: 'pipeline-complete',
-    stage: 'encode',
-    elapsedMs: 5,
-    stageDurationsMs: { encode: 5 },
-    timestamp: Date.now(),
-    fileIndex: 0,
-    totalFiles: 1,
-  });
-  return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-});
+const runtimeInitializeMock = vi.fn(
+  async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' }),
+);
+const runtimeProcessMock = vi.fn(
+  async (_file: File, options: { onProgress?: (event: Record<string, unknown>) => void } = {}) => {
+    options.onProgress?.({
+      phase: 'pipeline-complete',
+      stage: 'encode',
+      elapsedMs: 5,
+      stageDurationsMs: { encode: 5 },
+      timestamp: Date.now(),
+      fileIndex: 0,
+      totalFiles: 1,
+    });
+    return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
+  },
+);
 
 vi.mock('../share-target-launch.js', () => ({
   consumeSharedFilesFromLaunch: vi.fn(),
@@ -31,7 +37,12 @@ vi.mock('../processing.js', () => ({
     initialize: runtimeInitializeMock,
     process: runtimeProcessMock,
     subscribe: vi.fn(() => () => {}),
-    getSnapshot: vi.fn(() => ({ status: 'idle', runtime: null, error: null, progress: null })),
+    getSnapshot: vi.fn(() => ({
+      status: 'idle',
+      runtime: null,
+      error: null,
+      progress: null,
+    })),
     dispose: vi.fn(async () => {}),
   })),
   RUNTIME_INIT_STEP_ORDER: [
@@ -52,22 +63,46 @@ vi.mock('../processing.js', () => ({
   },
 }));
 
-function deferred() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+};
+
+type RuntimeInitOverrides = {
+  message?: string;
+  code?: string;
+  stepId?: string;
+  userMessage?: string;
+  diagnostics?: Record<string, unknown>;
+};
+
+type RuntimeInitError = Error & {
+  code?: string;
+  stepId?: string;
+  userMessage?: string;
+  diagnostics?: Record<string, unknown>;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
     reject = rej;
   });
   return { promise, resolve, reject };
 }
 
-function createInitFailure(overrides = {}) {
-  const error = new Error(overrides.message || 'WebGPU is unavailable in this environment.');
+function createInitFailure(overrides: RuntimeInitOverrides = {}): RuntimeInitError {
+  const error = new Error(
+    overrides.message || 'WebGPU is unavailable in this environment.',
+  ) as RuntimeInitError;
   error.name = 'RuntimeInitializationError';
   error.code = overrides.code || 'RUNTIME_INIT_WEBGPU_UNAVAILABLE';
   error.stepId = overrides.stepId || 'webgpu-check';
-  error.userMessage = overrides.userMessage || 'WebGPU is unavailable in this environment.';
+  error.userMessage =
+    overrides.userMessage || 'WebGPU is unavailable in this environment.';
   error.diagnostics = {
     hasNavigatorGpu: false,
     ...overrides.diagnostics,
@@ -79,11 +114,16 @@ describe('App shell and startup gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage?.clear?.();
-    delete window.__ULTRAHDR_PROCESSING_PREFERENCES;
-    delete window.__ULTRAHDR_BACKEND_PREFERENCE;
-    consumeSharedFilesFromLaunch.mockResolvedValue([]);
-    registerLaunchQueueConsumer.mockReturnValue(true);
-    runtimeInitializeMock.mockResolvedValue({ ready: true, resolvedExecutionProvider: 'webgpu' });
+    delete (window as typeof window & { __ULTRAHDR_PROCESSING_PREFERENCES?: unknown })
+      .__ULTRAHDR_PROCESSING_PREFERENCES;
+    delete (window as typeof window & { __ULTRAHDR_BACKEND_PREFERENCE?: unknown })
+      .__ULTRAHDR_BACKEND_PREFERENCE;
+    vi.mocked(consumeSharedFilesFromLaunch).mockResolvedValue([]);
+    vi.mocked(registerLaunchQueueConsumer).mockReturnValue(true);
+    runtimeInitializeMock.mockResolvedValue({
+      ready: true,
+      resolvedExecutionProvider: 'webgpu',
+    });
     window.history.replaceState({}, '', '/');
   });
 
@@ -92,11 +132,13 @@ describe('App shell and startup gate', () => {
 
     await screen.findByTestId('tab-convert');
     expect(registerLaunchQueueConsumer).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId('home-processing-settings')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('home-processing-settings'),
+    ).not.toBeInTheDocument();
   });
 
   it('renders initialization checklist while runtime is still initializing', async () => {
-    const initGate = deferred();
+    const initGate = deferred<{ ready: true; resolvedExecutionProvider: string }>();
     runtimeInitializeMock.mockReturnValue(initGate.promise);
 
     render(App);
@@ -120,21 +162,49 @@ describe('App shell and startup gate', () => {
     expect(screen.getByTestId('app-shell')).toBeInTheDocument();
     expect(screen.getByTestId('app-topbar')).toBeInTheDocument();
     expect(screen.getByTestId('app-about-link')).toBeInTheDocument();
-    expect(screen.queryByText(/try google chrome on windows\/macos if you run into issues/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/try google chrome on windows\/macos if you run into issues/i),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/private processing/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/works offline/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/no cloud upload/i)).not.toBeInTheDocument();
   });
 
-  it('opens About page from the compact top bar and keeps the explanation concise', async () => {
+  it('opens About page from the compact top bar and moves Back to Converter into the header', async () => {
     render(App);
 
     await screen.findByTestId('tab-convert');
     await fireEvent.click(screen.getByTestId('app-about-link'));
 
-    expect(screen.getByRole('heading', { name: /About UltraHDR Converter/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /About UltraHDR Converter/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/the app is a progressive web app/i)).toBeInTheDocument();
     expect(screen.queryByText(/share in and share out/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /back to converter/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /^about$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/back to converter/i, { selector: 'footer button' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('returns to the converter when browser back is used from the About page', async () => {
+    render(App);
+
+    await screen.findByTestId('tab-convert');
+    await fireEvent.click(screen.getByTestId('app-about-link'));
+    expect(screen.getByTestId('about-page')).toBeInTheDocument();
+
+    window.history.back();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('about-page')).not.toBeInTheDocument();
   });
 
   it('shows startup failure diagnostics and retries initialization', async () => {
@@ -146,7 +216,9 @@ describe('App shell and startup gate', () => {
 
     const failureCard = await screen.findByTestId('runtime-init-failure');
     expect(failureCard).toHaveTextContent(/runtime_init_webgpu_unavailable/i);
-    expect(failureCard).toHaveTextContent(/webgpu is unavailable in this environment/i);
+    expect(failureCard).toHaveTextContent(
+      /webgpu is unavailable in this environment/i,
+    );
 
     await fireEvent.click(screen.getByTestId('runtime-init-retry'));
 
@@ -182,8 +254,8 @@ describe('App shell and startup gate', () => {
   });
 
   it('shows loading state while share-target launch files are being checked after init', async () => {
-    const launchProbe = deferred();
-    consumeSharedFilesFromLaunch.mockReturnValue(launchProbe.promise);
+    const launchProbe = deferred<File[]>();
+    vi.mocked(consumeSharedFilesFromLaunch).mockReturnValue(launchProbe.promise);
 
     render(App);
 
@@ -227,55 +299,65 @@ describe('App shell and startup gate', () => {
   });
 
   it('ignores legacy probe attempt fields in runtime init progress updates', async () => {
-    const initGate = deferred();
-    runtimeInitializeMock.mockImplementationOnce(async ({ onProgress } = {}) => {
-      onProgress?.({
-        stepId: 'gmnet-smoke-run',
-        status: 'running',
-        note: 'Running GMNet smoke test (webgpu)...',
-        probeAttempt: {
-          provider: 'webgpu',
-          candidateLongEdge: 2048,
+    const initGate = deferred<{ ready: true; resolvedExecutionProvider: string }>();
+    runtimeInitializeMock.mockImplementationOnce(
+      async ({
+        onProgress,
+      }: {
+        onProgress?: (event: Record<string, unknown>) => void;
+      } = {}) => {
+        onProgress?.({
+          stepId: 'gmnet-smoke-run',
           status: 'running',
-        },
-      });
-      onProgress?.({
-        stepId: 'gmnet-smoke-run',
-        status: 'running',
-        note: 'GMNet smoke test passed (webgpu).',
-        probeAttempt: {
-          provider: 'webgpu',
-          candidateLongEdge: 2048,
-          status: 'passed',
-        },
-      });
-      onProgress?.({
-        stepId: 'gmnet-smoke-run',
-        status: 'running',
-        note: 'GMNet smoke test passed (webgpu).',
-        probeAttempts: [
-          {
+          note: 'Running GMNet smoke test (webgpu)...',
+          probeAttempt: {
+            provider: 'webgpu',
+            candidateLongEdge: 2048,
+            status: 'running',
+          },
+        });
+        onProgress?.({
+          stepId: 'gmnet-smoke-run',
+          status: 'running',
+          note: 'GMNet smoke test passed (webgpu).',
+          probeAttempt: {
             provider: 'webgpu',
             candidateLongEdge: 2048,
             status: 'passed',
           },
-          {
-            provider: 'webgpu',
-            candidateLongEdge: 4094,
-            status: 'failed',
-          },
-        ],
-      });
+        });
+        onProgress?.({
+          stepId: 'gmnet-smoke-run',
+          status: 'running',
+          note: 'GMNet smoke test passed (webgpu).',
+          probeAttempts: [
+            {
+              provider: 'webgpu',
+              candidateLongEdge: 2048,
+              status: 'passed',
+            },
+            {
+              provider: 'webgpu',
+              candidateLongEdge: 4094,
+              status: 'failed',
+            },
+          ],
+        });
 
-      return initGate.promise;
-    });
+        return initGate.promise;
+      },
+    );
 
     render(App);
 
     await waitFor(() => {
-      expect(screen.getByTestId('runtime-step-gmnet-smoke-run')).toBeInTheDocument();
+      expect(
+        screen.getByTestId('runtime-step-gmnet-smoke-run'),
+      ).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('runtime-step-gmnet-smoke-run-attempts')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('runtime-step-gmnet-smoke-run-attempts'),
+    ).not.toBeInTheDocument();
 
     initGate.resolve({ ready: true, resolvedExecutionProvider: 'webgpu' });
     await waitFor(() => {
@@ -284,7 +366,7 @@ describe('App shell and startup gate', () => {
   });
 
   it('opens processor directly for share-target files', async () => {
-    consumeSharedFilesFromLaunch.mockResolvedValue([
+    vi.mocked(consumeSharedFilesFromLaunch).mockResolvedValue([
       new File(['shared'], 'shared.jpg', { type: 'image/jpeg' }),
     ]);
 
@@ -293,6 +375,8 @@ describe('App shell and startup gate', () => {
     await waitFor(() => {
       expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('home-processing-settings')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('home-processing-settings'),
+    ).not.toBeInTheDocument();
   });
 });

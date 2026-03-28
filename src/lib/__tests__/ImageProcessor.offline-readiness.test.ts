@@ -65,9 +65,12 @@ describe("ImageProcessor offline readiness settings", () => {
 
     await fireEvent.click(screen.getByTestId("floating-gear"));
     const settingsSheet = screen.getByTestId("settings-sheet");
+    const offlineReadinessCard = within(settingsSheet).getByTestId("offline-readiness-card");
 
-    expect(within(settingsSheet).getByTestId("offline-readiness-card")).toBeInTheDocument();
+    expect(offlineReadinessCard).toBeInTheDocument();
+    expect(offlineReadinessCard).toHaveClass("compact");
     expect(within(settingsSheet).getByText(/repair needed before offline conversion/i)).toBeInTheDocument();
+    expect(within(offlineReadinessCard).queryByRole("heading")).not.toBeInTheDocument();
     expect(within(settingsSheet).queryByText(/^offline readiness$/i)).not.toBeInTheDocument();
     expect(within(settingsSheet).queryByText(/confirm the ai models and encoders are cached/i)).not.toBeInTheDocument();
     expect(within(settingsSheet).queryByText(/last checked:/i)).not.toBeInTheDocument();
