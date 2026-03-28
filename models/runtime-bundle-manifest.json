@@ -1,10 +1,10 @@
 {
-  "bundleVersion": "5.6.0|d2da408b382f2280|8cd6c07dff59ccad",
-  "generatedAt": "2026-03-27T01:40:08.958Z",
+  "bundleVersion": "5.6.1|61b01ad6408e6407|e25c7ead5a0bacd4",
+  "generatedAt": "2026-03-28T02:08:47.581Z",
   "requiredAssets": [
     {
       "id": "gmnet-realworld-global",
-      "url": "models/gmnet-realworld-global.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-realworld-global.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 107070,
@@ -12,7 +12,7 @@
     },
     {
       "id": "gmnet-realworld-global-data",
-      "url": "models/gmnet-realworld-global.onnx.data?v=d2da408b382f2280",
+      "url": "models/gmnet-realworld-global.onnx.data?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2127104,
@@ -20,7 +20,7 @@
     },
     {
       "id": "gmnet-realworld-local",
-      "url": "models/gmnet-realworld-local.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-realworld-local.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 165334,
@@ -28,7 +28,7 @@
     },
     {
       "id": "gmnet-realworld-local-data",
-      "url": "models/gmnet-realworld-local.onnx.data?v=d2da408b382f2280",
+      "url": "models/gmnet-realworld-local.onnx.data?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5615872,
@@ -36,7 +36,7 @@
     },
     {
       "id": "gmnet-realworld-global-inline",
-      "url": "models/gmnet-realworld-global-inline.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-realworld-global-inline.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2263917,
@@ -44,7 +44,7 @@
     },
     {
       "id": "gmnet-realworld-local-inline-webgl",
-      "url": "models/gmnet-realworld-local-inline-webgl.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-realworld-local-inline-webgl.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5764004,
@@ -52,7 +52,7 @@
     },
     {
       "id": "gmnet-synthetic-global",
-      "url": "models/gmnet-synthetic-global.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-synthetic-global.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 107070,
@@ -60,7 +60,7 @@
     },
     {
       "id": "gmnet-synthetic-global-data",
-      "url": "models/gmnet-synthetic-global.onnx.data?v=d2da408b382f2280",
+      "url": "models/gmnet-synthetic-global.onnx.data?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2127104,
@@ -68,7 +68,7 @@
     },
     {
       "id": "gmnet-synthetic-local",
-      "url": "models/gmnet-synthetic-local.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-synthetic-local.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 165334,
@@ -76,7 +76,7 @@
     },
     {
       "id": "gmnet-synthetic-local-data",
-      "url": "models/gmnet-synthetic-local.onnx.data?v=d2da408b382f2280",
+      "url": "models/gmnet-synthetic-local.onnx.data?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5615872,
@@ -84,7 +84,7 @@
     },
     {
       "id": "gmnet-synthetic-global-inline",
-      "url": "models/gmnet-synthetic-global-inline.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-synthetic-global-inline.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2263917,
@@ -92,7 +92,7 @@
     },
     {
       "id": "gmnet-synthetic-local-inline-webgl",
-      "url": "models/gmnet-synthetic-local-inline-webgl.onnx?v=d2da408b382f2280",
+      "url": "models/gmnet-synthetic-local-inline-webgl.onnx?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5764004,
@@ -100,7 +100,7 @@
     },
     {
       "id": "gmnet-smoke-asset",
-      "url": "models/gmnet-smoke-128.png?v=d2da408b382f2280",
+      "url": "models/gmnet-smoke-128.png?v=61b01ad6408e6407",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "smoke",
       "byteLength": 622,
@@ -108,7 +108,7 @@
     },
     {
       "id": "ultrahdr-wasm-js",
-      "url": "assets/ultrahdr_wasm.js?v=8cd6c07dff59ccad",
+      "url": "assets/ultrahdr_wasm.js?v=e25c7ead5a0bacd4",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "runtime-script",
       "byteLength": 66093,
@@ -116,15 +116,15 @@
     },
     {
       "id": "ultrahdr-wasm-bin",
-      "url": "assets/ultrahdr_wasm.wasm?v=8cd6c07dff59ccad",
+      "url": "assets/ultrahdr_wasm.wasm?v=e25c7ead5a0bacd4",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 817043,
-      "sha256": "dc42aebb0fccc2646891e9927492fb37a1e01b166f083b64dfb3636e3311331c"
+      "sha256": "8e5cc11451e3a2b727bcd3e08030a85a051942a9387f049d154b2096c0152e24"
     },
     {
       "id": "jpegli-wasm-js",
-      "url": "assets/jpegli_wasm.js?v=8cd6c07dff59ccad",
+      "url": "assets/jpegli_wasm.js?v=e25c7ead5a0bacd4",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "runtime-script",
       "byteLength": 15542,
@@ -132,7 +132,7 @@
     },
     {
       "id": "jpegli-wasm-bin",
-      "url": "assets/jpegli_wasm.wasm?v=8cd6c07dff59ccad",
+      "url": "assets/jpegli_wasm.wasm?v=e25c7ead5a0bacd4",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 243296,
@@ -140,7 +140,7 @@
     },
     {
       "id": "libheif-wasm-bin",
-      "url": "assets/libheif.wasm?v=d2da408b382f2280",
+      "url": "assets/libheif.wasm?v=61b01ad6408e6407",
       "cacheName": "uhdr-libheif-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 1034305,
