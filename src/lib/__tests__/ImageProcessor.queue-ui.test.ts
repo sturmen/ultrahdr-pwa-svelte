@@ -98,7 +98,7 @@ describe('ImageProcessor queue-centric workflow cards', () => {
     const cards = [screen.getByTestId('workflow-card-0'), screen.getByTestId('workflow-card-1')];
     expect(cards).toHaveLength(2);
     await waitFor(() => {
-      expect(within(screen.getByTestId('workflow-card-0')).getByText('Generating gain map 42%')).toBeInTheDocument();
+      expect(within(screen.getByTestId('workflow-card-0')).getByText(/Generating gain map \d+%/i)).toBeInTheDocument();
       expect(within(screen.getByTestId('workflow-card-0')).getByTestId('workflow-card-progress-0')).toBeInTheDocument();
     });
     expect(within(screen.getByTestId('workflow-card-1')).getByText('Queued')).toBeInTheDocument();
@@ -176,6 +176,83 @@ describe('ImageProcessor queue-centric workflow cards', () => {
     await fireEvent.click(screen.getByTestId('result-thumbnail-0'));
     expect(screen.getByTestId('photo-viewer-modal')).toBeInTheDocument();
     expect(screen.getByTestId('photo-viewer-image')).toHaveAttribute('alt', 'photo-0.jpg');
+
+    firstGate.resolve();
+  });
+
+  it('shows the circular overlay for hdr-intent processing paths that only emit stage lifecycle events', async () => {
+    const firstGate = createDeferred();
+
+    runtimeProcessMock.mockImplementationOnce(async (_file, options = {}) => {
+      options.onProgress?.({
+        phase: 'stage-start',
+        stage: 'compress-hdr-intent',
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        elapsedMs: 5,
+        stageDurationsMs: {},
+        timestamp: Date.now(),
+      });
+      options.onProgress?.({
+        phase: 'stage-complete',
+        stage: 'compress-hdr-intent',
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        elapsedMs: 10,
+        stageDurationsMs: { 'compress-hdr-intent': 5 },
+        timestamp: Date.now(),
+      });
+      await firstGate.promise;
+      return new Blob(['first'], { type: 'image/jpeg' });
+    });
+
+    renderProcessor({ files: makeFiles(1) });
+    await fireEvent.click(screen.getByTestId('tab-results'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workflow-card-progress-0')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Preparing HDR input \d+%/i)).toBeInTheDocument();
+
+    firstGate.resolve();
+  });
+
+  it('shows the circular overlay for preserved gain-map paths that only emit stage lifecycle events', async () => {
+    const firstGate = createDeferred();
+
+    runtimeProcessMock.mockImplementationOnce(async (_file, options = {}) => {
+      options.onProgress?.({
+        phase: 'stage-start',
+        stage: 'extract-preserved-components',
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        elapsedMs: 5,
+        stageDurationsMs: {},
+        timestamp: Date.now(),
+      });
+      options.onProgress?.({
+        phase: 'stage-complete',
+        stage: 'extract-preserved-components',
+        fileIndex: 0,
+        totalFiles: 1,
+        fileName: 'photo-0.jpg',
+        elapsedMs: 10,
+        stageDurationsMs: { 'extract-preserved-components': 5 },
+        timestamp: Date.now(),
+      });
+      await firstGate.promise;
+      return new Blob(['first'], { type: 'image/jpeg' });
+    });
+
+    renderProcessor({ files: makeFiles(1) });
+    await fireEvent.click(screen.getByTestId('tab-results'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workflow-card-progress-0')).toBeInTheDocument();
+    });
 
     firstGate.resolve();
   });

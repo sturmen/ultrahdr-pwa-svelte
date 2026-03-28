@@ -588,14 +588,18 @@
         : "";
 
     if (queueId !== null && queueId !== undefined) {
-      if (phase === "stage-progress") {
+      if (
+        phase === "stage-start" ||
+        phase === "stage-progress" ||
+        phase === "stage-complete"
+      ) {
         updateQueueItem(queueId, {
           status: QUEUE_ITEM_STATES.PROCESSING,
           progress: {
             stage: String(event?.stage || "pipeline"),
             label: String(event?.note || pipelineStatusLabel || "Processing"),
             percent: Math.round(
-              Math.max(0, Math.min(100, Number(event?.stageProgress) || 0)),
+              Math.max(0, Math.min(100, pipelineCurrentFileProgress || 0)),
             ),
             visible: true,
           },

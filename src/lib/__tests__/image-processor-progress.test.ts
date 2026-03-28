@@ -38,4 +38,42 @@ describe('image-processor-progress', () => {
     expect(getSlowestStage({ decode: 50, encode: 1200 })).toBe('encode (1.20 s)');
     expect(getSlowestStage(null)).toBe(null);
   });
+
+  it('estimates monotonic progress for hdr-intent stage lifecycle events', () => {
+    const afterCompressStart = estimatePipelineProgress(
+      { stage: 'compress-hdr-intent', phase: 'stage-start' },
+      0,
+    );
+    const afterCompressComplete = estimatePipelineProgress(
+      { stage: 'compress-hdr-intent', phase: 'stage-complete' },
+      afterCompressStart,
+    );
+    const afterFinalizeStart = estimatePipelineProgress(
+      { stage: 'finalize-output', phase: 'stage-start' },
+      afterCompressComplete,
+    );
+
+    expect(afterCompressStart).toBeGreaterThan(0);
+    expect(afterCompressComplete).toBeGreaterThan(afterCompressStart);
+    expect(afterFinalizeStart).toBeGreaterThan(afterCompressComplete);
+  });
+
+  it('estimates monotonic progress for preserved-image stage lifecycle events', () => {
+    const afterExtractStart = estimatePipelineProgress(
+      { stage: 'extract-preserved-components', phase: 'stage-start' },
+      0,
+    );
+    const afterExtractComplete = estimatePipelineProgress(
+      { stage: 'extract-preserved-components', phase: 'stage-complete' },
+      afterExtractStart,
+    );
+    const afterFinalizeStart = estimatePipelineProgress(
+      { stage: 'finalize-preserved', phase: 'stage-start' },
+      afterExtractComplete,
+    );
+
+    expect(afterExtractStart).toBeGreaterThan(0);
+    expect(afterExtractComplete).toBeGreaterThan(afterExtractStart);
+    expect(afterFinalizeStart).toBeGreaterThan(afterExtractComplete);
+  });
 });
