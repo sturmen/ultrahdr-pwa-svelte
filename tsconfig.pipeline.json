@@ -18,7 +18,7 @@
     "src/lib/exif-utils.d.ts",
     "src/lib/gain-map-metadata.d.ts",
     "src/lib/pipeline-telemetry.d.ts",
-    "src/lib/ultrahdr-wasm.d.ts",
+    "src/lib/ultrahdr-wasm.ts",
     "src/lib/gain-map-generator.d.ts",
     "src/lib/image-utils.ts",
     "src/lib/image-utils.d.ts",

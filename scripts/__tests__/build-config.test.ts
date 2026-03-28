@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 
 describe('build warning regressions', () => {
   it('uses browser-safe HEIF adapter imports in production modules', () => {
@@ -45,5 +46,10 @@ describe('build warning regressions', () => {
     expect(typecheckConfigSource).toContain('src/lib/processing-core.ts');
     expect(typecheckConfigSource).toContain('src/lib/processing-path.ts');
     expect(typecheckConfigSource).toContain('src/lib/processing-types.ts');
+  });
+
+  it('authors the ultrahdr wasm bindings in TypeScript instead of JavaScript', () => {
+    expect(existsSync(resolve('src/lib/ultrahdr-wasm.ts'))).toBe(true);
+    expect(existsSync(resolve('src/lib/ultrahdr-wasm.js'))).toBe(false);
   });
 });
