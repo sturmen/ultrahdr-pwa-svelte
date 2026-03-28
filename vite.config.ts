@@ -177,7 +177,7 @@ export default defineConfig({
       },
       strategies: 'injectManifest',
       srcDir: 'src',
-      filename: 'sw.js',
+      filename: 'sw.ts',
       injectManifest: {
         globIgnores: ['**/assets/ultrahdr_wasm.js', '**/assets/ultrahdr_wasm.wasm', '**/assets/libheif.wasm', '**/assets/ort-*.wasm'],
       },

@@ -1,3 +1,5 @@
+/// <reference lib="webworker" />
+
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
 import { clientsClaim } from 'workbox-core';
 import { registerRoute } from 'workbox-routing';
@@ -12,8 +14,69 @@ import {
     RUNTIME_CACHE_PREFIX,
     WASM_ASSET_CACHE_PREFIX,
     buildRuntimeBundleCacheNames,
+    type RuntimeBundleCacheNames,
     resolveRuntimeBundleCacheName,
 } from './lib/runtime-bundle-asset-map.js';
+import type { PrecacheEntry } from 'workbox-precaching';
+
+type ServiceWorkerGlobalScopeWithManifest = ServiceWorkerGlobalScope & typeof globalThis & {
+    __WB_MANIFEST: Array<PrecacheEntry | string>;
+};
+
+type RuntimeBundleAssetRecord = {
+    id: string;
+    url: string;
+    cacheName: string;
+    byteLength: number;
+    sha256: string;
+};
+
+type RuntimeBundleManifest = {
+    bundleVersion: string;
+    requiredAssets: RuntimeBundleAssetRecord[];
+};
+
+type RuntimeBundleDiagnostics = {
+    missingAssetCount?: number;
+    mismatchedAssetCount?: number;
+    missingAssetIds?: string[];
+    mismatchedAssetIds?: string[];
+    failedAssetId?: string;
+    failedAssetUrl?: string;
+    failedAssetStatus?: number | null;
+};
+
+type RuntimeBundleState = 'READY' | 'CORRUPT' | 'EMPTY' | 'FAILED';
+
+type RuntimeBundleValidationResult = {
+    ready: boolean;
+    blocked: boolean;
+    state: RuntimeBundleState;
+    bundleVersion: string;
+    validatedAtMs: number;
+    manifestDigest: string;
+    diagnostics: RuntimeBundleDiagnostics;
+};
+
+type ServiceWorkerMessageType =
+    | 'UHDR_PREPARE_BUNDLE'
+    | 'UHDR_VALIDATE_BUNDLE'
+    | 'UHDR_REPAIR_BUNDLE'
+    | 'UHDR_GET_APP_ASSET_VERSION';
+
+type ServiceWorkerRequestMessage = {
+    type: ServiceWorkerMessageType;
+    messageId?: string | null;
+};
+
+type ServiceWorkerErrorPayload = {
+    type: string;
+    code: string;
+    message: string;
+    stackSnippet: string | null;
+};
+
+declare const self: ServiceWorkerGlobalScopeWithManifest;
 
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
@@ -42,19 +105,19 @@ const LIBHEIF_ASSET_CACHE = CACHE_NAMES.libheifAssets;
 const AI_MODEL_CACHE = CACHE_NAMES.aiModels;
 const ONNX_WASM_CACHE = CACHE_NAMES.onnxWasmAssets;
 
-function resolveBasePath() {
+function resolveBasePath(): string {
     const scope = self.registration?.scope || self.location?.origin || '/';
     const scopeUrl = new URL(scope, self.location.origin);
     return scopeUrl.pathname.endsWith('/') ? scopeUrl.pathname : `${scopeUrl.pathname}/`;
 }
 
-function resolveRuntimeBundleAssetUrl(assetPath) {
+function resolveRuntimeBundleAssetUrl(assetPath: string): string {
     const normalized = String(assetPath || '').replace(/^\/+/, '');
     const absolute = new URL(`${resolveBasePath()}${normalized}`, self.location.origin);
     return absolute.href;
 }
 
-function createRuntimeBundleDigest(manifest) {
+function createRuntimeBundleDigest(manifest: RuntimeBundleManifest): string {
     const payload = JSON.stringify(manifest || {});
     let hash = 2166136261;
     for (let index = 0; index < payload.length; index += 1) {
@@ -64,7 +127,7 @@ function createRuntimeBundleDigest(manifest) {
     return `fnv32:${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-async function sha256HexFromBuffer(buffer) {
+async function sha256HexFromBuffer(buffer: BufferSource): Promise<string> {
     if (!self.crypto?.subtle?.digest) {
         throw new Error('crypto.subtle.digest is unavailable in service worker runtime.');
     }
@@ -74,27 +137,48 @@ async function sha256HexFromBuffer(buffer) {
         .join('');
 }
 
-async function loadRuntimeBundleManifest() {
+function isRuntimeBundleAssetRecord(value: unknown): value is RuntimeBundleAssetRecord {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    const candidate = value as Partial<RuntimeBundleAssetRecord>;
+    return typeof candidate.id === 'string'
+        && typeof candidate.url === 'string'
+        && typeof candidate.cacheName === 'string'
+        && typeof candidate.sha256 === 'string'
+        && Number.isFinite(Number(candidate.byteLength));
+}
+
+function isRuntimeBundleManifest(value: unknown): value is RuntimeBundleManifest {
+    if (!value || typeof value !== 'object') {
+        return false;
+    }
+
+    const candidate = value as Partial<RuntimeBundleManifest>;
+    return typeof candidate.bundleVersion === 'string'
+        && Array.isArray(candidate.requiredAssets)
+        && candidate.requiredAssets.every((asset) => isRuntimeBundleAssetRecord(asset));
+}
+
+async function loadRuntimeBundleManifest(): Promise<RuntimeBundleManifest> {
     const manifestUrl = resolveRuntimeBundleAssetUrl(OFFLINE_BUNDLE_MANIFEST_PATH);
     const response = await fetch(manifestUrl, { credentials: 'same-origin' });
     if (!response?.ok) {
         throw new Error(`Failed to load runtime bundle manifest (${response?.status || 'unknown'}).`);
     }
     const manifest = await response.json();
-    if (
-        !manifest
-        || typeof manifest !== 'object'
-        || typeof manifest.bundleVersion !== 'string'
-        || !Array.isArray(manifest.requiredAssets)
-    ) {
+    if (!isRuntimeBundleManifest(manifest)) {
         throw new Error('Runtime bundle manifest payload is invalid.');
     }
     return manifest;
 }
 
-async function validateRuntimeBundleFromManifest(manifest) {
-    const missingAssets = [];
-    const mismatchedAssets = [];
+async function validateRuntimeBundleFromManifest(
+    manifest: RuntimeBundleManifest,
+): Promise<RuntimeBundleValidationResult> {
+    const missingAssets: Array<Pick<RuntimeBundleAssetRecord, 'id' | 'url'>> = [];
+    const mismatchedAssets: Array<Pick<RuntimeBundleAssetRecord, 'id' | 'url'> & { reason: 'byteLength' | 'sha256' }> = [];
 
     for (const requiredAsset of manifest.requiredAssets) {
         const cacheName = resolveRuntimeBundleCacheName(requiredAsset.url, CACHE_NAMES) || requiredAsset.cacheName;
@@ -143,7 +227,9 @@ async function validateRuntimeBundleFromManifest(manifest) {
     };
 }
 
-async function prepareRuntimeBundleInSw({ force = false } = {}) {
+async function prepareRuntimeBundleInSw(
+    { force = false }: { force?: boolean } = {},
+): Promise<RuntimeBundleValidationResult> {
     const manifest = await loadRuntimeBundleManifest();
     if (!force) {
         const preValidation = await validateRuntimeBundleFromManifest(manifest);
@@ -178,7 +264,7 @@ async function prepareRuntimeBundleInSw({ force = false } = {}) {
     return validateRuntimeBundleFromManifest(manifest);
 }
 
-function postMessageResponse(event, payload) {
+function postMessageResponse(event: ExtendableMessageEvent, payload: unknown): void {
     if (event.ports?.[0]) {
         event.ports[0].postMessage(payload);
         return;
@@ -188,27 +274,27 @@ function postMessageResponse(event, payload) {
     }
 }
 
-function isUltraHdrWasmAssetUrl(url) {
+function isUltraHdrWasmAssetUrl(url: URL): boolean {
     return /\/assets\/(ultrahdr_wasm|jpegli_wasm|jpegtran_wasm)\.(js|wasm)$/.test(url.pathname);
 }
 
-function isLibheifWasmAssetUrl(url) {
+function isLibheifWasmAssetUrl(url: URL): boolean {
     return /\/assets\/libheif\.wasm$/.test(url.pathname);
 }
 
-function isAiModelUrl(url) {
+function isAiModelUrl(url: URL): boolean {
     return /\/models\/.*\.onnx(\.data)?$/.test(url.pathname);
 }
 
-function isAiModelManifestUrl(url) {
+function isAiModelManifestUrl(url: URL): boolean {
     return /\/models\/.*\.onnx$/.test(url.pathname);
 }
 
-function isSmokeAssetUrl(url) {
+function isSmokeAssetUrl(url: URL): boolean {
     return /\/models\/gmnet-smoke-128\.png$/.test(url.pathname);
 }
 
-function isVersionedCacheName(cacheName, cachePrefix) {
+function isVersionedCacheName(cacheName: string, cachePrefix: string): boolean {
     return cacheName === cachePrefix || cacheName.startsWith(`${cachePrefix}-`);
 }
 
@@ -343,7 +429,7 @@ registerRoute(
     })
 );
 
-function isOnnxWasmAssetUrl(url) {
+function isOnnxWasmAssetUrl(url: URL): boolean {
     return /\/assets\/ort-wasm.*\.wasm$/.test(url.pathname);
 }
 
@@ -377,7 +463,7 @@ registerRoute(
     })
 );
 
-function redirectToApp(url, params = {}) {
+function redirectToApp(url: URL, params: Record<string, string> = {}): Response {
     const redirectUrl = new URL(url);
     redirectUrl.pathname = redirectUrl.pathname.replace(/_share-target$/, '');
     Object.entries(params).forEach(([key, value]) => {
@@ -386,19 +472,20 @@ function redirectToApp(url, params = {}) {
     return Response.redirect(redirectUrl.href, 303);
 }
 
-function mapStatusMessage(error = null) {
+function mapStatusMessage(error: unknown = null): ServiceWorkerErrorPayload {
+    const candidate = error as Partial<Error & { code?: string }>;
     return {
-        type: error?.name || 'Error',
-        code: error?.code || 'SW_BUNDLE_COMMAND_FAILED',
-        message: String(error?.message || error || 'Service worker command failed.'),
-        stackSnippet: typeof error?.stack === 'string'
-            ? error.stack.split('\n').slice(0, 6).join('\n')
+        type: candidate?.name || 'Error',
+        code: candidate?.code || 'SW_BUNDLE_COMMAND_FAILED',
+        message: String(candidate?.message || error || 'Service worker command failed.'),
+        stackSnippet: typeof candidate?.stack === 'string'
+            ? candidate.stack.split('\n').slice(0, 6).join('\n')
             : null,
     };
 }
 
 self.addEventListener('message', (event) => {
-    const message = event?.data;
+    const message = event.data as ServiceWorkerRequestMessage | null;
     if (!message || typeof message !== 'object') {
         return;
     }
@@ -416,7 +503,7 @@ self.addEventListener('message', (event) => {
 
     event.waitUntil((async () => {
         try {
-            let result;
+            let result: RuntimeBundleValidationResult | { appAssetVersion: string };
             if (messageType === UHDR_VALIDATE_BUNDLE) {
                 const manifest = await loadRuntimeBundleManifest();
                 result = await validateRuntimeBundleFromManifest(manifest);
@@ -480,8 +567,8 @@ self.addEventListener('fetch', (event) => {
 
                     await storeSharedFiles(files);
                     return redirectToApp(url, { 'share-target': 'true' });
-                } catch (e) {
-                    console.error('Share Target Error:', e);
+                } catch (error: unknown) {
+                    console.error('Share Target Error:', error);
                     return redirectToApp(url, { error: 'share_failed' });
                 }
             })()

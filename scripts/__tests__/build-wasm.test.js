@@ -107,14 +107,14 @@ describe('ultrahdr wasm dimension guard', () => {
   });
 
   it('includes jpegtran wasm assets in the service worker cache matcher', () => {
-    const swPath = path.resolve(process.cwd(), 'src/sw.js');
+    const swPath = path.resolve(process.cwd(), 'src/sw.ts');
     const swContent = fs.readFileSync(swPath, 'utf8');
     expect(swContent).toMatch(/jpegtran_wasm/);
     expect(swContent).toMatch(/isUltraHdrWasmAssetUrl/);
   });
 
   it('supports runtime bundle prepare/validate/repair message commands in the service worker', () => {
-    const swPath = path.resolve(process.cwd(), 'src/sw.js');
+    const swPath = path.resolve(process.cwd(), 'src/sw.ts');
     const swContent = fs.readFileSync(swPath, 'utf8');
     expect(swContent).toMatch(/UHDR_PREPARE_BUNDLE/);
     expect(swContent).toMatch(/UHDR_VALIDATE_BUNDLE/);
