@@ -1,3 +1,4 @@
+import { isFirefoxRuntime } from './runtime-detection.ts';
 import { normalizeExecutionProvider } from './runtime-contract.ts';
 
 const DEFAULT_INFERENCE_TIMEOUT_MS = 180_000;
@@ -20,11 +21,6 @@ type WorkerInitTimeoutOptions = {
   defaultTimeoutMs?: number;
   firefoxTimeoutMs?: number;
 };
-
-function isFirefoxRuntime(runtime: RuntimeLike = globalThis): boolean {
-  const userAgent = String(runtime?.navigator?.userAgent || '');
-  return /firefox\//i.test(userAgent);
-}
 
 export function canUseProcessingWorker(runtime: RuntimeLike = globalThis): boolean {
   return (

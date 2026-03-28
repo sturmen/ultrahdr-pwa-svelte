@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
   import DropZone from "./DropZone.svelte";
+  import MobileInferenceWarningDialog from "./MobileInferenceWarningDialog.svelte";
   import OfflineReadinessCard from "./OfflineReadinessCard.svelte";
   import { getCapabilities } from "./capabilities.js";
   import JSZip from "jszip";
@@ -60,6 +61,20 @@
     createInputPreviewTask,
     INPUT_PREVIEW_PLACEHOLDER_URL,
   } from "./input-preview.ts";
+  import {
+    isMobileInferenceAcknowledgementValid,
+    isSupportedDesktopChromeBrowser,
+    MOBILE_INFERENCE_ACKNOWLEDGEMENT,
+  } from "./image-processor-gate.ts";
+  import { deriveQueueUiState } from "./image-processor-queue.ts";
+  import {
+    estimatePipelineProgress,
+    formatMs,
+    formatExecutionProviderLabel,
+    getSlowestStage,
+    getStageLabel,
+    toBatchProgress,
+  } from "./image-processor-progress.ts";
 
   export let files = [];
   export let launchSource = "regular";
@@ -186,79 +201,11 @@
   const VIEWER_DOUBLE_TAP_DELAY_MS = 300;
   const VIEWER_DOUBLE_TAP_DISTANCE_PX = 24;
   const VIEWER_DESKTOP_CHROME_IDLE_MS = 1600;
-  const MOBILE_INFERENCE_ACKNOWLEDGEMENT =
-    "I will also try Chrome on Windows or macOS";
-
-  const PROGRESS_STAGE_ORDER = [
-    "wasm-load",
-    "preprocess-file",
-    "read-source-buffer",
-    "detect-ultrahdr",
-    "read-input-data-url",
-    "extract-exif",
-    "decode-image-data",
-    "constrain-sdr-image",
-    "apply-rotation",
-    "prepare-gmnet-input",
-    "generate-gain-map",
-    "compress-components",
-    "encode-init",
-    "rotate-sdr-image",
-    "rotate-gain-map-image",
-    "encode-sdr-to-jpeg",
-    "encode-gain-map-to-jpeg",
-    "encode-set-base-image",
-    "encode-set-gain-map-image",
-    "encode-ultrahdr",
-    "finalize-preserved",
-    "rotate-preserved-ultrahdr",
-    "finalize-output",
-  ];
-
-  const PROGRESS_STAGE_LABELS = {
-    "wasm-load": "Loading encoder",
-    "preprocess-file": "Preparing input",
-    "read-source-buffer": "Reading source data",
-    "detect-ultrahdr": "Checking for existing gain map",
-    "read-input-data-url": "Reading image",
-    "extract-exif": "Extracting metadata",
-    "decode-image-data": "Decoding pixels",
-    "constrain-sdr-image": "Constraining output dimensions",
-    "apply-rotation": "Applying rotation",
-    "prepare-gmnet-input": "Preparing GMNet input",
-    "generate-gain-map": "Generating gain map",
-    "compress-components": "Compressing components",
-    "encode-init": "Initializing encoder",
-    "rotate-sdr-image": "Rotating SDR image",
-    "rotate-gain-map-image": "Rotating gain map image",
-    "encode-sdr-to-jpeg": "Encoding SDR JPEG",
-    "encode-gain-map-to-jpeg": "Encoding gain map JPEG",
-    "encode-set-base-image": "Preparing base image",
-    "encode-set-gain-map-image": "Preparing gain map image",
-    "encode-ultrahdr": "Encoding UltraHDR output",
-    "finalize-preserved": "Finalizing preserved output",
-    "rotate-preserved-ultrahdr": "Rotating preserved UltraHDR",
-    "finalize-output": "Finalizing output",
-  };
-
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
   $: showSettingsPanel = isDesktopLayout;
   $: shouldRestrictInferenceBrowser =
     !isSupportedDesktopChromeBrowser(capabilities);
-  $: staleCount = queue.filter(
-    (item) => item.status === QUEUE_ITEM_STATES.STALE,
-  ).length;
-  $: queuePendingCount = queue.filter(
-    (item) =>
-      item.status === QUEUE_ITEM_STATES.QUEUED ||
-      item.status === QUEUE_ITEM_STATES.PROCESSING,
-  ).length;
-  $: queueCompletedCount = queue.filter(
-    (item) =>
-      item.status === QUEUE_ITEM_STATES.COMPLETED ||
-      item.status === QUEUE_ITEM_STATES.STALE,
-  ).length;
   $: workflowCards = selectWorkflowCards({
     mode: "idle",
     activeQueueId: currentQueueId,
@@ -275,31 +222,28 @@
       nextQueueId,
     }),
   );
-  $: canPauseQueue =
-    workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
-    workflowState === WORKFLOW_STATES.PROCESSING_PAUSING;
-  $: canResumeQueue = workflowState === WORKFLOW_STATES.PROCESSING_PAUSED;
-  $: canCancelCurrent = processing && currentQueueId !== null;
+  $: queueUiState = deriveQueueUiState({
+    queue,
+    workflowState,
+    processing,
+    currentQueueId,
+    exportableQueueIds,
+    selectedQueueIds,
+  });
+  $: staleCount = queueUiState.staleCount;
+  $: queuePendingCount = queueUiState.queuePendingCount;
+  $: queueCompletedCount = queueUiState.queueCompletedCount;
+  $: canPauseQueue = queueUiState.canPauseQueue;
+  $: canResumeQueue = queueUiState.canResumeQueue;
+  $: canCancelCurrent = queueUiState.canCancelCurrent;
   $: showPreservedGainMapNotice =
     !discardGainMap &&
     (currentProcessingPath === "preserved" ||
       lastCompletedProcessingPath === "preserved");
-  $: queueControlVisibility = canPauseQueue
-    ? "pause"
-    : canResumeQueue
-      ? "resume"
-      : "hidden";
-  $: failedQueueCount = queue.filter(
-    (item) => item.status === QUEUE_ITEM_STATES.FAILED,
-  ).length;
-  $: showQueueOverflow =
-    canCancelCurrent || failedQueueCount > 0 || queue.length > 0;
-  $: selectionToggleState =
-    exportableQueueIds.size === 0 || selectedQueueIds.size === 0
-      ? "none"
-      : selectedQueueIds.size === exportableQueueIds.size
-        ? "all"
-        : "partial";
+  $: queueControlVisibility = queueUiState.queueControlVisibility;
+  $: failedQueueCount = queueUiState.failedQueueCount;
+  $: showQueueOverflow = queueUiState.showQueueOverflow;
+  $: selectionToggleState = queueUiState.selectionToggleState;
   $: hasShareCapability =
     typeof navigator !== "undefined" &&
     typeof navigator.canShare === "function";
@@ -309,11 +253,7 @@
     }
     return Number(result.rotation || 0) !== Number(rotation || 0);
   });
-  $: showPipelineCompleteSummary =
-    workflowState === WORKFLOW_STATES.PROCESSING_DONE &&
-    !processing &&
-    queuePendingCount === 0 &&
-    queueCompletedCount > 0;
+  $: showPipelineCompleteSummary = queueUiState.showPipelineCompleteSummary;
   $: showPipelineStatusCard =
     processing || latestPipelineEvent || showPipelineCompleteSummary;
   $: if (showStalePrompt && staleCount === 0) {
@@ -388,53 +328,12 @@
     }
   }
 
-  function formatMs(ms) {
-    const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
-    if (safeMs < 1000) return `${Math.round(safeMs)} ms`;
-    return `${(safeMs / 1000).toFixed(2)} s`;
-  }
-
-  function getSlowestStage(stageDurationsMs) {
-    if (!stageDurationsMs) return null;
-    const entries = Object.entries(stageDurationsMs).sort(
-      (a, b) => b[1] - a[1],
-    );
-    if (entries.length === 0) return null;
-    const [name, duration] = entries[0];
-    return `${name} (${formatMs(duration)})`;
-  }
-
-  function clampPercent(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      return 0;
-    }
-    return Math.max(0, Math.min(100, numeric));
-  }
-
   function normalizeExecutionProvider(value) {
     if (typeof value !== "string") {
       return null;
     }
     const normalized = value.trim().toLowerCase();
     return normalized || null;
-  }
-
-  function isSupportedDesktopChromeBrowser(inputCapabilities) {
-    const userAgent = String(inputCapabilities?.userAgent || "").toLowerCase();
-    const isMobileOs = inputCapabilities?.isAndroid || inputCapabilities?.isIOS;
-    const isDesktopPlatform =
-      !isMobileOs &&
-      !/android|iphone|ipad|ipod|mobile/.test(userAgent);
-    const isChromeOrChromium =
-      userAgent.includes("chromium") || userAgent.includes("chrome/");
-    const isExcludedChromiumVariant =
-      userAgent.includes("edg/") ||
-      userAgent.includes("edgios") ||
-      userAgent.includes("opr/") ||
-      userAgent.includes("opera");
-
-    return isDesktopPlatform && isChromeOrChromium && !isExcludedChromiumVariant;
   }
 
   function normalizeProcessingPath(value) {
@@ -510,77 +409,6 @@
       return fromField;
     }
     return parseExecutionProviderFromNote(event?.note);
-  }
-
-  function formatExecutionProviderLabel(provider) {
-    const normalized = normalizeExecutionProvider(provider);
-    if (!normalized) {
-      return "";
-    }
-    if (normalized === "webgpu") {
-      return "WebGPU";
-    }
-    if (normalized === "webgl") {
-      return "WebGL";
-    }
-    if (normalized === "wasm") {
-      return "WASM";
-    }
-    return normalized;
-  }
-
-  function getStageLabel(stage, phase) {
-    if (phase === "pipeline-complete") return "Complete";
-    if (phase === "pipeline-error") return "Processing failed";
-    if (phase === "pipeline-start") return "Starting pipeline";
-    if (!stage) return "Processing";
-    return PROGRESS_STAGE_LABELS[stage] || stage;
-  }
-
-  function estimatePipelineProgress(event, previousProgress = 0) {
-    if (!event) return previousProgress;
-    if (event.phase === "pipeline-start") return 0;
-    if (event.phase === "pipeline-complete") return 100;
-
-    const stage = event.stage;
-    const stageIndex = PROGRESS_STAGE_ORDER.indexOf(stage);
-    if (stageIndex < 0) return previousProgress;
-
-    const segmentSize = 100 / PROGRESS_STAGE_ORDER.length;
-    const segmentStart = stageIndex * segmentSize;
-    const segmentEnd = segmentStart + segmentSize;
-
-    let stageProgress = previousProgress;
-    if (event.phase === "stage-progress") {
-      stageProgress =
-        segmentStart +
-        ((segmentEnd - segmentStart) * clampPercent(event.stageProgress)) / 100;
-    } else if (event.phase === "stage-complete") {
-      stageProgress = segmentEnd;
-    } else if (event.phase === "stage-start") {
-      stageProgress = segmentStart + segmentSize * 0.08;
-    } else if (
-      event.phase === "stage-error" ||
-      event.phase === "pipeline-error"
-    ) {
-      stageProgress = Math.max(previousProgress, segmentStart);
-    }
-    return Math.max(previousProgress, Math.min(100, stageProgress));
-  }
-
-  function toBatchProgress(perFileProgress, fileIndex, totalFiles) {
-    const safeProgress = clampPercent(perFileProgress);
-    const safeIndex = Number(fileIndex);
-    const safeTotal = Number(totalFiles);
-    if (
-      !Number.isFinite(safeIndex) ||
-      !Number.isFinite(safeTotal) ||
-      safeTotal <= 0
-    ) {
-      return safeProgress;
-    }
-    const clampedIndex = Math.max(0, Math.min(safeTotal - 1, safeIndex));
-    return ((clampedIndex + safeProgress / 100) / safeTotal) * 100;
   }
 
   function resetProgressUi() {
@@ -691,7 +519,10 @@
         } else {
           aiModelStatusVisible = true;
           aiModelStatusMessage = note || "Running AI inference...";
-          aiModelStatusProgress = clampPercent(event.stageProgress);
+          aiModelStatusProgress = Math.max(
+            0,
+            Math.min(100, Number(event.stageProgress) || 0),
+          );
         }
       }
     }
@@ -711,7 +542,10 @@
     );
 
     if (phase === "stage-progress") {
-      pipelineStageProgress = clampPercent(event.stageProgress);
+      pipelineStageProgress = Math.max(
+        0,
+        Math.min(100, Number(event.stageProgress) || 0),
+      );
     } else if (phase === "stage-complete" || phase === "pipeline-complete") {
       pipelineStageProgress = 100;
     } else if (phase === "stage-start") {
@@ -746,7 +580,9 @@
           progress: {
             stage: String(event?.stage || "pipeline"),
             label: String(event?.note || pipelineStatusLabel || "Processing"),
-            percent: Math.round(clampPercent(event?.stageProgress)),
+            percent: Math.round(
+              Math.max(0, Math.min(100, Number(event?.stageProgress) || 0)),
+            ),
             visible: true,
           },
         });
@@ -2132,14 +1968,6 @@
     return true;
   }
 
-  function isMobileInferenceAcknowledgementValid(value) {
-    return (
-      typeof value === "string" &&
-      value.trim().toLowerCase() ===
-        MOBILE_INFERENCE_ACKNOWLEDGEMENT.toLowerCase()
-    );
-  }
-
   function closeMobileInferenceWarning() {
     mobileInferenceWarningOpen = false;
     mobileInferenceChallengeValue = "";
@@ -3415,62 +3243,16 @@
     </div>
   {/if}
 
-  {#if mobileInferenceWarningOpen}
-    <div class="blocking-modal-backdrop" aria-hidden="true"></div>
-    <div
-      class="blocking-modal-card"
-      data-testid="mobile-inference-warning-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mobile-inference-warning-title"
-      aria-describedby="mobile-inference-warning-description"
-    >
-      <h3 id="mobile-inference-warning-title">
-        This browser has severe memory limitations
-      </h3>
-      <p
-        class="help-text blocking-modal-copy"
-        id="mobile-inference-warning-description"
-      >
-        This webapp may require more memory than your browser permits. Please
-        try Chrome on Windows or macOS.
-      </p>
-      <p class="help-text blocking-modal-copy">
-        Type "{MOBILE_INFERENCE_ACKNOWLEDGEMENT}" to proceed anyway.
-      </p>
-      <input
-        type="text"
-        class="blocking-modal-input"
-        data-testid="mobile-inference-warning-input"
-        bind:value={mobileInferenceChallengeValue}
-        aria-label="Type the browser warning acknowledgement to proceed"
-        autocomplete="off"
-        autocapitalize="off"
-        spellcheck="false"
-      />
-      <div class="blocking-modal-actions">
-        <button
-          type="button"
-          class="secondary"
-          data-testid="mobile-inference-warning-cancel"
-          on:click={cancelMobileInferenceWarning}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="primary"
-          data-testid="mobile-inference-warning-proceed"
-          on:click={proceedWithMobileInferenceWarning}
-          disabled={!isMobileInferenceAcknowledgementValid(
-            mobileInferenceChallengeValue,
-          )}
-        >
-          Continue
-        </button>
-      </div>
-    </div>
-  {/if}
+  <MobileInferenceWarningDialog
+    open={mobileInferenceWarningOpen}
+    acknowledgement={MOBILE_INFERENCE_ACKNOWLEDGEMENT}
+    bind:value={mobileInferenceChallengeValue}
+    isValid={isMobileInferenceAcknowledgementValid(
+      mobileInferenceChallengeValue,
+    )}
+    onCancel={cancelMobileInferenceWarning}
+    onProceed={proceedWithMobileInferenceWarning}
+  />
 
   {#if openSheet !== "none"}
     <button
@@ -4451,59 +4233,6 @@
     margin: 0;
     background: rgba(7, 11, 14, 0.28);
     z-index: 29;
-  }
-
-  .blocking-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(7, 11, 14, 0.55);
-    z-index: 34;
-  }
-
-  .blocking-modal-card {
-    position: fixed;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: min(92vw, 420px);
-    padding: 1rem;
-    border-radius: 20px;
-    border: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--surface-active) 98%, transparent);
-    box-shadow: var(--shadow-lg);
-    z-index: 35;
-    display: grid;
-    gap: 0.75rem;
-  }
-
-  .blocking-modal-card h3 {
-    margin: 0;
-    font-size: 1rem;
-  }
-
-  .blocking-modal-copy {
-    margin: 0;
-  }
-
-  .blocking-modal-input {
-    width: 100%;
-    min-height: 44px;
-    padding: 0.7rem 0.8rem;
-    border-radius: 12px;
-    border: 1px solid var(--border-subtle);
-    background: color-mix(in srgb, var(--surface-color) 94%, transparent);
-    color: var(--text-color);
-    font-size: 0.95rem;
-    box-sizing: border-box;
-  }
-
-  .blocking-modal-actions {
-    display: flex;
-    gap: 0.55rem;
-  }
-
-  .blocking-modal-actions button {
-    flex: 1;
   }
 
   .photo-viewer-modal {

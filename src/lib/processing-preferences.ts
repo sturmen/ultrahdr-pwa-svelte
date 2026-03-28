@@ -2,7 +2,10 @@ import {
   clampMaxContentBoostStops,
   DEFAULT_MAX_CONTENT_BOOST_STOPS,
 } from './max-content-boost.js';
-import { isChromiumRuntime } from './runtime-browser.ts';
+import {
+  isChromiumRuntime,
+  isSafariLikeRuntime,
+} from './runtime-detection.ts';
 export const PROCESSING_PREFERENCES_STORAGE_KEY = 'ultrahdr:processing-preferences:v1';
 
 export const LEGACY_BACKEND_PREFERENCE_STORAGE_KEY = 'ultrahdr:backend-preference:v1';
@@ -78,26 +81,6 @@ function normalizeBoolean(value, fallback) {
     return value;
   }
   return fallback;
-}
-
-function isWebKitRuntime(runtime = globalThis) {
-  const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
-  if (!userAgent.includes('applewebkit')) {
-    return false;
-  }
-  if (
-    userAgent.includes('chrome')
-    || userAgent.includes('chromium')
-    || userAgent.includes('crios')
-    || userAgent.includes('firefox')
-    || userAgent.includes('fxios')
-    || userAgent.includes('edg/')
-    || userAgent.includes('edgios')
-    || userAgent.includes('opr/')
-  ) {
-    return false;
-  }
-  return true;
 }
 
 export function normalizeProcessingPreferences(rawPreferences, runtime = globalThis) {
@@ -190,7 +173,7 @@ export function saveProcessingPreferences(preferences, runtime = globalThis) {
 export function resolveCheckpointingForRun(preference, runtime = globalThis) {
   const normalizedPreference = normalizeCheckpointingPreference(preference);
   if (normalizedPreference === 'auto') {
-    return isWebKitRuntime(runtime) ? 'force' : 'off';
+    return isSafariLikeRuntime(runtime) ? 'force' : 'off';
   }
   return normalizedPreference;
 }

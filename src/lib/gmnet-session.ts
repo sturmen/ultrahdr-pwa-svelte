@@ -2,6 +2,12 @@ import * as ortWebGpu from 'onnxruntime-web/webgpu';
 import type { Env, InferenceSession, Tensor as OrtTensor } from 'onnxruntime-common';
 import { GMNET_MAX_LONG_EDGE, IMAGE_MAX_LONG_EDGE } from './constants.js';
 import { hasWebGlSupport, isChromiumRuntime, isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
+import {
+    isFirefoxRuntime as isFirefoxDetectedRuntime,
+    isMobileRuntime,
+    isWebKitRuntime as isWebKitDetectedRuntime,
+    isWindowsRuntime as isWindowsDetectedRuntime,
+} from './runtime-detection.ts';
 import { resizeRasterImageSync } from './raster-image.ts';
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
@@ -165,25 +171,15 @@ function resolveModelBasePath(): string {
 }
 
 function isWindowsRuntime(runtime: GmnetRuntime = globalThis): boolean {
-    const navigatorRef = runtime?.navigator;
-    const userAgent = String(navigatorRef?.userAgent || '').toLowerCase();
-    const platform = String(navigatorRef?.platform || '').toLowerCase();
-    return userAgent.includes('windows') || platform.startsWith('win');
+    return isWindowsDetectedRuntime(runtime);
 }
 
 function isWebKitRuntime(runtime: GmnetRuntime = globalThis): boolean {
-    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
-    if (!userAgent.includes('applewebkit')) {
-        return false;
-    }
-    return !userAgent.includes('chrome')
-        && !userAgent.includes('chromium')
-        && !userAgent.includes('edg/');
+    return isWebKitDetectedRuntime(runtime) && !isChromiumRuntime(runtime);
 }
 
 function isFirefoxRuntime(runtime: GmnetRuntime = globalThis): boolean {
-    const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
-    return userAgent.includes('firefox/');
+    return isFirefoxDetectedRuntime(runtime);
 }
 
 const DEFAULT_WASM_THREAD_COUNT = 1;
@@ -294,18 +290,7 @@ export class ProbeStateManager {
 }
 
 export function isMobileDevice(runtime: GmnetRuntime = globalThis): boolean {
-    const navigatorRef = runtime?.navigator;
-    const userAgent = String(navigatorRef?.userAgent || '').toLowerCase();
-    const maxTouchPoints = Number(navigatorRef?.maxTouchPoints || 0) || 0;
-
-    if (/android|iphone|ipod|mobile/.test(userAgent)) {
-        return true;
-    }
-    // iPad reports as macOS but has touch
-    if (/(macintosh|mac os x)/.test(userAgent) && maxTouchPoints > 1) {
-        return true;
-    }
-    return false;
+    return isMobileRuntime(runtime);
 }
 
 export async function binarySearchMaxCapability(

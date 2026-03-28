@@ -38,6 +38,10 @@ import {
   createInitialProcessingRuntimeState,
   reduceProcessingRuntimeState,
 } from './processing-runtime-reducer.ts';
+import {
+  isIOSLikeRuntime,
+  isSafariLikeRuntime,
+} from './runtime-detection.ts';
 
 const WORKER_SUPPORT_ERROR = 'Processing worker is unavailable in this environment.';
 const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
@@ -181,22 +185,13 @@ function buildWorkerRuntimeCapabilities(runtime = globalThis) {
   };
 }
 
-function isWebKitRuntime(runtime = globalThis) {
-  const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
-  if (!userAgent.includes('applewebkit')) {
+function isIPhoneWebKitRuntime(runtime = globalThis) {
+  if (!isSafariLikeRuntime(runtime) || !isIOSLikeRuntime(runtime)) {
     return false;
   }
-  return !userAgent.includes('chrome')
-    && !userAgent.includes('chromium')
-    && !userAgent.includes('crios')
-    && !userAgent.includes('fxios')
-    && !userAgent.includes('edgios');
-}
-
-function isIPhoneWebKitRuntime(runtime = globalThis) {
   const userAgent = String(runtime?.navigator?.userAgent || '').toLowerCase();
   const platform = String(runtime?.navigator?.platform || '').toLowerCase();
-  return isWebKitRuntime(runtime) && (
+  return (
     userAgent.includes('iphone')
     || platform.includes('iphone')
     || userAgent.includes('ipod')

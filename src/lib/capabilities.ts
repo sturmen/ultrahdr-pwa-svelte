@@ -1,3 +1,5 @@
+import { getRuntimeDetectionProfile } from './runtime-detection.ts';
+
 type RuntimeNavigatorLike = {
   userAgent?: string;
   deviceMemory?: number;
@@ -74,17 +76,7 @@ export function getCapabilities(runtimeOverrides: RuntimeOverrides = {}): Capabi
   const runtime = { ...getDefaultRuntime(), ...runtimeOverrides };
   const nav: RuntimeNavigatorLike = runtime.navigator || {};
   const win: RuntimeWindowLike = runtime.window || {};
-  const userAgent = String(nav.userAgent || '');
-  const lowerUa = userAgent.toLowerCase();
-  const maxTouchPoints = Number(nav.maxTouchPoints || 0);
-
-  const isAndroid = /android/.test(lowerUa);
-  const isIOS =
-    /(iphone|ipad|ipod)/.test(lowerUa) ||
-    (/(macintosh|mac os x)/.test(lowerUa) && maxTouchPoints > 1);
-  const isSafari =
-    /safari/.test(lowerUa) &&
-    !/(chrome|chromium|crios|edg|opr|firefox|fxios)/.test(lowerUa);
+  const profile = getRuntimeDetectionProfile(runtime);
   const isStandalone =
     Boolean(nav.standalone) ||
     (typeof win.matchMedia === 'function' &&
@@ -99,11 +91,11 @@ export function getCapabilities(runtimeOverrides: RuntimeOverrides = {}): Capabi
     'serviceWorker' in nav;
 
   return {
-    userAgent,
+    userAgent: profile.userAgent,
     deviceMemory: normalizeDeviceMemory(nav.deviceMemory),
-    isIOS,
-    isAndroid,
-    isSafari,
+    isIOS: profile.isIOSLike,
+    isAndroid: profile.isAndroid,
+    isSafari: profile.isSafariLike,
     isStandalone,
     supportsShare: typeof nav.share === 'function',
     supportsFileShare: hasFileShareSupport(nav),
