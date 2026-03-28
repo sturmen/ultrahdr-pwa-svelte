@@ -2,6 +2,67 @@ import {
   buildRuntimeBundleCacheNames,
   resolveRuntimeBundleCacheName,
 } from './runtime-bundle-asset-map.js';
+
+type BundleState = typeof BUNDLE_STATES[keyof typeof BUNDLE_STATES];
+type BundleDiagnostics = Record<string, unknown> | null;
+type HashBufferFn = (buffer: ArrayBuffer, runtime?: typeof globalThis) => Promise<string>;
+type BundleStatusListener = (event: BundleResult) => void;
+type BundleDecision = {
+  mode: string;
+} & Record<string, unknown>;
+type PersistedManifestAsset = {
+  id: string;
+  url: string;
+  cacheName: string;
+  sha256: string;
+  byteLength?: number | null;
+  kind?: string;
+};
+type PersistedManifest = {
+  bundleVersion: string;
+  requiredAssets: PersistedManifestAsset[];
+};
+type BundleRecord = {
+  bundleVersion: string | null;
+  ready: boolean;
+  state: BundleState;
+  validatedAtMs: number | null;
+  manifestDigest: string | null;
+  resolvedExecutionProviderHint: string | null;
+  diagnosticsSummary: BundleDiagnostics;
+  cachedManifest: PersistedManifest | null;
+};
+type BundleResult = {
+  ready: boolean;
+  blocked?: boolean;
+  state: BundleState;
+  bundleVersion: string | null;
+  validatedAtMs: number | null;
+  manifestDigest?: string | null;
+  diagnostics: BundleDiagnostics;
+  swCommand?: Record<string, unknown>;
+};
+type BundleRuntime = typeof globalThis & {
+  localStorage?: Pick<Storage, 'getItem' | 'setItem'> | null;
+  navigator?: Navigator & {
+    onLine?: boolean;
+    serviceWorker?: ServiceWorkerContainer | {
+      controller?: { postMessage?: (message: unknown, transfer?: Transferable[]) => void } | null;
+      ready?: Promise<ServiceWorkerRegistration | null>;
+    };
+  };
+  caches?: CacheStorage;
+  fetch?: typeof fetch;
+  crypto?: Crypto;
+  performance?: Performance;
+};
+type BundleOptions = {
+  runtime?: BundleRuntime;
+  manifest?: PersistedManifest;
+  loadManifest?: (options?: { runtime?: BundleRuntime }) => Promise<PersistedManifest>;
+  hashBuffer?: HashBufferFn;
+};
+
 const OFFLINE_BUNDLE_MANIFEST_PATH = 'models/runtime-bundle-manifest.json';
 export const OFFLINE_BUNDLE_STORAGE_KEY = 'ultrahdr:offline-bundle:v1';
 
@@ -15,16 +76,16 @@ export const BUNDLE_STATES = Object.freeze({
   FAILED: 'FAILED',
 });
 
-const bundleStatusListeners = new Set();
-let inflightEnsurePromise = null;
-let inflightPreparePromise = null;
+const bundleStatusListeners = new Set<BundleStatusListener>();
+let inflightEnsurePromise: Promise<BundleResult> | null = null;
+let inflightPreparePromise: Promise<BundleResult> | null = null;
 const CACHE_NAMES = buildRuntimeBundleCacheNames(
   typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
     ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
     : '',
 );
 
-function nowMs(runtime = globalThis) {
+function nowMs(runtime: BundleRuntime = globalThis): number {
   const performanceNow = runtime?.performance?.now;
   if (typeof performanceNow === 'function') {
     return Math.floor(performanceNow.call(runtime?.performance));
@@ -32,21 +93,21 @@ function nowMs(runtime = globalThis) {
   return Date.now();
 }
 
-function resolveBaseUrl() {
+function resolveBaseUrl(): string {
   const baseUrl = import.meta.env.BASE_URL || '/';
   return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 }
 
-function resolveAssetUrl(assetPath) {
+function resolveAssetUrl(assetPath: string): string {
   const normalized = String(assetPath || '').replace(/^\/+/, '');
   return `${resolveBaseUrl()}${normalized}`;
 }
 
-function resolveManifestUrl() {
+function resolveManifestUrl(): string {
   return resolveAssetUrl(OFFLINE_BUNDLE_MANIFEST_PATH);
 }
 
-function normalizeBundleState(state) {
+function normalizeBundleState(state: unknown): BundleState {
   if (typeof state !== 'string') {
     return BUNDLE_STATES.EMPTY;
   }
@@ -57,7 +118,7 @@ function normalizeBundleState(state) {
   return BUNDLE_STATES.EMPTY;
 }
 
-function readBundleRecord(runtime = globalThis) {
+function readBundleRecord(runtime: BundleRuntime = globalThis): BundleRecord | null {
   const storage = runtime?.localStorage;
   if (!storage || typeof storage.getItem !== 'function') {
     return null;
@@ -68,7 +129,7 @@ function readBundleRecord(runtime = globalThis) {
     if (!raw) {
       return null;
     }
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') {
       return null;
     }
@@ -88,13 +149,17 @@ function readBundleRecord(runtime = globalThis) {
         parsed.diagnosticsSummary && typeof parsed.diagnosticsSummary === 'object'
           ? { ...parsed.diagnosticsSummary }
           : null,
+      cachedManifest:
+        parsed.cachedManifest && typeof parsed.cachedManifest === 'object'
+          ? validateManifest(parsed.cachedManifest)
+          : null,
     };
   } catch {
     return null;
   }
 }
 
-function writeBundleRecord(record, runtime = globalThis) {
+function writeBundleRecord(record: BundleRecord, runtime: BundleRuntime = globalThis): void {
   const storage = runtime?.localStorage;
   if (!storage || typeof storage.setItem !== 'function') {
     return;
@@ -107,7 +172,7 @@ function writeBundleRecord(record, runtime = globalThis) {
   }
 }
 
-function emitBundleStatus(event) {
+function emitBundleStatus(event: BundleResult): void {
   for (const listener of bundleStatusListeners) {
     try {
       listener(event);
@@ -117,7 +182,7 @@ function emitBundleStatus(event) {
   }
 }
 
-export function subscribeBundleStatus(listener) {
+export function subscribeBundleStatus(listener: BundleStatusListener | unknown): () => void {
   if (typeof listener !== 'function') {
     return () => {};
   }
@@ -128,7 +193,7 @@ export function subscribeBundleStatus(listener) {
   };
 }
 
-function createManifestDigest(manifest) {
+function createManifestDigest(manifest: unknown): string {
   const payload = JSON.stringify(manifest || {});
   let hash = 2166136261;
   for (let index = 0; index < payload.length; index += 1) {
@@ -138,7 +203,7 @@ function createManifestDigest(manifest) {
   return `fnv32:${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-async function hashBufferDefault(buffer, runtime = globalThis) {
+async function hashBufferDefault(buffer: ArrayBuffer, runtime: BundleRuntime = globalThis): Promise<string> {
   const subtle = runtime?.crypto?.subtle || globalThis?.crypto?.subtle;
   if (!subtle || typeof subtle.digest !== 'function') {
     throw new Error('crypto.subtle.digest is unavailable for bundle hash verification.');
@@ -150,7 +215,7 @@ async function hashBufferDefault(buffer, runtime = globalThis) {
     .join('');
 }
 
-function validateManifest(manifest) {
+function validateManifest(manifest: unknown): PersistedManifest {
   if (!manifest || typeof manifest !== 'object') {
     throw new Error('Runtime bundle manifest is invalid.');
   }
@@ -182,7 +247,7 @@ function validateManifest(manifest) {
   return manifest;
 }
 
-async function loadManifestDefault({ runtime = globalThis } = {}) {
+async function loadManifestDefault({ runtime = globalThis }: { runtime?: BundleRuntime } = {}): Promise<PersistedManifest> {
   const fetchFn = runtime?.fetch || globalThis.fetch;
   if (typeof fetchFn !== 'function') {
     throw new Error('fetch is unavailable for runtime bundle manifest loading.');
@@ -198,7 +263,15 @@ async function loadManifestDefault({ runtime = globalThis } = {}) {
   return validateManifest(manifest);
 }
 
-function buildDiagnosticsSummary({ missingAssets = [], mismatchedAssets = [], staleVersion = false } = {}) {
+function buildDiagnosticsSummary({
+  missingAssets = [],
+  mismatchedAssets = [],
+  staleVersion = false,
+}: {
+  missingAssets?: Array<{ id: string }>;
+  mismatchedAssets?: Array<{ id: string }>;
+  staleVersion?: boolean;
+} = {}): Record<string, unknown> {
   return {
     missingAssetCount: missingAssets.length,
     mismatchedAssetCount: mismatchedAssets.length,
@@ -208,11 +281,11 @@ function buildDiagnosticsSummary({ missingAssets = [], mismatchedAssets = [], st
   };
 }
 
-function cloneDiagnosticsObject(value) {
+function cloneDiagnosticsObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? { ...value } : null;
 }
 
-function summarizeServiceWorkerCommandFailure(error) {
+function summarizeServiceWorkerCommandFailure(error: unknown): Record<string, unknown> | null {
   if (!error || typeof error !== 'object') {
     return null;
   }
@@ -227,20 +300,30 @@ function summarizeServiceWorkerCommandFailure(error) {
   };
 }
 
-function mergeDiagnostics(baseDiagnostics, extraDiagnostics = null) {
+function mergeDiagnostics(
+  baseDiagnostics: unknown,
+  extraDiagnostics: Record<string, unknown> | null = null,
+): Record<string, unknown> {
   const base = cloneDiagnosticsObject(baseDiagnostics) || {};
   const extra = cloneDiagnosticsObject(extraDiagnostics);
   return extra ? { ...base, ...extra } : base;
 }
 
-function createOfflineBundleDecision(mode, extras = {}) {
+function createOfflineBundleDecision(
+  mode: string,
+  extras: Record<string, unknown> = {},
+): BundleDecision {
   return {
     mode,
     ...extras,
   };
 }
 
-function createAssetValidationSummary(missingAssets = [], mismatchedAssets = [], assetChecks = []) {
+function createAssetValidationSummary(
+  missingAssets: Array<{ id: string }> = [],
+  mismatchedAssets: Array<{ id: string }> = [],
+  assetChecks: Record<string, unknown>[] = [],
+): Record<string, unknown> {
   return {
     missingAssetCount: missingAssets.length,
     mismatchedAssetCount: mismatchedAssets.length,
@@ -255,7 +338,16 @@ async function validateAssetsFromManifest({
   manifest,
   cacheStorage,
   hashBuffer,
-}) {
+}: {
+  runtime?: BundleRuntime;
+  manifest: PersistedManifest;
+  cacheStorage: CacheStorage;
+  hashBuffer: HashBufferFn;
+}): Promise<{
+  missingAssets: Array<{ id: string; url: string }>;
+  mismatchedAssets: Array<{ id: string; url: string; reason: string }>;
+  assetChecks: Record<string, unknown>[];
+}> {
   const missingAssets = [];
   const mismatchedAssets = [];
   const assetChecks = [];
@@ -338,11 +430,117 @@ async function validateAssetsFromManifest({
   return { missingAssets, mismatchedAssets, assetChecks };
 }
 
-function resolveRuntimeStartupOnline(runtime = globalThis) {
+function resolveRuntimeStartupOnline(runtime: BundleRuntime = globalThis): boolean {
   return runtime?.navigator?.onLine !== false;
 }
 
-async function invokeServiceWorkerBundleCommand(runtime, type, timeoutMs = 20_000) {
+function isReachabilityError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  const message = typeof (error as { message?: unknown })?.message === 'string'
+    ? String((error as { message: string }).message).toLowerCase()
+    : '';
+  return message.includes('failed to fetch')
+    || message.includes('networkerror')
+    || message.includes('load failed')
+    || message.includes('network request failed');
+}
+
+function createTrustedReadyFallbackResult(
+  record: BundleRecord,
+  fallbackReason: string,
+  extraDiagnostics: Record<string, unknown> | null = null,
+): BundleResult {
+  return {
+    ready: true,
+    blocked: false,
+    state: record.state || BUNDLE_STATES.READY,
+    bundleVersion: record.bundleVersion || null,
+    validatedAtMs: record.validatedAtMs || null,
+    manifestDigest: record.manifestDigest || null,
+    diagnostics: mergeDiagnostics(record.diagnosticsSummary, {
+      offlineFallbackUsed: true,
+      fallbackReason,
+      ...(extraDiagnostics || {}),
+      offlineBundleDecision: createOfflineBundleDecision('cached-ready-record', {
+        fallbackReason,
+      }),
+    }),
+  };
+}
+
+async function resolveReachabilityFallback({
+  runtime,
+  record,
+  hashBuffer,
+  manifestError,
+}: {
+  runtime: BundleRuntime;
+  record: BundleRecord | null;
+  hashBuffer: HashBufferFn;
+  manifestError: unknown;
+}): Promise<BundleResult> {
+  const manifestFetchError = summarizeServiceWorkerCommandFailure(manifestError) || {
+    message: typeof (manifestError as { message?: unknown })?.message === 'string'
+      ? String((manifestError as { message: string }).message)
+      : String(manifestError),
+  };
+
+  if (record?.ready === true && record.cachedManifest) {
+    const validationResult = await validateBundle({
+      runtime,
+      manifest: record.cachedManifest,
+      hashBuffer,
+    });
+    if (validationResult.ready) {
+      return {
+        ...validationResult,
+        blocked: false,
+        diagnostics: mergeDiagnostics(validationResult.diagnostics, {
+          offlineFallbackUsed: true,
+          fallbackReason: 'manifest-fetch-failed-cached-manifest',
+          manifestFetchError,
+          offlineBundleDecision: createOfflineBundleDecision('cached-manifest-validation', {
+            fallbackReason: 'manifest-fetch-failed-cached-manifest',
+          }),
+        }),
+      };
+    }
+    if (validationResult.state === BUNDLE_STATES.CORRUPT) {
+      return {
+        ...validationResult,
+        blocked: true,
+      };
+    }
+  }
+
+  if (record?.ready === true) {
+    return createTrustedReadyFallbackResult(record, 'manifest-fetch-failed-ready-record', {
+      manifestFetchError,
+    });
+  }
+
+  const state = record?.state || BUNDLE_STATES.EMPTY;
+  return {
+    ready: false,
+    blocked: true,
+    state,
+    bundleVersion: record?.bundleVersion || null,
+    validatedAtMs: record?.validatedAtMs || null,
+    diagnostics: mergeDiagnostics(record?.diagnosticsSummary, {
+      reason: 'offline-without-ready-bundle',
+      manifestFetchError,
+      offlineBundleDecision: createOfflineBundleDecision('blocked-offline-without-ready-bundle'),
+    }),
+  };
+}
+
+async function invokeServiceWorkerBundleCommand(
+  runtime: BundleRuntime,
+  type: string,
+  timeoutMs = 20_000,
+): Promise<Record<string, unknown> | null> {
   const serviceWorkerContainer = runtime?.navigator?.serviceWorker;
   let messageTarget = serviceWorkerContainer?.controller || null;
   let commandSource = 'missing-target';
@@ -455,7 +653,18 @@ async function invokeServiceWorkerBundleCommand(runtime, type, timeoutMs = 20_00
   });
 }
 
-export function decideRuntimeStartup({ online, bundleState }) {
+export function decideRuntimeStartup({
+  online,
+  bundleState,
+}: {
+  online: boolean;
+  bundleState: unknown;
+}): {
+  startupMode: string;
+  allowRuntimeInit: boolean;
+  blockReason: string | null;
+  repairAction: string;
+} {
   const normalizedState = normalizeBundleState(bundleState);
   if (normalizedState === BUNDLE_STATES.READY) {
     return {
@@ -483,7 +692,9 @@ export function decideRuntimeStartup({ online, bundleState }) {
   };
 }
 
-export function getBundleStatus(runtime = globalThis) {
+export function getBundleStatus(runtime: BundleRuntime = globalThis): BundleResult & {
+  resolvedExecutionProviderHint?: string | null;
+} {
   const record = readBundleRecord(runtime);
   if (!record) {
     return {
@@ -509,7 +720,11 @@ export async function getBundleManifestSummary({
   runtime = globalThis,
   manifest,
   loadManifest = loadManifestDefault,
-} = {}) {
+}: BundleOptions = {}): Promise<{
+  bundleVersion: string;
+  assetCount: number;
+  totalBytes: number;
+}> {
   const resolvedManifest = validateManifest(
     manifest || (await loadManifest({ runtime })),
   );
@@ -533,7 +748,7 @@ export async function validateBundle({
   manifest,
   loadManifest = loadManifestDefault,
   hashBuffer = hashBufferDefault,
-} = {}) {
+}: BundleOptions = {}): Promise<BundleResult> {
   let serviceWorkerValidationError = null;
   try {
     const swResult = await invokeServiceWorkerBundleCommand(runtime, 'UHDR_VALIDATE_BUNDLE');
@@ -549,6 +764,7 @@ export async function validateBundle({
         manifestDigest: swResult.manifestDigest || existingRecord?.manifestDigest || null,
         resolvedExecutionProviderHint: existingRecord?.resolvedExecutionProviderHint || null,
         diagnosticsSummary: swResult.diagnostics || null,
+        cachedManifest: existingRecord?.cachedManifest || null,
       }, runtime);
       emitBundleStatus(swResult);
       return swResult;
@@ -585,7 +801,9 @@ export async function validateBundle({
       state: result.state,
       validatedAtMs: result.validatedAtMs,
       manifestDigest: result.manifestDigest,
+      resolvedExecutionProviderHint: null,
       diagnosticsSummary: diagnostics,
+      cachedManifest: resolvedManifest,
     }, runtime);
     emitBundleStatus(result);
     return result;
@@ -642,6 +860,7 @@ export async function validateBundle({
     manifestDigest: result.manifestDigest,
     resolvedExecutionProviderHint: existingRecord?.resolvedExecutionProviderHint || null,
     diagnosticsSummary: diagnosticsWithChecks,
+    cachedManifest: resolvedManifest,
   }, runtime);
 
   emitBundleStatus(result);
@@ -656,7 +875,11 @@ async function prepareBundleInternal({
   hashBuffer = hashBufferDefault,
   stateOverride = BUNDLE_STATES.PREPARING,
   diagnosticsAugmentations = null,
-} = {}) {
+}: BundleOptions & {
+  force?: boolean;
+  stateOverride?: BundleState;
+  diagnosticsAugmentations?: Record<string, unknown> | null;
+} = {}): Promise<BundleResult> {
   const resolvedManifest = validateManifest(
     manifest || (await loadManifest({ runtime })),
   );
@@ -678,6 +901,7 @@ async function prepareBundleInternal({
     manifestDigest: createManifestDigest(resolvedManifest),
     resolvedExecutionProviderHint: currentRecord?.resolvedExecutionProviderHint || null,
     diagnosticsSummary: null,
+    cachedManifest: resolvedManifest,
   }, runtime);
 
   const fetchFn = runtime?.fetch || globalThis.fetch;
@@ -704,6 +928,7 @@ async function prepareBundleInternal({
       manifestDigest: failedResult.manifestDigest,
       resolvedExecutionProviderHint: currentRecord?.resolvedExecutionProviderHint || null,
       diagnosticsSummary: diagnostics,
+      cachedManifest: resolvedManifest,
     }, runtime);
     emitBundleStatus(failedResult);
     return failedResult;
@@ -754,6 +979,7 @@ async function prepareBundleInternal({
         manifestDigest: failedResult.manifestDigest,
         resolvedExecutionProviderHint: currentRecord?.resolvedExecutionProviderHint || null,
         diagnosticsSummary: diagnostics,
+        cachedManifest: resolvedManifest,
       }, runtime);
       emitBundleStatus(failedResult);
       return failedResult;
@@ -790,7 +1016,7 @@ async function prepareBundleInternal({
   return prepared;
 }
 
-export async function prepareBundle(options = {}) {
+export async function prepareBundle(options: BundleOptions = {}): Promise<BundleResult> {
   if (inflightPreparePromise) {
     return inflightPreparePromise;
   }
@@ -814,6 +1040,7 @@ export async function prepareBundle(options = {}) {
           manifestDigest: swResult.manifestDigest || existingRecord?.manifestDigest || null,
           resolvedExecutionProviderHint: existingRecord?.resolvedExecutionProviderHint || null,
           diagnosticsSummary: swResult.diagnostics || null,
+          cachedManifest: existingRecord?.cachedManifest || null,
         }, runtime);
         emitBundleStatus(swResult);
         return swResult;
@@ -836,7 +1063,7 @@ export async function prepareBundle(options = {}) {
   return inflightPreparePromise;
 }
 
-export async function repairBundle(options = {}) {
+export async function repairBundle(options: BundleOptions = {}): Promise<BundleResult> {
   try {
     const runtime = options?.runtime || globalThis;
     const swResult = await invokeServiceWorkerBundleCommand(runtime, 'UHDR_REPAIR_BUNDLE');
@@ -852,6 +1079,7 @@ export async function repairBundle(options = {}) {
         manifestDigest: swResult.manifestDigest || existingRecord?.manifestDigest || null,
         resolvedExecutionProviderHint: existingRecord?.resolvedExecutionProviderHint || null,
         diagnosticsSummary: swResult.diagnostics || null,
+        cachedManifest: existingRecord?.cachedManifest || null,
       }, runtime);
       emitBundleStatus(swResult);
       return swResult;
@@ -880,7 +1108,7 @@ export async function ensureBundleReady({
   runtime = globalThis,
   loadManifest = loadManifestDefault,
   hashBuffer = hashBufferDefault,
-} = {}) {
+}: BundleOptions = {}): Promise<BundleResult> {
   if (inflightEnsurePromise) {
     return inflightEnsurePromise;
   }
@@ -988,31 +1216,43 @@ export async function ensureBundleReady({
       return blockedResult;
     }
 
-    const manifest = await loadManifest({ runtime });
+    try {
+      const manifest = await loadManifest({ runtime });
 
-    if (record?.ready === true && record.bundleVersion === manifest.bundleVersion) {
-      const validationResult = await validateBundle({ runtime, manifest, hashBuffer });
-      if (validationResult.ready) {
+      if (record?.ready === true && record.bundleVersion === manifest.bundleVersion) {
+        const validationResult = await validateBundle({ runtime, manifest, hashBuffer });
+        if (validationResult.ready) {
+          return {
+            ...validationResult,
+            blocked: false,
+          };
+        }
+      }
+
+      const prepared = await prepareBundle({ runtime, manifest, loadManifest, hashBuffer });
+      if (prepared.ready) {
         return {
-          ...validationResult,
+          ...prepared,
           blocked: false,
         };
       }
-    }
 
-    const prepared = await prepareBundle({ runtime, manifest, loadManifest, hashBuffer });
-    if (prepared.ready) {
+      const repaired = await repairBundle({ runtime, manifest, loadManifest, hashBuffer });
       return {
-        ...prepared,
+        ...repaired,
         blocked: false,
       };
+    } catch (error) {
+      if (!isReachabilityError(error)) {
+        throw error;
+      }
+      return resolveReachabilityFallback({
+        runtime,
+        record,
+        hashBuffer,
+        manifestError: error,
+      });
     }
-
-    const repaired = await repairBundle({ runtime, manifest, loadManifest, hashBuffer });
-    return {
-      ...repaired,
-      blocked: false,
-    };
   })().finally(() => {
     inflightEnsurePromise = null;
   });
@@ -1020,7 +1260,10 @@ export async function ensureBundleReady({
   return inflightEnsurePromise;
 }
 
-export async function setBundleProviderHint(provider, runtime = globalThis) {
+export async function setBundleProviderHint(
+  provider: string,
+  runtime: BundleRuntime = globalThis,
+): Promise<void> {
   if (typeof provider !== 'string' || provider.trim().length === 0) {
     return;
   }
