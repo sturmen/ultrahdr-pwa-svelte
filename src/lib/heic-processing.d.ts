@@ -1,1 +1,1 @@
-export { processHeic } from './heic-processing.ts';
+export { decodeHeifPreviewImage, processHeic } from './heic-processing.ts';

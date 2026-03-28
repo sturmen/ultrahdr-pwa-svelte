@@ -56,7 +56,10 @@
     classifyInputProcessingPath,
     probeInputProcessingPathFromHeaders,
   } from "./processing-path.js";
-  import { imageDataToJpegBlob, loadImageData, resizeImageData } from "./image-utils.js";
+  import {
+    createInputPreviewTask,
+    INPUT_PREVIEW_PLACEHOLDER_URL,
+  } from "./input-preview.ts";
 
   export let files = [];
   export let launchSource = "regular";
@@ -1222,11 +1225,62 @@
       settingsVersion: settingsVersion,
       error: null,
       processingPath: "unknown",
-      inputPreviewUrl: URL.createObjectURL(file),
+      inputPreviewUrl: INPUT_PREVIEW_PLACEHOLDER_URL,
       outputPreviewUrl: null,
       result: null,
       progress: null,
     }));
+  }
+
+  function revokePreviewUrl(url) {
+    if (typeof url === "string" && url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function storeQueueItemPreviewBlob(queueId, previewBlob) {
+    await storeQueuePreviewBlob(queueId, previewBlob);
+    const previewUrl = URL.createObjectURL(previewBlob);
+    updateQueueItem(queueId, (item) => {
+      revokePreviewUrl(item.inputPreviewUrl);
+      return {
+        ...item,
+        inputPreviewUrl: previewUrl,
+      };
+    });
+  }
+
+  async function resolvePreviewTaskForFile(file) {
+    try {
+      return await createInputPreviewTask(file);
+    } catch (previewError) {
+      console.warn("[UI] Failed to create input preview:", previewError);
+      return null;
+    }
+  }
+
+  function scheduleDeferredPreview(queueId, previewTaskPromise) {
+    void previewTaskPromise
+      .then((previewBlob) => storeQueueItemPreviewBlob(queueId, previewBlob))
+      .catch((previewError) => {
+        console.warn("[UI] Failed to finish deferred input preview:", previewError);
+      });
+  }
+
+  async function assignInitialPreviewForQueueItem(queueItem, previewTask) {
+    if (!previewTask) {
+      queueItem.inputPreviewUrl = INPUT_PREVIEW_PLACEHOLDER_URL;
+      return;
+    }
+
+    if (previewTask.status === "ready") {
+      await storeQueuePreviewBlob(queueItem.id, previewTask.blob);
+      queueItem.inputPreviewUrl = URL.createObjectURL(previewTask.blob);
+      return;
+    }
+
+    queueItem.inputPreviewUrl = INPUT_PREVIEW_PLACEHOLDER_URL;
+    scheduleDeferredPreview(queueItem.id, previewTask.promise);
   }
 
   function summarizeQueueRestore(resumedCount, missingCount) {
@@ -1284,6 +1338,7 @@
   async function restoreQueueFromSnapshot(snapshot) {
     const restoredQueue = [];
     const restoredResults = [];
+    const deferredPreviews = [];
     let resumedCount = 0;
     let missingCount = 0;
 
@@ -1299,7 +1354,6 @@
         item.status === QUEUE_ITEM_STATES.QUEUED ||
         item.status === QUEUE_ITEM_STATES.PROCESSING;
 
-      const previewSource = storedPreview || storedInput || storedOutput;
       if (isPendingItem && !storedInput) {
         missingCount += 1;
         restoredQueue.push({
@@ -1310,7 +1364,9 @@
           settingsVersion: item.settingsVersion,
           error: "Restore failed: input missing",
           processingPath: item.processingPath,
-          inputPreviewUrl: previewSource ? URL.createObjectURL(previewSource) : "",
+          inputPreviewUrl: storedPreview
+            ? URL.createObjectURL(storedPreview)
+            : INPUT_PREVIEW_PLACEHOLDER_URL,
           outputPreviewUrl: null,
           result: null,
           progress: null,
@@ -1318,7 +1374,21 @@
         continue;
       }
 
-      const inputPreviewUrl = previewSource ? URL.createObjectURL(previewSource) : "";
+      let inputPreviewUrl = storedPreview
+        ? URL.createObjectURL(storedPreview)
+        : INPUT_PREVIEW_PLACEHOLDER_URL;
+      if (!storedPreview && storedInput) {
+        const previewTask = await resolvePreviewTaskForFile(storedInput);
+        if (previewTask?.status === "ready") {
+          await storeQueuePreviewBlob(item.id, previewTask.blob);
+          inputPreviewUrl = URL.createObjectURL(previewTask.blob);
+        } else if (previewTask?.status === "pending") {
+          deferredPreviews.push({
+            queueId: item.id,
+            promise: previewTask.promise,
+          });
+        }
+      }
       const outputPreviewUrl = storedOutput ? URL.createObjectURL(storedOutput) : null;
       const normalizedStatus =
         item.status === QUEUE_ITEM_STATES.PROCESSING
@@ -1366,23 +1436,8 @@
       results: restoredResults,
       resumedCount,
       missingCount,
+      deferredPreviews,
     };
-  }
-
-  async function createPreviewBlob(file) {
-    try {
-      const maxDimension = 256;
-      const { imageData } = await loadImageData(file);
-      const sourceWidth = imageData.width || 1;
-      const sourceHeight = imageData.height || 1;
-      const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
-      const previewWidth = Math.max(1, Math.round(sourceWidth * scale));
-      const previewHeight = Math.max(1, Math.round(sourceHeight * scale));
-      const resized = await resizeImageData(imageData, previewWidth, previewHeight);
-      return await imageDataToJpegBlob(resized, 0.7);
-    } catch {
-      return file;
-    }
   }
 
   async function ensureStorageCapacity(requiredBytes) {
@@ -1407,13 +1462,8 @@
 
     const queueItem = createQueueItems([file])[0];
     await storeQueueInputFile(queueItem.id, file);
-    const previewBlob = await createPreviewBlob(file);
-    await storeQueuePreviewBlob(queueItem.id, previewBlob);
-
-    if (queueItem.inputPreviewUrl) {
-      URL.revokeObjectURL(queueItem.inputPreviewUrl);
-    }
-    queueItem.inputPreviewUrl = URL.createObjectURL(previewBlob);
+    const previewTask = await resolvePreviewTaskForFile(file);
+    await assignInitialPreviewForQueueItem(queueItem, previewTask);
     return queueItem;
   }
 
@@ -1857,6 +1907,9 @@
       restored.resumedCount,
       restored.missingCount,
     );
+    restored.deferredPreviews.forEach((previewTask) => {
+      scheduleDeferredPreview(previewTask.queueId, previewTask.promise);
+    });
 
     if (restored.resumedCount > 0) {
       startQueue();
@@ -2386,10 +2439,10 @@
     if (queueId !== undefined) {
       const queueItem = queue.find((item) => item.id === queueId);
       if (queueItem?.inputPreviewUrl) {
-        URL.revokeObjectURL(queueItem.inputPreviewUrl);
+        revokePreviewUrl(queueItem.inputPreviewUrl);
       }
       if (queueItem?.outputPreviewUrl) {
-        URL.revokeObjectURL(queueItem.outputPreviewUrl);
+        revokePreviewUrl(queueItem.outputPreviewUrl);
       }
       queue = queue.filter((item) => item.id !== queueId);
       files = [];

@@ -245,6 +245,19 @@ export async function processHeic(
     return _decodeHandleToImageData(heif, primaryImage.handle);
 }
 
+export async function decodeHeifPreviewImage(file: File): Promise<DecodedRasterImage> {
+    const heif = await initLibHeif();
+    const arrayBuffer = await file.arrayBuffer();
+    const decoder = new heif.HeifDecoder();
+    const data = decoder.decode(arrayBuffer);
+
+    if (!data || data.length === 0) {
+        throw new Error('No images found in HEIC file');
+    }
+
+    return _decodeHandleToImageData(heif, data[0].handle);
+}
+
 /**
  * Check if an RGBA gain map candidate is monochrome (R ≈ G ≈ B).
  * Apple gain maps are 8-bit grayscale. If the image has significant

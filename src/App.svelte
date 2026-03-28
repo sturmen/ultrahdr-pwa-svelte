@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onMount, tick } from "svelte";
   import ImageProcessor from "./lib/ImageProcessor.svelte";
   import InitializationGate from "./lib/InitializationGate.svelte";
@@ -17,26 +17,59 @@
   } from "./lib/pwa-updater.js";
 
   const version = import.meta.env.VITE_APP_VERSION || "dev";
+  const ABOUT_HASH = "#about";
 
-  let files = [];
+  type AppView = "converter" | "about";
+  type LaunchIntent = {
+    action: string | null;
+    tab: string | null;
+  };
+  type RuntimeInitStep = {
+    id: string;
+    label: string;
+    status: string;
+    note: string;
+    diagnostics: Record<string, unknown> | null;
+    errorCode: string | null;
+  };
+  type RuntimeInitFailure = {
+    stepId: string;
+    stepLabel: string;
+    errorCode: string;
+    userMessage: string;
+    message: string;
+    diagnostics: Record<string, unknown>;
+  };
+  type RuntimeInitError = Error & {
+    stepId?: string;
+    code?: string;
+    userMessage?: string;
+    diagnostics?: Record<string, unknown>;
+    stackSnippet?: string;
+  };
+  type PopStateAppHistory = {
+    appView?: AppView;
+  };
+
+  let files: File[] = [];
   let shareLaunchChecked = false;
-  let launchSource = "regular";
-  let launchIntent = { action: null, tab: null };
-  let activeView = "converter";
+  let launchSource: "regular" | "share-target" = "regular";
+  let launchIntent: LaunchIntent = { action: null, tab: null };
+  let activeView: AppView = "converter";
   let isProcessingBusy = false;
   let pwaUpdateState = createDefaultPwaUpdateState();
-  let pwaUpdateCoordinator = null;
-  let runtimeInitState = "running";
-  let runtimeInitSteps = createRuntimeInitSteps();
-  let runtimeInitFailure = null;
+  let pwaUpdateCoordinator: ReturnType<typeof createPwaUpdateCoordinator> | null = null;
+  let runtimeInitState: "running" | "ready" | "failed" = "running";
+  let runtimeInitSteps: RuntimeInitStep[] = createRuntimeInitSteps();
+  let runtimeInitFailure: RuntimeInitFailure | null = null;
   let runtimeInitRunId = 0;
-  let runtimeInitExecutionProvider = null;
-  let runtimeInitMode = null;
+  let runtimeInitExecutionProvider: string | null = null;
+  let runtimeInitMode: string | null = null;
   let runtimeInitDegraded = false;
   let appDisposed = false;
   const processingRuntime = createProcessingRuntime();
 
-  function createRuntimeInitSteps() {
+  function createRuntimeInitSteps(): RuntimeInitStep[] {
     return RUNTIME_INIT_STEP_ORDER.map((stepId) => ({
       id: stepId,
       label: RUNTIME_INIT_STEP_LABELS[stepId] || stepId,
@@ -47,14 +80,14 @@
     }));
   }
 
-  function withStackSnippet(stack) {
+  function withStackSnippet(stack: string | undefined): string | null {
     if (typeof stack !== "string" || stack.length === 0) {
       return null;
     }
     return stack.split("\n").slice(0, 8).join("\n");
   }
 
-  function findRuntimeStepLabel(stepId) {
+  function findRuntimeStepLabel(stepId: string): string {
     return (
       RUNTIME_INIT_STEP_LABELS[stepId] ||
       runtimeInitSteps.find((step) => step.id === stepId)?.label ||
@@ -63,7 +96,10 @@
     );
   }
 
-  function updateRuntimeStep(stepId, changes = {}) {
+  function updateRuntimeStep(
+    stepId: string | undefined,
+    changes: Partial<RuntimeInitStep> = {},
+  ): void {
     if (!stepId) {
       return;
     }
@@ -96,7 +132,7 @@
     );
   }
 
-  function normalizeExecutionProvider(value) {
+  function normalizeExecutionProvider(value: unknown): string | null {
     if (typeof value !== "string") {
       return null;
     }
@@ -104,33 +140,39 @@
     return normalized || null;
   }
 
-  function applyRuntimeProgressEvent(event) {
+  function applyRuntimeProgressEvent(event: Record<string, unknown> | null | undefined): void {
     if (!event || typeof event !== "object") {
       return;
     }
-    const stepId = event.stepId;
+    const stepId = typeof event.stepId === "string" ? event.stepId : "";
     if (!stepId) {
       return;
     }
     updateRuntimeStep(stepId, {
-      label: event.stepLabel || findRuntimeStepLabel(stepId),
-      status: event.status || "pending",
-      note: event.note || "",
+      label:
+        typeof event.stepLabel === "string"
+          ? event.stepLabel
+          : findRuntimeStepLabel(stepId),
+      status: typeof event.status === "string" ? event.status : "pending",
+      note: typeof event.note === "string" ? event.note : "",
       diagnostics:
         event.diagnostics && typeof event.diagnostics === "object"
-          ? { ...event.diagnostics }
+          ? { ...event.diagnostics as Record<string, unknown> }
           : null,
       errorCode: typeof event.errorCode === "string" ? event.errorCode : null,
     });
   }
 
   function buildRuntimeInitFailure(
-    error,
+    error: RuntimeInitError,
     {
       runtimeInitProgressTrace = null,
       runtimeInitFailureHistory = null,
+    }: {
+      runtimeInitProgressTrace?: unknown[] | null;
+      runtimeInitFailureHistory?: unknown[] | null;
     } = {},
-  ) {
+  ): RuntimeInitFailure {
     const stepId =
       typeof error?.stepId === "string" && error.stepId.length > 0
         ? error.stepId
@@ -176,7 +218,11 @@
     };
   }
 
-  async function runRuntimeInitialization({ forceRetry = false } = {}) {
+  async function runRuntimeInitialization({
+    forceRetry = false,
+  }: {
+    forceRetry?: boolean;
+  } = {}): Promise<boolean> {
     const runId = ++runtimeInitRunId;
     runtimeInitState = "running";
     runtimeInitFailure = null;
@@ -191,7 +237,7 @@
       );
       const runtimeResult = await processingRuntime.initialize({
         forceRetry,
-        onProgress: (event) => {
+        onProgress: (event: Record<string, unknown>) => {
           if (appDisposed || runId !== runtimeInitRunId) {
             return;
           }
@@ -241,7 +287,7 @@
     }
   }
 
-  async function initializeLaunchContext() {
+  async function initializeLaunchContext(): Promise<void> {
     launchIntent = parseLaunchIntent(
       typeof window !== "undefined" ? window.location.search : "",
     );
@@ -256,7 +302,11 @@
     await maybeAutoPickImages();
   }
 
-  async function bootApp({ forceRetry = false } = {}) {
+  async function bootApp({
+    forceRetry = false,
+  }: {
+    forceRetry?: boolean;
+  } = {}): Promise<void> {
     if (!forceRetry && runtimeInitState === "ready") {
       return;
     }
@@ -275,15 +325,55 @@
     isProcessingBusy = false;
   }
 
-  function openAbout() {
+  function resolveActiveViewFromLocation(): AppView {
+    if (typeof window === "undefined") {
+      return "converter";
+    }
+    return window.location.hash === ABOUT_HASH ? "about" : "converter";
+  }
+
+  function buildViewUrl(view: AppView): string {
+    if (typeof window === "undefined") {
+      return "/";
+    }
+    const { pathname, search } = window.location;
+    return view === "about" ? `${pathname}${search}${ABOUT_HASH}` : `${pathname}${search}`;
+  }
+
+  function syncHistoryForView(view: AppView, mode: "push" | "replace" = "push"): void {
+    if (typeof window === "undefined" || !window.history) {
+      return;
+    }
+    const state: PopStateAppHistory = { appView: view };
+    const url = buildViewUrl(view);
+    if (mode === "replace") {
+      window.history.replaceState(state, "", url);
+      return;
+    }
+    window.history.pushState(state, "", url);
+  }
+
+  function openAbout(): void {
     activeView = "about";
+    if (typeof window !== "undefined" && window.location.hash !== ABOUT_HASH) {
+      syncHistoryForView("about", "push");
+    }
   }
 
-  function openConverter() {
+  function openConverter(): void {
+    if (
+      typeof window !== "undefined" &&
+      window.location.hash === ABOUT_HASH &&
+      (window.history.state as PopStateAppHistory | null)?.appView === "about"
+    ) {
+      window.history.back();
+      return;
+    }
     activeView = "converter";
+    syncHistoryForView("converter", "replace");
   }
 
-  function parseLaunchIntent(search) {
+  function parseLaunchIntent(search: string): LaunchIntent {
     const params = new URLSearchParams(search || "");
     const action = params.get("action");
     const tab = params.get("tab");
@@ -293,7 +383,7 @@
     };
   }
 
-  function resolveRuntimeInitOverrides(search) {
+  function resolveRuntimeInitOverrides(search: string): Record<string, unknown> | null {
     const params = new URLSearchParams(search || "");
     const smokeAssetPath = params.get("__uhdr_test_smoke_asset_path");
     const modelVariant = params.get("__uhdr_test_model_variant");
@@ -318,7 +408,7 @@
     return Object.keys(options).length > 0 ? options : null;
   }
 
-  async function maybeAutoPickImages() {
+  async function maybeAutoPickImages(): Promise<void> {
     if (launchIntent.action !== "pick" || files.length > 0) return;
     await tick();
     const input =
@@ -329,7 +419,7 @@
     }
   }
 
-  function handleProcessingBusyChange(event) {
+  function handleProcessingBusyChange(event: CustomEvent<{ busy?: boolean }>): void {
     isProcessingBusy = Boolean(event.detail?.busy);
     pwaUpdateCoordinator?.setBusy(isProcessingBusy);
   }
@@ -350,12 +440,13 @@
     await pwaUpdateCoordinator?.repairOfflineReadiness?.();
   }
 
-  function handleRuntimeRetry() {
+  function handleRuntimeRetry(): void {
     void bootApp({ forceRetry: true });
   }
 
   onMount(() => {
     appDisposed = false;
+    activeView = resolveActiveViewFromLocation();
     registerLaunchQueueConsumer();
     pwaUpdateCoordinator = createPwaUpdateCoordinator({
       onStateChange: (nextState) => {
@@ -363,11 +454,20 @@
       },
       isBusy: () => isProcessingBusy,
     });
+    const handlePopState = () => {
+      activeView = resolveActiveViewFromLocation();
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("popstate", handlePopState);
+    }
 
     void bootApp();
 
     return () => {
       appDisposed = true;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("popstate", handlePopState);
+      }
       pwaUpdateCoordinator?.dispose();
       pwaUpdateCoordinator = null;
     };
@@ -386,9 +486,9 @@
         class="topbar-link"
         type="button"
         data-testid="app-about-link"
-        on:click={openAbout}
+        on:click={activeView === "about" ? openConverter : openAbout}
       >
-        About
+        {activeView === "about" ? "Back to Converter" : "About"}
       </button>
     {/if}
   </header>
@@ -501,13 +601,6 @@
   {/if}
 
   <footer class="footer">
-    {#if runtimeInitState === "ready"}
-      {#if activeView === "about"}
-        <button class="footer-link" type="button" on:click={openConverter}
-          >Back to Converter</button
-        >
-      {/if}
-    {/if}
     <a href="https://gregbenzphotography.com/hdr/#whatishdr">What is HDR?</a>
     <a href="https://github.com/sturmen/ultrahdr-pwa-svelte">Source code</a>
     <span>Version {version}</span>
