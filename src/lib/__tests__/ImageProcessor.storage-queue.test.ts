@@ -6,6 +6,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 
 const storageMocks = vi.hoisted(() => ({
   runtimeProcessMock: vi.fn(),
+  loadQueueStateMock: vi.fn(async () => null),
+  storeQueueStateMock: vi.fn(async () => {}),
+  clearQueueStateMock: vi.fn(async () => {}),
+  normalizePersistedQueueStateMock: vi.fn((snapshot) => snapshot),
   storeQueueInputFileMock: vi.fn(async () => {}),
   getQueueInputFileMock: vi.fn(async (_queueId: number) => null),
   storeQueueOutputBlobMock: vi.fn(async () => {}),
@@ -23,6 +27,10 @@ const storageMocks = vi.hoisted(() => ({
 
 const {
   runtimeProcessMock,
+  loadQueueStateMock,
+  storeQueueStateMock,
+  clearQueueStateMock,
+  normalizePersistedQueueStateMock,
   storeQueueInputFileMock,
   getQueueInputFileMock,
   storeQueueOutputBlobMock,
@@ -35,9 +43,10 @@ const {
 } = storageMocks;
 
 vi.mock('../share-store.ts', () => ({
-  clearQueueState: vi.fn(async () => {}),
-  loadQueueState: vi.fn(async () => null),
-  storeQueueState: vi.fn(async () => {}),
+  clearQueueState: storageMocks.clearQueueStateMock,
+  loadQueueState: storageMocks.loadQueueStateMock,
+  normalizePersistedQueueState: storageMocks.normalizePersistedQueueStateMock,
+  storeQueueState: storageMocks.storeQueueStateMock,
   storeQueueInputFile: storageMocks.storeQueueInputFileMock,
   getQueueInputFile: storageMocks.getQueueInputFileMock,
   storeQueueOutputBlob: storageMocks.storeQueueOutputBlobMock,
@@ -96,6 +105,17 @@ function makeFiles(count = 1) {
 describe('ImageProcessor storage-backed queue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loadQueueStateMock.mockReset();
+    loadQueueStateMock.mockResolvedValue(null);
+    normalizePersistedQueueStateMock.mockReset();
+    normalizePersistedQueueStateMock.mockImplementation((snapshot) => snapshot);
+    getQueueInputFileMock.mockReset();
+    getQueueInputFileMock.mockResolvedValue(null);
+    getQueueOutputBlobMock.mockReset();
+    getQueueOutputBlobMock.mockResolvedValue(null);
+    getQueuePreviewBlobMock.mockReset();
+    getQueuePreviewBlobMock.mockResolvedValue(null);
+    runtimeProcessMock.mockReset();
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: false,
       media: '(min-width: 1024px)',
@@ -154,6 +174,145 @@ describe('ImageProcessor storage-backed queue', () => {
       expect(getQueueInputFileMock).toHaveBeenCalledWith(1);
       expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('restores recoverable pending queue work and resumes it automatically on launch', async () => {
+    loadQueueStateMock.mockResolvedValue({
+      workflowState: 'PROCESSING_ACTIVE',
+      settingsVersion: 3,
+      launchSource: 'regular',
+      hasPending: true,
+      updatedAt: 123,
+      queue: [
+        {
+          id: 7,
+          name: 'restored.jpg',
+          status: 'queued',
+          settingsVersion: 3,
+          error: null,
+          processingPath: 'unknown',
+        },
+      ],
+    });
+    getQueueInputFileMock.mockResolvedValue(
+      new File(['restored-input'], 'restored.jpg', { type: 'image/jpeg' }),
+    );
+    getQueuePreviewBlobMock.mockResolvedValue(
+      new Blob(['preview'], { type: 'image/jpeg' }),
+    );
+    runtimeProcessMock.mockResolvedValue(
+      new Blob(['restored-output'], { type: 'image/jpeg' }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(loadQueueStateMock).toHaveBeenCalledTimes(1);
+      expect(getQueueInputFileMock).toHaveBeenCalledWith(7);
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/resumed 1/i)).toBeInTheDocument();
+    });
+  });
+
+  it('marks unrecoverable pending queue items as failed instead of silently dropping them', async () => {
+    loadQueueStateMock.mockResolvedValue({
+      workflowState: 'PROCESSING_ACTIVE',
+      settingsVersion: 2,
+      launchSource: 'regular',
+      hasPending: true,
+      updatedAt: 456,
+      queue: [
+        {
+          id: 3,
+          name: 'missing.jpg',
+          status: 'queued',
+          settingsVersion: 2,
+          error: null,
+          processingPath: 'unknown',
+        },
+      ],
+    });
+    getQueueInputFileMock.mockResolvedValue(null);
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).not.toHaveBeenCalled();
+      expect(screen.getByText(/1 missing/i)).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    expect(screen.getByText(/restore failed: input missing/i)).toBeInTheDocument();
+  });
+
+  it('retries only failed restored items from the overflow actions', async () => {
+    loadQueueStateMock.mockResolvedValue({
+      workflowState: 'ERROR_RECOVERABLE',
+      settingsVersion: 1,
+      launchSource: 'regular',
+      hasPending: false,
+      updatedAt: 789,
+      queue: [
+        {
+          id: 0,
+          name: 'failed.jpg',
+          status: 'failed',
+          settingsVersion: 1,
+          error: 'Decode failed',
+          processingPath: 'unknown',
+        },
+        {
+          id: 1,
+          name: 'done.jpg',
+          status: 'completed',
+          settingsVersion: 1,
+          error: null,
+          processingPath: 'generated',
+        },
+      ],
+    });
+    getQueueInputFileMock.mockImplementation(async (queueId: number) => {
+      if (queueId === 0) {
+        return new File(['retry-input'], 'failed.jpg', { type: 'image/jpeg' });
+      }
+      return new File(['done-input'], 'done.jpg', { type: 'image/jpeg' });
+    });
+    getQueuePreviewBlobMock.mockResolvedValue(
+      new Blob(['preview'], { type: 'image/jpeg' }),
+    );
+    runtimeProcessMock.mockResolvedValue(
+      new Blob(['retry-output'], { type: 'image/jpeg' }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('queue-overflow-trigger')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('queue-overflow-trigger'));
+    await fireEvent.click(screen.getByRole('button', { name: /^retry failed$/i }));
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+    expect(runtimeProcessMock.mock.calls[0][0]).toBeInstanceOf(File);
+    expect(await runtimeProcessMock.mock.calls[0][0].text()).toBe('retry-input');
   });
 
   it('stores outputs and loads them lazily from storage when exporting', async () => {

@@ -171,7 +171,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByText(/high-efficiency jpeg encoding/i)).not.toBeInTheDocument();
   });
 
-  it('shows mobile results action bar with export and discard controls', async () => {
+  it('shows mobile results action bar with export and clear controls', async () => {
     renderProcessor({ files: makeFiles(1) });
 
     await waitFor(() => {
@@ -183,7 +183,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByRole('heading', { name: /^results$/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('mobile-action-bar')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^export/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^discard all$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^clear$/i })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: /^export/i }));
     const exportSheet = screen.getByTestId('export-sheet');
@@ -1377,16 +1377,19 @@ describe('ImageProcessor mobile-native UI behavior', () => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/pause queue/i);
-    expect(screen.queryByRole('button', { name: /more/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/^pause$/i);
+    expect(screen.getByTestId('queue-overflow-trigger')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /start over/i })).not.toBeInTheDocument();
-    expect(screen.getByTestId('cancel-current-control')).toBeInTheDocument();
+    expect(screen.queryByTestId('cancel-current-control')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId('queue-overflow-trigger'));
+    expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId('queue-smart-control'));
     firstFileGate.resolve();
 
     await waitFor(() => {
-      expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/resume queue/i);
+      expect(screen.getByTestId('queue-smart-control')).toHaveTextContent(/^resume$/i);
     });
     expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
 
@@ -1494,7 +1497,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(secondOptions.maxContentBoost).toBeCloseTo(2 ** 5, 6);
   });
 
-  it('resets HDR strength back to the shared default on discard all', async () => {
+  it('resets HDR strength back to the shared default on clear', async () => {
     window.confirm = vi.fn(() => true);
     renderProcessor({ files: makeFiles(1) });
 
@@ -1507,7 +1510,7 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByLabelText(/max content boost/i)).toHaveValue('5.0');
 
     await fireEvent.click(screen.getByTestId('tab-results'));
-    await fireEvent.click(screen.getByRole('button', { name: /^discard all$/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /^clear$/i }));
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-convert')).toHaveAttribute('aria-selected', 'true');

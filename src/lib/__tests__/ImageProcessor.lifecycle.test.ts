@@ -40,6 +40,7 @@ vi.mock('../share-store.ts', () => ({
     new File([`input-${queueId}`], `photo-${queueId}.jpg`, { type: 'image/jpeg' })),
   getQueueOutputBlob: vi.fn(async () => new Blob(['done'], { type: 'image/jpeg' })),
   loadQueueState: vi.fn(async () => null),
+  normalizePersistedQueueState: vi.fn((snapshot) => snapshot),
   shouldPauseForStorageWrite: vi.fn(async () => ({
     pause: false,
     remaining: 1024 * 1024 * 1024,

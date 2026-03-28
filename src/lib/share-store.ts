@@ -2,7 +2,8 @@ import {
   getStorageBudget,
   requestPersistentStorage,
   shouldCheckpoint,
-} from './storage-diagnostics.js';
+  type StorageBudget,
+} from './storage-diagnostics.ts';
 
 const DB_NAME = 'ultrahdr-share-store';
 const DB_VERSION = 3;
@@ -22,19 +23,47 @@ interface ShareStoreMemory {
   queuePreviews: Map<number, Blob>;
 }
 
-interface StorageBudget {
-  supported: boolean;
-  usage: number | null;
-  quota: number | null;
-  remaining: number | null;
-  usageRatio: number | null;
-  persisted: boolean | null;
-}
-
 interface QueuePayloadDeleteOptions {
   deleteInput?: boolean;
   deleteOutput?: boolean;
   deletePreview?: boolean;
+}
+
+export type PersistedQueueStatus =
+  | 'queued'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'stale';
+
+export type PersistedWorkflowState =
+  | 'EMPTY'
+  | 'QUEUE_READY'
+  | 'PROCESSING_ACTIVE'
+  | 'PROCESSING_PAUSING'
+  | 'PROCESSING_PAUSED'
+  | 'PROCESSING_DONE'
+  | 'ERROR_RECOVERABLE';
+
+export type PersistedProcessingPath = 'unknown' | 'generated' | 'preserved';
+
+export interface PersistedQueueSnapshotItem {
+  id: number;
+  name: string;
+  status: PersistedQueueStatus;
+  settingsVersion: number;
+  error: string | null;
+  processingPath: PersistedProcessingPath;
+}
+
+export interface PersistedQueueSnapshot {
+  workflowState: PersistedWorkflowState;
+  settingsVersion: number;
+  launchSource: string;
+  hasPending: boolean;
+  queue: PersistedQueueSnapshotItem[];
+  updatedAt: number;
 }
 
 interface StorageWriteDecisionOptions {
@@ -51,6 +80,28 @@ export interface StorageWriteDecision {
 }
 
 let openDbPromise: Promise<IDBDatabase> | null = null;
+const VALID_WORKFLOW_STATES = new Set<PersistedWorkflowState>([
+  'EMPTY',
+  'QUEUE_READY',
+  'PROCESSING_ACTIVE',
+  'PROCESSING_PAUSING',
+  'PROCESSING_PAUSED',
+  'PROCESSING_DONE',
+  'ERROR_RECOVERABLE',
+]);
+const VALID_QUEUE_STATUSES = new Set<PersistedQueueStatus>([
+  'queued',
+  'processing',
+  'completed',
+  'failed',
+  'cancelled',
+  'stale',
+]);
+const VALID_PROCESSING_PATHS = new Set<PersistedProcessingPath>([
+  'unknown',
+  'generated',
+  'preserved',
+]);
 
 function getMemoryStore(): ShareStoreMemory {
   const runtime = globalThis as typeof globalThis & {
@@ -73,6 +124,91 @@ function canUseIndexedDb(): boolean {
     return false;
   }
   return typeof indexedDB !== 'undefined' && typeof indexedDB.open === 'function';
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeQueueSnapshotItem(
+  value: unknown,
+): PersistedQueueSnapshotItem | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const id = Number(value.id);
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  const status =
+    typeof value.status === 'string' && VALID_QUEUE_STATUSES.has(value.status as PersistedQueueStatus)
+      ? (value.status as PersistedQueueStatus)
+      : null;
+  const settingsVersion = Number(value.settingsVersion);
+  const error =
+    value.error === null || typeof value.error === 'string' ? value.error : null;
+  const processingPath =
+    typeof value.processingPath === 'string' &&
+    VALID_PROCESSING_PATHS.has(value.processingPath as PersistedProcessingPath)
+      ? (value.processingPath as PersistedProcessingPath)
+      : 'unknown';
+
+  if (!Number.isInteger(id) || id < 0 || name.length === 0 || !status) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    status,
+    settingsVersion:
+      Number.isInteger(settingsVersion) && settingsVersion > 0
+        ? settingsVersion
+        : 1,
+    error,
+    processingPath,
+  };
+}
+
+export function normalizePersistedQueueState(
+  value: unknown,
+): PersistedQueueSnapshot | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const workflowState =
+    typeof value.workflowState === 'string' &&
+    VALID_WORKFLOW_STATES.has(value.workflowState as PersistedWorkflowState)
+      ? (value.workflowState as PersistedWorkflowState)
+      : null;
+  const queue = Array.isArray(value.queue)
+    ? value.queue
+        .map((item) => normalizeQueueSnapshotItem(item))
+        .filter((item): item is PersistedQueueSnapshotItem => item !== null)
+    : null;
+  const settingsVersion = Number(value.settingsVersion);
+  const updatedAt = Number(value.updatedAt);
+
+  if (
+    !workflowState ||
+    !queue ||
+    queue.length !== value.queue.length ||
+    !Number.isInteger(settingsVersion) ||
+    settingsVersion < 1 ||
+    !Number.isFinite(updatedAt)
+  ) {
+    return null;
+  }
+
+  return {
+    workflowState,
+    settingsVersion,
+    launchSource:
+      typeof value.launchSource === 'string' ? value.launchSource : 'regular',
+    hasPending: Boolean(value.hasPending),
+    queue,
+    updatedAt,
+  };
 }
 
 function resetCachedDb(): void {

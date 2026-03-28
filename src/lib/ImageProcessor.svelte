@@ -22,7 +22,9 @@
     deleteQueuePayloads,
     getQueueInputFile,
     getQueueOutputBlob,
+    getQueuePreviewBlob,
     loadQueueState,
+    normalizePersistedQueueState,
     shouldPauseForStorageWrite,
     storeQueueInputFile,
     storeQueueOutputBlob,
@@ -37,7 +39,7 @@
     WORKFLOW_STATES,
     transitionWorkflow,
   } from "./workflow-state";
-  import { clearQueueBadge, setQueueBadge } from "./badge.js";
+  import { clearQueueBadge, setQueueBadge } from "./badge.ts";
   import {
     acquireProcessingLock,
     releaseProcessingLock,
@@ -131,6 +133,8 @@
   let viewerPinchStartScale = 1;
   let selectionToggleState = "none";
   let queueControlVisibility = "hidden";
+  let failedQueueCount = 0;
+  let showQueueOverflow = false;
   let isDesktopLayout = false;
   let hasRotationStaleResults = false;
   let showPipelineStatusCard = false;
@@ -282,6 +286,11 @@
     : canResumeQueue
       ? "resume"
       : "hidden";
+  $: failedQueueCount = queue.filter(
+    (item) => item.status === QUEUE_ITEM_STATES.FAILED,
+  ).length;
+  $: showQueueOverflow =
+    canCancelCurrent || failedQueueCount > 0 || queue.length > 0;
   $: selectionToggleState =
     exportableQueueIds.size === 0 || selectedQueueIds.size === 0
       ? "none"
@@ -811,6 +820,10 @@
     openSheet = "export";
   }
 
+  function openQueueSheet() {
+    openSheet = "queue";
+  }
+
   function closeSheet() {
     openSheet = "none";
   }
@@ -1214,6 +1227,146 @@
       result: null,
       progress: null,
     }));
+  }
+
+  function summarizeQueueRestore(resumedCount, missingCount) {
+    const parts = [];
+    if (resumedCount > 0) {
+      parts.push(`Resumed ${resumedCount}`);
+    }
+    if (missingCount > 0) {
+      parts.push(`${missingCount} missing`);
+    }
+    return parts.join(" • ");
+  }
+
+  function inferWorkflowStateFromQueue(items) {
+    if (!items.length) {
+      return WORKFLOW_STATES.EMPTY;
+    }
+    if (
+      items.some(
+        (item) =>
+          item.status === QUEUE_ITEM_STATES.QUEUED ||
+          item.status === QUEUE_ITEM_STATES.PROCESSING,
+      )
+    ) {
+      return WORKFLOW_STATES.QUEUE_READY;
+    }
+    if (items.some((item) => item.status === QUEUE_ITEM_STATES.FAILED)) {
+      return WORKFLOW_STATES.ERROR_RECOVERABLE;
+    }
+    if (
+      items.some(
+        (item) =>
+          item.status === QUEUE_ITEM_STATES.COMPLETED ||
+          item.status === QUEUE_ITEM_STATES.STALE,
+      )
+    ) {
+      return WORKFLOW_STATES.PROCESSING_DONE;
+    }
+    return WORKFLOW_STATES.EMPTY;
+  }
+
+  function createResultRecordFromQueueItem(queueItem, outputUrl, blobSize) {
+    return {
+      originalName: queueItem.name,
+      url: outputUrl,
+      size: blobSize,
+      index: queueItem.id,
+      queueId: queueItem.id,
+      settingsVersion: queueItem.settingsVersion,
+      rotation,
+      processingPath: queueItem.processingPath,
+    };
+  }
+
+  async function restoreQueueFromSnapshot(snapshot) {
+    const restoredQueue = [];
+    const restoredResults = [];
+    let resumedCount = 0;
+    let missingCount = 0;
+
+    for (const item of snapshot.queue) {
+      const storedInput = await getQueueInputFile(item.id);
+      const storedPreview = await getQueuePreviewBlob(item.id);
+      const storedOutput =
+        item.status === QUEUE_ITEM_STATES.COMPLETED ||
+        item.status === QUEUE_ITEM_STATES.STALE
+          ? await getQueueOutputBlob(item.id)
+          : null;
+      const isPendingItem =
+        item.status === QUEUE_ITEM_STATES.QUEUED ||
+        item.status === QUEUE_ITEM_STATES.PROCESSING;
+
+      const previewSource = storedPreview || storedInput || storedOutput;
+      if (isPendingItem && !storedInput) {
+        missingCount += 1;
+        restoredQueue.push({
+          id: item.id,
+          file: null,
+          name: item.name,
+          status: QUEUE_ITEM_STATES.FAILED,
+          settingsVersion: item.settingsVersion,
+          error: "Restore failed: input missing",
+          processingPath: item.processingPath,
+          inputPreviewUrl: previewSource ? URL.createObjectURL(previewSource) : "",
+          outputPreviewUrl: null,
+          result: null,
+          progress: null,
+        });
+        continue;
+      }
+
+      const inputPreviewUrl = previewSource ? URL.createObjectURL(previewSource) : "";
+      const outputPreviewUrl = storedOutput ? URL.createObjectURL(storedOutput) : null;
+      const normalizedStatus =
+        item.status === QUEUE_ITEM_STATES.PROCESSING
+          ? QUEUE_ITEM_STATES.QUEUED
+          : item.status;
+      const restoredQueueItem = {
+        id: item.id,
+        file: null,
+        name: item.name,
+        status: normalizedStatus,
+        settingsVersion: item.settingsVersion,
+        error: item.error,
+        processingPath: item.processingPath,
+        inputPreviewUrl,
+        outputPreviewUrl,
+        result: storedOutput
+          ? {
+              outputUrl: outputPreviewUrl,
+              size: storedOutput.size,
+              persisted: true,
+            }
+          : null,
+        progress: null,
+      };
+
+      if (normalizedStatus === QUEUE_ITEM_STATES.QUEUED) {
+        resumedCount += 1;
+      }
+
+      if (storedOutput && outputPreviewUrl) {
+        restoredResults.push(
+          createResultRecordFromQueueItem(
+            restoredQueueItem,
+            outputPreviewUrl,
+            storedOutput.size,
+          ),
+        );
+      }
+
+      restoredQueue.push(restoredQueueItem);
+    }
+
+    return {
+      queue: restoredQueue,
+      results: restoredResults,
+      resumedCount,
+      missingCount,
+    };
   }
 
   async function createPreviewBlob(file) {
@@ -1677,6 +1830,43 @@
     startQueue();
   }
 
+  async function initializeQueueFromPersistedState(rawSnapshot) {
+    const snapshot = normalizePersistedQueueState(rawSnapshot);
+    if (!snapshot) {
+      return false;
+    }
+
+    const restored = await restoreQueueFromSnapshot(snapshot);
+    if (restored.queue.length === 0) {
+      await clearQueueState();
+      return false;
+    }
+
+    queue = restored.queue;
+    results = restored.results;
+    selectedQueueIds = new Set(
+      restored.results.map((result) => result.queueId),
+    );
+    nextQueueId = restored.queue.reduce(
+      (maxId, item) => Math.max(maxId, item.id + 1),
+      0,
+    );
+    settingsVersion = Math.max(snapshot.settingsVersion, settingsVersion);
+    workflowState = inferWorkflowStateFromQueue(restored.queue);
+    queueRestoreNotice = summarizeQueueRestore(
+      restored.resumedCount,
+      restored.missingCount,
+    );
+
+    if (restored.resumedCount > 0) {
+      startQueue();
+    } else {
+      schedulePersistQueueState({ urgent: true });
+    }
+
+    return true;
+  }
+
   function markCompletedOutputsStale() {
     let changed = false;
     queue = queue.map((item) => {
@@ -1789,6 +1979,7 @@
     if (!canCancelCurrent) return;
     cancelCurrentRequested = true;
     abortActiveProcessing();
+    closeSheet();
   }
 
   function selectedStaleQueueIds() {
@@ -1839,6 +2030,18 @@
     const staleIds = selectedStaleQueueIds();
     if (requeueByIds(staleIds)) {
       showStalePrompt = staleCount > staleIds.size;
+      closeSheet();
+      startQueue();
+    }
+  }
+
+  function retryFailedQueueItems() {
+    const failedIds = new Set(
+      queue
+        .filter((item) => item.status === QUEUE_ITEM_STATES.FAILED)
+        .map((item) => item.id),
+    );
+    if (requeueByIds(failedIds)) {
       closeSheet();
       startQueue();
     }
@@ -2282,16 +2485,19 @@
     void (async () => {
       try {
         const persistedQueue = await loadQueueState();
-        // if (persistedQueue?.hasPending && (!files || files.length === 0)) {
-        //   queueRestoreNotice =
-        //     "Previous queue could not be restored. Please re-add files.";
-        //   setNotice(queueRestoreNotice);
-        // }
+        const restored = await initializeQueueFromPersistedState(persistedQueue);
+        if (!restored) {
+          queueRestoreNotice = null;
+        }
       } catch (e) {
         console.warn("[UI] Failed to load persisted queue state:", e);
       }
 
-      await initializeQueueFromFiles(files);
+      if (queue.length === 0) {
+        await initializeQueueFromFiles(files);
+      } else if (Array.isArray(files) && files.length > 0) {
+        await enqueueFiles(files);
+      }
       consumeLaunchIntent();
     })();
 
@@ -2436,18 +2642,18 @@
                 on:click={handleQueueSmartControl}
                 disabled={workflowState === WORKFLOW_STATES.PROCESSING_PAUSING}
               >
-                {queueControlVisibility === "pause"
-                  ? "Pause Queue"
-                  : "Resume Queue"}
+                {queueControlVisibility === "pause" ? "Pause" : "Resume"}
               </button>
             {/if}
-            {#if canCancelCurrent}
+            {#if showQueueOverflow}
               <button
                 class="secondary"
-                data-testid="cancel-current-control"
-                on:click={cancelCurrent}
+                type="button"
+                data-testid="queue-overflow-trigger"
+                aria-label="Open queue actions"
+                on:click={openQueueSheet}
               >
-                Cancel Current
+                More
               </button>
             {/if}
           </div>
@@ -2807,7 +3013,7 @@
                       data-testid="results-discard-all"
                       on:click={() => reset()}
                     >
-                      Discard all
+                      Clear
                     </button>
                   {/if}
                   {#if isDesktopLayout}
@@ -2988,7 +3194,7 @@
         data-testid="results-discard-all"
         on:click={() => reset()}
       >
-        Discard all
+        Clear
       </button>
       <button
         class="primary"
@@ -3307,6 +3513,39 @@
           onValidate={onValidateOfflineReadiness}
           onRepair={onRepairOfflineReadiness}
         />
+      </div>
+    </div>
+  {/if}
+
+  {#if openSheet === "queue"}
+    <div class="sheet-card" data-testid="queue-sheet">
+      <div class="sheet-header">
+        <h3>Queue</h3>
+        <button class="text-btn" on:click={closeSheet}>Done</button>
+      </div>
+
+      <div class="sheet-actions">
+        {#if canCancelCurrent}
+          <button
+            class="secondary"
+            data-testid="cancel-current-control"
+            on:click={cancelCurrent}
+          >
+            Stop
+          </button>
+        {/if}
+        {#if failedQueueCount > 0}
+          <button class="primary" on:click={retryFailedQueueItems}>
+            Retry failed
+          </button>
+        {/if}
+        <button
+          class="secondary"
+          data-testid="results-discard-all"
+          on:click={() => reset()}
+        >
+          Clear
+        </button>
       </div>
     </div>
   {/if}

@@ -10,6 +10,7 @@ import {
   getQueueInputFile,
   getQueueOutputBlob,
   getQueuePreviewBlob,
+  normalizePersistedQueueState,
   shouldPauseForStorageWrite,
   storeQueueInputFile,
   storeQueueOutputBlob,
@@ -101,5 +102,14 @@ describe('share-store queue payloads', () => {
       remaining: 10,
       requiredBytes: 8,
     });
+  });
+
+  it('rejects malformed persisted queue snapshots during normalization', () => {
+    expect(
+      normalizePersistedQueueState({
+        workflowState: 'PROCESSING_ACTIVE',
+        queue: [{ id: 'bad-id', name: 'photo.jpg', status: 'queued' }],
+      }),
+    ).toBeNull();
   });
 });
