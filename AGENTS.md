@@ -87,3 +87,11 @@ Favor TypeScript in all possible ways. Use strictly typed TypeScript for applica
 If you run into EPERM or other permission errors, you should halt and ask the user to run the commands on your behalf.
 
 You write code in strictly typed TypeScript, and when you encounter JavaScript, you rewrite it as strictly typed TypeScript and remove the original JavaScript implementation.
+
+Diagnostics Breadcrumb Requirement
+	•	Structured diagnostics breadcrumbs are mandatory for all new user-visible flows and processing-significant state transitions.
+	•	All runtime initialization, processing pipeline, worker lifecycle, storage-pressure, lifecycle recovery, and error-handling paths must emit stable typed breadcrumbs.
+	•	When adding or changing behavior, tests must assert the required breadcrumb emission as part of the observable contract.
+	•	If a feature or bug fix changes a flow without adding or updating the relevant breadcrumbs, the work is incomplete.
+	•	Breadcrumb payloads must be bounded, privacy-conscious, offline-shareable, and safe for autonomous AI-agent debugging.
+	•	High-frequency progress markers may be throttled or coalesced, but critical transitions, fallbacks, and failures must never be omitted.

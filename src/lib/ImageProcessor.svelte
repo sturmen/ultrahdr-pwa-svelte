@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
+  import DiagnosticsReportDialog from "./DiagnosticsReportDialog.svelte";
   import DropZone from "./DropZone.svelte";
   import MobileInferenceWarningDialog from "./MobileInferenceWarningDialog.svelte";
   import OfflineReadinessCard from "./OfflineReadinessCard.svelte";
@@ -75,6 +76,15 @@
     getStageLabel,
     toBatchProgress,
   } from "./image-processor-progress.ts";
+  import {
+    buildMemoryDiagnosticsReport,
+    classifyMemoryIssue,
+    consumeRecoveredDiagnosticsReport,
+    copyDiagnosticsReport,
+    getSharedDiagnosticsRecorder,
+    serializeDiagnosticsReport,
+    shareDiagnosticsReport,
+  } from "./diagnostics.ts";
 
   export let files = [];
   export let launchSource = "regular";
@@ -179,6 +189,9 @@
   let mobileInferenceWarningOpen = false;
   let mobileInferenceChallengeValue = "";
   let mobileInferenceAcknowledgedForSession = false;
+  let diagnosticsReportOpen = false;
+  let diagnosticsReport = null;
+  let diagnosticsReportText = "";
   let workflowCards = [];
   let exportableQueueIds = new Set();
   let currentViewerCard = null;
@@ -191,6 +204,7 @@
   let effectiveViewerDesktopChromeVisible = false;
 
   const capabilities = getCapabilities();
+  const diagnosticsRecorder = getSharedDiagnosticsRecorder(globalThis);
   const dispatch = createEventDispatcher();
   const VIEWER_SWIPE_THRESHOLD_PX = 48;
   const VIEWER_VERTICAL_GUARD_PX = 80;
@@ -606,6 +620,71 @@
         notice = null;
       }, 4000);
     }
+  }
+
+  function recordDiagnostics(category, name, severity = "info", context = {}) {
+    diagnosticsRecorder.record({
+      category,
+      name,
+      severity,
+      context,
+    });
+  }
+
+  function buildCurrentDiagnosticsContext(extra = {}) {
+    return {
+      currentQueueId,
+      queueLength: queue.length,
+      resultCount: results.length,
+      currentStage: latestPipelineEvent?.stage || null,
+      currentPhase: latestPipelineEvent?.phase || null,
+      pipelineFileName: pipelineFileName || null,
+      pipelineExecutionProvider: pipelineExecutionProvider || null,
+      gmnetCheckpointTilesCompleted:
+        latestPipelineEvent?.gmnetCheckpointTilesCompleted ?? null,
+      gmnetCheckpointTilesTotal:
+        latestPipelineEvent?.gmnetCheckpointTilesTotal ?? null,
+      ...extra,
+    };
+  }
+
+  function openDiagnosticsReport(trigger = "manual", incident = null, extra = {}) {
+    diagnosticsReport = buildMemoryDiagnosticsReport(trigger, {
+      runtime: globalThis,
+      recorder: diagnosticsRecorder,
+      incident,
+      context: buildCurrentDiagnosticsContext(extra),
+    });
+    diagnosticsReportText = serializeDiagnosticsReport(diagnosticsReport);
+    diagnosticsReportOpen = true;
+    recordDiagnostics("user", "diagnostics-report-opened", "info", {
+      trigger,
+      reportId: diagnosticsReport?.reportId || null,
+    });
+  }
+
+  function dismissDiagnosticsReport() {
+    diagnosticsReportOpen = false;
+  }
+
+  async function handleShareDiagnosticsReport() {
+    if (!diagnosticsReport) {
+      return;
+    }
+    await shareDiagnosticsReport(diagnosticsReport, globalThis);
+    recordDiagnostics("user", "diagnostics-report-shared", "info", {
+      reportId: diagnosticsReport.reportId,
+    });
+  }
+
+  async function handleCopyDiagnosticsReport() {
+    if (!diagnosticsReport) {
+      return;
+    }
+    await copyDiagnosticsReport(diagnosticsReport, globalThis);
+    recordDiagnostics("user", "diagnostics-report-copied", "info", {
+      reportId: diagnosticsReport.reportId,
+    });
   }
 
   function abortActiveProcessing() {
@@ -1608,6 +1687,15 @@
           if (!activeInput) {
             throw new Error("Queued input is unavailable in storage.");
           }
+          diagnosticsRecorder.markProcessingActive({
+            queueId: nextItem.id,
+            stage: latestPipelineEvent?.stage || "queued",
+          });
+          recordDiagnostics("pipeline", "queue-item-processing-started", "info", {
+            queueId: nextItem.id,
+            queueIndex,
+            totalFiles: queue.length,
+          });
 
           const blob = await runtime.process(
             activeInput,
@@ -1639,6 +1727,14 @@
             error: null,
             processingPath: itemProcessingPath,
           });
+          diagnosticsRecorder.markProcessingComplete({
+            queueId: nextItem.id,
+            stage: "complete",
+          });
+          recordDiagnostics("pipeline", "queue-item-processing-complete", "info", {
+            queueId: nextItem.id,
+            processingPath: itemProcessingPath,
+          });
         } catch (e) {
           if (e?.name === "AbortError") {
             if (cancelCurrentRequested) {
@@ -1665,11 +1761,28 @@
 
           console.error("[UI] Error processing queue item:", e);
           error = e.message || "Processing failed";
+          const incident = classifyMemoryIssue(e);
+          recordDiagnostics(
+            incident.memoryIssueKind === "unknown" ? "error" : "memory",
+            "queue-item-processing-failed",
+            "error",
+            {
+              queueId: nextItem.id,
+              message: error,
+              memoryIssueKind: incident.memoryIssueKind,
+              confidence: incident.confidence,
+            },
+          );
           updateQueueItem(nextItem.id, {
             status: QUEUE_ITEM_STATES.FAILED,
             error: error,
           });
           setWorkflow(WORKFLOW_EVENTS.FILE_FAILED);
+          if (incident.memoryIssueKind !== "unknown") {
+            openDiagnosticsReport("auto", incident, {
+              failedQueueId: nextItem.id,
+            });
+          }
         } finally {
           if (activeAbortController === controller) {
             activeAbortController = null;
@@ -1794,6 +1907,7 @@
     settingsVersion += 1;
     markCompletedOutputsStale();
     persistCurrentProcessingPreferences();
+    recordDiagnostics("user", "settings-changed", "info", snapshotProcessingPreferences());
   }
 
   function applyBackendPreferenceChange(nextPreference) {
@@ -1854,6 +1968,7 @@
     if (!processing) return;
     pauseRequested = true;
     setWorkflow(WORKFLOW_EVENTS.PAUSE_REQUESTED);
+    recordDiagnostics("user", "processing-paused", "info", buildCurrentDiagnosticsContext());
   }
 
   function resumeQueue() {
@@ -1862,6 +1977,7 @@
     setWorkflow(WORKFLOW_EVENTS.RESUME_REQUESTED);
     processing = true;
     startQueue();
+    recordDiagnostics("user", "processing-resumed", "info", buildCurrentDiagnosticsContext());
   }
 
   function cancelCurrent() {
@@ -1869,6 +1985,7 @@
     cancelCurrentRequested = true;
     abortActiveProcessing();
     closeSheet();
+    recordDiagnostics("user", "processing-cancelled", "warning", buildCurrentDiagnosticsContext());
   }
 
   function selectedStaleQueueIds() {
@@ -1951,6 +2068,10 @@
 
     queue = [...queue, ...addedItems];
     files = [];
+    recordDiagnostics("user", "files-added", "info", {
+      fileCount: addedItems.length,
+      queueLength: queue.length,
+    });
 
     if (
       workflowState === WORKFLOW_STATES.EMPTY ||
@@ -2040,6 +2161,9 @@
   }
 
   async function handleAddFiles(event) {
+    recordDiagnostics("user", "file-picker-opened", "info", {
+      fileCount: event?.target?.files?.length || 0,
+    });
     await gateAndEnqueueFiles(event?.target?.files);
     if (event?.target) {
       event.target.value = "";
@@ -2047,6 +2171,9 @@
   }
 
   async function handleDropZoneFiles(event) {
+    recordDiagnostics("user", "files-dropped", "info", {
+      fileCount: Array.isArray(event?.detail) ? event.detail.length : 0,
+    });
     await gateAndEnqueueFiles(event?.detail);
   }
 
@@ -2314,6 +2441,10 @@
 
     const handleVisibilityChange = () => {
       if (typeof document === "undefined") return;
+      recordDiagnostics("lifecycle", "visibility-changed", "info", {
+        hidden: document.hidden,
+        workflowState,
+      });
       if (
         document.hidden &&
         (workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
@@ -2334,6 +2465,7 @@
     };
 
     const handlePageHide = () => {
+      recordDiagnostics("lifecycle", "pagehide", "warning", buildCurrentDiagnosticsContext());
       void persistQueueStateSnapshot();
     };
 
@@ -2364,6 +2496,15 @@
     }
 
     void (async () => {
+      recordDiagnostics("user", "app-opened", "info", {
+        launchSource,
+      });
+      const recoveredDiagnosticsReport = consumeRecoveredDiagnosticsReport(globalThis);
+      if (recoveredDiagnosticsReport) {
+        diagnosticsReport = recoveredDiagnosticsReport;
+        diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
+        diagnosticsReportOpen = true;
+      }
       try {
         const persistedQueue = await loadQueueState();
         const restored = await initializeQueueFromPersistedState(persistedQueue);
@@ -3254,6 +3395,15 @@
     onProceed={proceedWithMobileInferenceWarning}
   />
 
+  <DiagnosticsReportDialog
+    open={diagnosticsReportOpen}
+    report={diagnosticsReport}
+    reportText={diagnosticsReportText}
+    onDismiss={dismissDiagnosticsReport}
+    onShare={handleShareDiagnosticsReport}
+    onCopy={handleCopyDiagnosticsReport}
+  />
+
   {#if openSheet !== "none"}
     <button
       class="sheet-backdrop"
@@ -3348,6 +3498,17 @@
           onValidate={onValidateOfflineReadiness}
           onRepair={onRepairOfflineReadiness}
         />
+
+        <div class="control-group">
+          <button
+            type="button"
+            class="secondary"
+            data-testid="open-debug-report"
+            on:click={() => openDiagnosticsReport("manual")}
+          >
+            Send debug report
+          </button>
+        </div>
       </div>
     </div>
   {/if}

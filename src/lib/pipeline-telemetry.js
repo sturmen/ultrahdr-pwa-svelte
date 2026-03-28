@@ -2,6 +2,8 @@ export const PIPELINE_PROGRESS_EVENT = 'ultrahdr:processing-progress';
 export const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
 export const PIPELINE_HISTORY_KEY = '__ultrahdrPipelineHistory';
 
+import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
+
 const HISTORY_LIMIT = 200;
 
 function getNowMs() {
@@ -59,6 +61,31 @@ function publishProgress(detail) {
         history.splice(0, history.length - HISTORY_LIMIT);
     }
     target[PIPELINE_HISTORY_KEY] = history;
+
+    try {
+        const diagnosticsRecorder = getSharedDiagnosticsRecorder(target);
+        diagnosticsRecorder.record({
+            category: 'pipeline',
+            name: detail.phase || 'pipeline-event',
+            severity: detail.phase === 'stage-error' || detail.phase === 'pipeline-error' ? 'error' : 'info',
+            context: {
+                pipelineId: detail.pipelineId || null,
+                stage: detail.stage || null,
+                stageProgress: detail.stageProgress ?? null,
+                fileIndex: detail.fileIndex ?? null,
+                totalFiles: detail.totalFiles ?? null,
+                elapsedMs: detail.elapsedMs ?? null,
+                processingPath: detail.processingPath || null,
+                gmnetExecutionProvider: detail.gmnetExecutionProvider || null,
+                gmnetMemoryMode: detail.gmnetMemoryMode || null,
+                gmnetCheckpointTilesCompleted: detail.gmnetCheckpointTilesCompleted ?? null,
+                gmnetCheckpointTilesTotal: detail.gmnetCheckpointTilesTotal ?? null,
+                gmnetCheckpointResumed: detail.gmnetCheckpointResumed ?? null
+            }
+        });
+    } catch {
+        // Diagnostics must not interfere with pipeline progress delivery.
+    }
 
     if (typeof target.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
         target.dispatchEvent(new CustomEvent(PIPELINE_PROGRESS_EVENT, { detail }));
