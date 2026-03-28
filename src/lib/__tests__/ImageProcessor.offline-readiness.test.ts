@@ -53,6 +53,8 @@ describe("ImageProcessor offline readiness settings", () => {
           bundleDiagnostics: {
             missingAssetCount: 1,
             mismatchedAssetCount: 2,
+            missingAssetIds: ["gmnet-realworld-global", "jpegli-wasm-js"],
+            mismatchedAssetIds: ["gmnet-realworld-local", "jpegtran-wasm"],
           },
         },
         onRepairOfflineReadiness,
@@ -66,11 +68,21 @@ describe("ImageProcessor offline readiness settings", () => {
 
     expect(within(settingsSheet).getByTestId("offline-readiness-card")).toBeInTheDocument();
     expect(within(settingsSheet).getByText(/repair needed before offline conversion/i)).toBeInTheDocument();
+    expect(within(settingsSheet).queryByText(/^offline readiness$/i)).not.toBeInTheDocument();
+    expect(within(settingsSheet).queryByText(/confirm the ai models and encoders are cached/i)).not.toBeInTheDocument();
+    expect(within(settingsSheet).queryByText(/last checked:/i)).not.toBeInTheDocument();
     expect(within(settingsSheet).getByText(/7 assets/i)).toBeInTheDocument();
     expect(within(settingsSheet).getByText(/15 mb/i)).toBeInTheDocument();
     expect(within(settingsSheet).getByText(/missing assets: 1/i)).toBeInTheDocument();
+    expect(within(settingsSheet).getByText(/missing asset ids:/i)).toBeInTheDocument();
+    expect(within(settingsSheet).getByText(/gmnet-realworld-global/i)).toBeInTheDocument();
+    expect(within(settingsSheet).getByText(/jpegli-wasm-js/i)).toBeInTheDocument();
+    expect(within(settingsSheet).getByText(/corrupt asset ids:/i)).toBeInTheDocument();
+    expect(within(settingsSheet).getByText(/gmnet-realworld-local/i)).toBeInTheDocument();
+    expect(within(settingsSheet).getByText(/jpegtran-wasm/i)).toBeInTheDocument();
 
-    await fireEvent.click(within(settingsSheet).getByRole("button", { name: /repair offline bundle/i }));
+    expect(within(settingsSheet).getByRole("button", { name: /^validate$/i })).toBeInTheDocument();
+    await fireEvent.click(within(settingsSheet).getByRole("button", { name: /^repair$/i }));
     expect(onRepairOfflineReadiness).toHaveBeenCalledTimes(1);
   });
 });

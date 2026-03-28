@@ -3,6 +3,8 @@ export type OfflineReadinessAction = "validate" | "repair";
 export type OfflineReadinessDiagnostics = {
   missingAssetCount?: number | null;
   mismatchedAssetCount?: number | null;
+  missingAssetIds?: string[] | null;
+  mismatchedAssetIds?: string[] | null;
 };
 
 export type OfflineReadinessState = {

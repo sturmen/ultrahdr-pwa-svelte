@@ -2,7 +2,6 @@
   import {
     describeOfflineReadiness,
     formatOfflineBundleBytes,
-    formatOfflineValidatedAt,
     type OfflineReadinessState,
   } from "./offline-readiness";
 
@@ -12,7 +11,12 @@
 
   $: offlineReadinessSummary = describeOfflineReadiness(state);
   $: offlineBundleSizeLabel = formatOfflineBundleBytes(state?.offlineBundleTotalBytes);
-  $: offlineBundleValidatedAtLabel = formatOfflineValidatedAt(state?.bundleLastValidatedAt);
+  $: missingAssetIdsLabel = Array.isArray(state?.bundleDiagnostics?.missingAssetIds)
+    ? state.bundleDiagnostics.missingAssetIds.filter((assetId) => typeof assetId === "string" && assetId.trim().length > 0).join(", ")
+    : "";
+  $: mismatchedAssetIdsLabel = Array.isArray(state?.bundleDiagnostics?.mismatchedAssetIds)
+    ? state.bundleDiagnostics.mismatchedAssetIds.filter((assetId) => typeof assetId === "string" && assetId.trim().length > 0).join(", ")
+    : "";
 </script>
 
 <section
@@ -21,18 +25,13 @@
   aria-live="polite"
 >
   <div class="offline-readiness-copy">
-    <p class="offline-readiness-eyebrow">Offline readiness</p>
     <h2>{offlineReadinessSummary.title}</h2>
-    <p>Confirm the AI models and encoders are cached before you lose connectivity.</p>
     <div class="offline-readiness-metadata">
       {#if state?.offlineBundleAssetCount}
         <span>{state.offlineBundleAssetCount} assets</span>
       {/if}
       {#if offlineBundleSizeLabel}
         <span>{offlineBundleSizeLabel}</span>
-      {/if}
-      {#if offlineBundleValidatedAtLabel}
-        <span>Last checked: {offlineBundleValidatedAtLabel}</span>
       {/if}
     </div>
     {#if state?.bundleDiagnostics}
@@ -44,6 +43,16 @@
           <span>Corrupt assets: {state.bundleDiagnostics.mismatchedAssetCount}</span>
         {/if}
       </div>
+      {#if missingAssetIdsLabel || mismatchedAssetIdsLabel}
+        <div class="offline-readiness-details">
+          {#if missingAssetIdsLabel}
+            <p><strong>Missing asset IDs:</strong> {missingAssetIdsLabel}</p>
+          {/if}
+          {#if mismatchedAssetIdsLabel}
+            <p><strong>Corrupt asset IDs:</strong> {mismatchedAssetIdsLabel}</p>
+          {/if}
+        </div>
+      {/if}
     {/if}
     {#if state?.offlineBundleActionError}
       <p class="offline-readiness-error">{state.offlineBundleActionError}</p>
@@ -59,7 +68,7 @@
       {#if state?.offlineBundleActionInFlight && state.offlineReadinessAction === "validate"}
         Validating...
       {:else}
-        Validate offline bundle
+        Validate
       {/if}
     </button>
     <button
@@ -71,7 +80,7 @@
       {#if state?.offlineBundleActionInFlight && state.offlineReadinessAction === "repair"}
         Repairing...
       {:else}
-        Repair offline bundle
+        Repair
       {/if}
     </button>
   </div>
@@ -106,19 +115,21 @@
     margin: 0;
   }
 
-  .offline-readiness-eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.72rem;
-    color: var(--text-secondary);
-  }
-
   .offline-readiness-metadata,
   .offline-readiness-diagnostics,
   .offline-readiness-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.65rem;
+  }
+
+  .offline-readiness-details {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.65rem;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    word-break: break-word;
   }
 
   .offline-readiness-metadata span,
@@ -128,6 +139,10 @@
     background: var(--surface-muted);
     color: var(--text-secondary);
     font-size: 0.88rem;
+  }
+
+  .offline-readiness-details p {
+    margin: 0;
   }
 
   .offline-readiness-error {
