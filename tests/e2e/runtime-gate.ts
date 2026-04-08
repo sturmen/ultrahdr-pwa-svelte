@@ -1,6 +1,26 @@
-const failedProjects = new Map();
+import type { Page, TestInfo } from '@playwright/test';
 
-async function installProjectRuntimeOverrides(page, projectName = '') {
+type RuntimeInitOptions = Record<string, unknown>;
+
+type StartupRuntimeOverrideOptions = {
+  projectName?: string;
+  runtimeInitOptions?: RuntimeInitOptions;
+};
+
+type EnsureRuntimeGateReadyOptions = {
+  timeoutMs?: number;
+  expectedProvider?: string;
+  expectedProviders?: string[];
+  forbiddenProviders?: string[];
+};
+
+type RuntimeGateResult =
+  | { status: 'ready' }
+  | { status: 'failed'; text: string };
+
+const failedProjects = new Map<string, string>();
+
+async function installProjectRuntimeOverrides(page: Page, projectName = ''): Promise<void> {
   const normalizedProjectName = String(projectName || '').trim().toLowerCase();
   const shouldDisableNavigatorGpu =
     normalizedProjectName.includes('firefox')
@@ -25,12 +45,23 @@ async function installProjectRuntimeOverrides(page, projectName = '') {
   });
 }
 
-export function getRuntimeGateFailure(projectName) {
+export function getRuntimeGateFailure(projectName: string): string | null {
   return failedProjects.get(projectName) || null;
 }
 
-export async function installStartupRuntimeOverride(page, options = {}) {
+export async function installStartupRuntimeOverride(
+  page: Page,
+  options: StartupRuntimeOverrideOptions = {},
+): Promise<void> {
   await installProjectRuntimeOverrides(page, options.projectName);
+
+  await page.addInitScript(() => {
+    const runtimeWindow = window as Window &
+      typeof globalThis & {
+        __ULTRAHDR_UNDER_TEST__?: boolean;
+      };
+    runtimeWindow.__ULTRAHDR_UNDER_TEST__ = true;
+  });
 
   const runtimeInitOptions = options.runtimeInitOptions;
   if (!runtimeInitOptions || typeof runtimeInitOptions !== 'object') {
@@ -38,9 +69,13 @@ export async function installStartupRuntimeOverride(page, options = {}) {
   }
 
   await page.addInitScript((runtimeInitOptionsPayload) => {
-    const existing = window.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS;
+    const runtimeWindow = window as Window &
+      typeof globalThis & {
+        __ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS?: Record<string, unknown>;
+      };
+    const existing = runtimeWindow.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS;
     const existingOptions = existing && typeof existing === 'object' ? existing : {};
-    window.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS = {
+    runtimeWindow.__ULTRAHDR_TEST_RUNTIME_INIT_OPTIONS = {
       ...existingOptions,
       ...runtimeInitOptionsPayload,
     };
@@ -48,11 +83,14 @@ export async function installStartupRuntimeOverride(page, options = {}) {
 }
 
 // Backward-compatible alias for older e2e helper naming.
-export async function installStartupProbeBypass(page, options = {}) {
+export async function installStartupProbeBypass(
+  page: Page,
+  options: StartupRuntimeOverrideOptions = {},
+): Promise<void> {
   await installStartupRuntimeOverride(page, options);
 }
 
-async function readReadyProvider(page) {
+async function readReadyProvider(page: Page): Promise<string | null> {
   const providerLocator = page.getByTestId('runtime-init-provider');
   const text = (await providerLocator.textContent()) || '';
   const match = /runtime provider:\s*([a-z0-9_-]+)/i.exec(text);
@@ -62,7 +100,11 @@ async function readReadyProvider(page) {
   return text.trim().toLowerCase() || null;
 }
 
-export async function ensureRuntimeGateReady(page, testInfo, options = {}) {
+export async function ensureRuntimeGateReady(
+  page: Page,
+  testInfo: TestInfo,
+  options: EnsureRuntimeGateReadyOptions = {},
+): Promise<{ resolvedExecutionProvider: string | null }> {
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 240_000;
   const expectedProvider = typeof options.expectedProvider === 'string'
     ? options.expectedProvider.trim().toLowerCase()
@@ -92,13 +134,14 @@ export async function ensureRuntimeGateReady(page, testInfo, options = {}) {
       return { status: 'failed', text };
     });
 
-  let result;
+  let result: RuntimeGateResult;
   try {
     result = await Promise.race([readyPromise, failurePromise]);
   } catch (error) {
     const reason = `Runtime startup gate timed out for project "${projectName}".`;
     failedProjects.set(projectName, reason);
-    throw new Error(`${reason} ${error?.message || ''}`.trim());
+    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+    throw new Error(`${reason} ${errorMessage}`.trim());
   }
 
   if (result?.status === 'failed') {

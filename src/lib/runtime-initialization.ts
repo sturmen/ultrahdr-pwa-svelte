@@ -318,7 +318,17 @@ async function runStep({
   }
 }
 
-async function loadSmokeImageDataDefault({ runtime = globalThis, smokeAssetUrl }) {
+async function loadSmokeImageDataDefault({
+  runtime = globalThis,
+  smokeAssetUrl,
+  width = DEFAULT_SMOKE_IMAGE_WIDTH,
+  height = DEFAULT_SMOKE_IMAGE_HEIGHT,
+}: {
+  runtime?: typeof globalThis;
+  smokeAssetUrl: string;
+  width?: number;
+  height?: number;
+}) {
   if (typeof runtime?.fetch !== 'function') {
     throw new Error('fetch is not available for smoke asset loading.');
   }
@@ -337,8 +347,15 @@ async function loadSmokeImageDataDefault({ runtime = globalThis, smokeAssetUrl }
     throw new Error('Smoke asset response does not support blob() or arrayBuffer().');
   }
 
-  const { imageData } = await loadImageData(blob);
-  return imageData;
+  const { imageData, rasterSurface } = await loadImageData(blob);
+  if (!rasterSurface) {
+    return imageData;
+  }
+  try {
+    return await rasterSurface.readResized(width || imageData.width, height || imageData.height);
+  } finally {
+    await rasterSurface.cleanup();
+  }
 }
 
 export async function initializeRuntime({

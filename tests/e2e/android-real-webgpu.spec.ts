@@ -1,6 +1,5 @@
-// @ts-check
 import { test, expect, chromium } from '@playwright/test';
-import { ensureRuntimeGateReady } from './runtime-gate.js';
+import { ensureRuntimeGateReady } from './runtime-gate.ts';
 
 test('requires real Android Chromium WebGPU runtime', async ({}, testInfo) => {
     const cdpUrl = process.env.ANDROID_REAL_CDP_URL;

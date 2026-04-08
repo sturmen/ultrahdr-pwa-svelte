@@ -1,8 +1,7 @@
-// @ts-check
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOverride } from './runtime-gate.js';
+import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOverride } from './runtime-gate.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,7 +13,14 @@ const PROCESSING_TIMEOUT_FALLBACK_MS = 240_000;
 const POLL_INTERVAL = 250;
 const MOBILE_TEST_TIMEOUT = PROCESSING_TIMEOUT + 30_000;
 
-function resolveRuntimeGateExpectations(projectName) {
+type RuntimeGateExpectations = {
+  expectedProvider?: string;
+  expectedProviders?: string[];
+  forbiddenProviders?: string[];
+  runtimeInitOptions?: Record<string, unknown>;
+};
+
+function resolveRuntimeGateExpectations(projectName: string): RuntimeGateExpectations {
   const normalizedProjectName = String(projectName || '').toLowerCase();
   if (normalizedProjectName.includes('mobile-chromium-android-fallback')) {
     return {
@@ -35,7 +41,7 @@ function resolveRuntimeGateExpectations(projectName) {
   return {};
 }
 
-async function uploadSingleFile(page, filePath) {
+async function uploadSingleFile(page: Page, filePath: string): Promise<void> {
   await page.waitForFunction(() =>
     Boolean(document.querySelector('#file-upload') || document.querySelector('#add-files')),
   );
@@ -56,15 +62,15 @@ async function uploadSingleFile(page, filePath) {
   await page.locator(targetSelector).setInputFiles(filePath);
 }
 
-async function waitForProcessing(page, expectedResults = 1) {
+async function waitForProcessing(page: Page, expectedResults = 1): Promise<void> {
   return waitForProcessingWithTimeout(page, expectedResults, PROCESSING_TIMEOUT);
 }
 
 async function waitForProcessingWithTimeout(
-  page,
+  page: Page,
   expectedResults = 1,
   timeoutMs = PROCESSING_TIMEOUT,
-) {
+): Promise<void> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -90,7 +96,7 @@ async function waitForProcessingWithTimeout(
   throw new Error(`Processing timed out after ${timeoutMs}ms`);
 }
 
-async function dismissWasmRecommendationIfVisible(page) {
+async function dismissWasmRecommendationIfVisible(page: Page): Promise<void> {
   const modal = page.getByTestId('wasm-recommendation-modal');
   if (await modal.count()) {
     if (await modal.first().isVisible().catch(() => false)) {

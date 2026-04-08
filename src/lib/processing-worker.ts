@@ -1,16 +1,106 @@
-import { processImage as processImageCore } from './processing-core.ts';
-import { initializeRuntime as initializeRuntimeChecks } from './runtime-initialization.ts';
 import { sanitizeRuntimeInitOptions } from './runtime-contract.ts';
 
 const activeJobs = new Map<number, AbortController>();
 let runtimeInitializationPromise: Promise<Record<string, unknown>> | null = null;
 let runtimeInitializationResult: Record<string, unknown> | null = null;
 let runtimeInitializationError: unknown = null;
+let processingCoreModulePromise: Promise<typeof import('./processing-core.ts')> | null = null;
+let runtimeInitializationModulePromise: Promise<typeof import('./runtime-initialization.ts')> | null = null;
 
 type WorkerMessage =
   | { type: 'init'; options?: Record<string, unknown> }
   | { type: 'cancel'; jobId: number }
   | { type: 'process'; jobId: number; file: File; options?: Record<string, unknown> };
+
+function emitModuleLoadEvent(
+  type: 'init-progress' | 'progress',
+  {
+    jobId = null,
+    status,
+    moduleName,
+  }: {
+    jobId?: number | null;
+    status: 'running' | 'passed' | 'failed';
+    moduleName: string;
+  },
+): void {
+  const event = {
+    stepId: 'worker-module-load',
+    status,
+    note: `${status === 'running' ? 'Loading' : status === 'passed' ? 'Loaded' : 'Failed to load'} ${moduleName}.`,
+    moduleName,
+    timestamp: Date.now(),
+  };
+
+  if (type === 'progress' && typeof jobId === 'number') {
+    self.postMessage({
+      type,
+      jobId,
+      event,
+    });
+    return;
+  }
+
+  self.postMessage({
+    type,
+    event,
+  });
+}
+
+async function loadRuntimeInitializationModule(): Promise<typeof import('./runtime-initialization.ts')> {
+  if (!runtimeInitializationModulePromise) {
+    emitModuleLoadEvent('init-progress', {
+      status: 'running',
+      moduleName: 'runtime initialization module',
+    });
+    runtimeInitializationModulePromise = import('./runtime-initialization.ts')
+      .then((module) => {
+        emitModuleLoadEvent('init-progress', {
+          status: 'passed',
+          moduleName: 'runtime initialization module',
+        });
+        return module;
+      })
+      .catch((error: unknown) => {
+        emitModuleLoadEvent('init-progress', {
+          status: 'failed',
+          moduleName: 'runtime initialization module',
+        });
+        runtimeInitializationModulePromise = null;
+        throw error;
+      });
+  }
+  return runtimeInitializationModulePromise;
+}
+
+async function loadProcessingCoreModule(jobId: number): Promise<typeof import('./processing-core.ts')> {
+  if (!processingCoreModulePromise) {
+    emitModuleLoadEvent('progress', {
+      jobId,
+      status: 'running',
+      moduleName: 'processing core module',
+    });
+    processingCoreModulePromise = import('./processing-core.ts')
+      .then((module) => {
+        emitModuleLoadEvent('progress', {
+          jobId,
+          status: 'passed',
+          moduleName: 'processing core module',
+        });
+        return module;
+      })
+      .catch((error: unknown) => {
+        emitModuleLoadEvent('progress', {
+          jobId,
+          status: 'failed',
+          moduleName: 'processing core module',
+        });
+        processingCoreModulePromise = null;
+        throw error;
+      });
+  }
+  return processingCoreModulePromise;
+}
 
 function normalizeError(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
@@ -71,8 +161,9 @@ async function ensureRuntimeInitialized(initOptions: Record<string, unknown> | n
   }
 
   const runtimeInitializationOptions = sanitizeRuntimeInitOptions(initOptions);
+  const runtimeInitializationModule = await loadRuntimeInitializationModule();
 
-  runtimeInitializationPromise = initializeRuntimeChecks({
+  runtimeInitializationPromise = runtimeInitializationModule.initializeRuntime({
     onProgress: (event) => {
       self.postMessage({
         type: 'init-progress',
@@ -125,7 +216,8 @@ async function handleProcessMessage(message: Extract<WorkerMessage, { type: 'pro
     await ensureRuntimeInitialized();
     const file = message.file;
     const options = message.options || {};
-    const blob = await processImageCore(file, {
+    const processingCoreModule = await loadProcessingCoreModule(jobId);
+    const blob = await processingCoreModule.processImage(file, {
       ...options,
       abortSignal: controller.signal,
       onProgress: (event) => {

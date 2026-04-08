@@ -8,7 +8,7 @@ const chromiumWebGpuArgs = [
 
 export default defineConfig({
     testDir: './tests/e2e',
-    testIgnore: ['**/android-real-webgpu.spec.js'],
+    testIgnore: ['**/android-real-webgpu.spec.ts'],
     fullyParallel: false,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
@@ -31,22 +31,22 @@ export default defineConfig({
                     args: chromiumWebGpuArgs,
                 },
             },
-            testIgnore: ['**/mobile.spec.js', '**/android-real-webgpu.spec.js'],
+            testIgnore: ['**/mobile.spec.ts', '**/android-real-webgpu.spec.ts'],
         },
         {
             name: 'firefox',
             use: { ...devices['Desktop Firefox'] },
-            testIgnore: ['**/mobile.spec.js', '**/android-real-webgpu.spec.js'],
+            testIgnore: ['**/mobile.spec.ts', '**/android-real-webgpu.spec.ts'],
         },
         {
             name: 'webkit',
             use: { ...devices['Desktop Safari'] },
-            testIgnore: ['**/mobile.spec.js', '**/android-real-webgpu.spec.js'],
+            testIgnore: ['**/mobile.spec.ts', '**/android-real-webgpu.spec.ts'],
         },
         {
             name: 'mobile-webkit-ios',
             use: { ...devices['iPhone 14'] },
-            testMatch: ['**/mobile.spec.js', '**/offline.spec.js'],
+            testMatch: ['**/mobile.spec.ts', '**/offline.spec.ts'],
         },
         {
             name: 'mobile-chromium-android-gpu',
@@ -56,12 +56,12 @@ export default defineConfig({
                     args: chromiumWebGpuArgs,
                 },
             },
-            testMatch: '**/mobile.spec.js',
+            testMatch: '**/mobile.spec.ts',
         },
         {
             name: 'mobile-chromium-android-fallback',
             use: { ...devices['Pixel 7'] },
-            testMatch: '**/mobile.spec.js',
+            testMatch: '**/mobile.spec.ts',
         },
     ],
 

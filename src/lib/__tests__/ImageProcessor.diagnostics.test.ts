@@ -3,6 +3,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import {
+  DIAGNOSTICS_ACTIVE_SESSION_KEY,
+  DIAGNOSTICS_REPORTS_KEY,
+} from '../diagnostics.ts';
 
 const diagnosticsMocks = vi.hoisted(() => ({
   runtimeProcessMock: vi.fn(),
@@ -104,5 +108,193 @@ describe('ImageProcessor diagnostics', () => {
 
     expect(screen.getByText(/possible memory issue/i)).toBeInTheDocument();
     expect(screen.getByText(/allocation-failure/i)).toBeInTheDocument();
+  });
+
+  it('persists a sanitized recovery snapshot while stage progress is in flight', async () => {
+    let releaseProcessing!: () => void;
+    diagnosticsMocks.runtimeProcessMock.mockImplementationOnce(
+      async (_file: File, options: Record<string, unknown> = {}) => {
+        const onProgress = options.onProgress as ((event: Record<string, unknown>) => void) | undefined;
+        onProgress?.({
+          phase: 'stage-progress',
+          stage: 'generate-gain-map',
+          stageProgress: 62.5,
+          gmnetExecutionProvider: 'webgpu',
+          gmnetCheckpointTilesCompleted: 5,
+          gmnetCheckpointTilesTotal: 8,
+          fileName: 'private-photo.jpg',
+        });
+
+        await new Promise<void>((resolve) => {
+          releaseProcessing = resolve;
+        });
+
+        return new Blob(['output'], { type: 'image/jpeg' });
+      },
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [new File(['input-bytes'], 'private-photo.jpg', { type: 'image/jpeg' })],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(diagnosticsMocks.runtimeProcessMock).toHaveBeenCalledTimes(1);
+      const persisted = JSON.parse(
+        window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) || 'null',
+      ) as Record<string, unknown> | null;
+      expect(persisted?.processingSnapshot).toEqual(
+        expect.objectContaining({
+          currentQueueId: 0,
+          queueIndex: 0,
+          totalFiles: 1,
+          currentStage: 'generate-gain-map',
+          currentPhase: 'stage-progress',
+          stageProgress: 62.5,
+          pipelineExecutionProvider: 'webgpu',
+          gmnetCheckpointTilesCompleted: 5,
+          gmnetCheckpointTilesTotal: 8,
+          inputFile: expect.objectContaining({
+            mimeType: 'image/jpeg',
+            fileSize: 11,
+          }),
+        }),
+      );
+      expect(persisted?.processingSnapshot).not.toHaveProperty('originalFileName');
+      expect(JSON.stringify(persisted?.processingSnapshot || {})).not.toContain('private-photo.jpg');
+    });
+
+    releaseProcessing();
+  });
+
+  it('records stage breadcrumbs on the main thread and persists the latest substage into recovery state', async () => {
+    let releaseProcessing!: () => void;
+    diagnosticsMocks.runtimeProcessMock.mockImplementationOnce(
+      async (_file: File, options: Record<string, unknown> = {}) => {
+        const onProgress = options.onProgress as ((event: Record<string, unknown>) => void) | undefined;
+        onProgress?.({
+          phase: 'stage-start',
+          stage: 'preprocess-file',
+          stageProgress: 0,
+          note: 'Preparing input',
+          elapsedMs: 120,
+          fileName: 'private-photo.heic',
+        });
+        onProgress?.({
+          phase: 'stage-progress',
+          stage: 'preprocess-file',
+          stageProgress: 35,
+          substage: 'heif-primary-decode-started',
+          note: 'Decoding primary HEIF image',
+          elapsedMs: 275,
+          fileName: 'private-photo.heic',
+        });
+
+        await new Promise<void>((resolve) => {
+          releaseProcessing = resolve;
+        });
+
+        return new Blob(['output'], { type: 'image/jpeg' });
+      },
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [new File(['input-bytes'], 'private-photo.heic', { type: 'image/heif' })],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      const persisted = JSON.parse(
+        window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) || 'null',
+      ) as { processingSnapshot?: Record<string, unknown> } | null;
+      expect(persisted?.processingSnapshot).toEqual(
+        expect.objectContaining({
+          currentStage: 'preprocess-file',
+          currentPhase: 'stage-progress',
+          currentSubstage: 'heif-primary-decode-started',
+          currentNote: 'Decoding primary HEIF image',
+          currentElapsedMs: 275,
+          recentPipelineBreadcrumbs: [
+            {
+              phase: 'stage-start',
+              stage: 'preprocess-file',
+              substage: null,
+              note: 'Preparing input',
+              stageProgress: 0,
+              elapsedMs: 120,
+            },
+            {
+              phase: 'stage-progress',
+              stage: 'preprocess-file',
+              substage: 'heif-primary-decode-started',
+              note: 'Decoding primary HEIF image',
+              stageProgress: 35,
+              elapsedMs: 275,
+            },
+          ],
+        }),
+      );
+
+      const persistedReports = JSON.parse(
+        window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+      ) as { events: Array<Record<string, unknown>> };
+      expect(persistedReports.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            category: 'pipeline',
+            name: 'stage-start',
+            context: expect.objectContaining({
+              stage: 'preprocess-file',
+              note: 'Preparing input',
+            }),
+          }),
+          expect.objectContaining({
+            category: 'pipeline',
+            name: 'stage-progress',
+            context: expect.objectContaining({
+              stage: 'preprocess-file',
+              substage: 'heif-primary-decode-started',
+              note: 'Decoding primary HEIF image',
+            }),
+          }),
+        ]),
+      );
+    });
+
+    releaseProcessing();
+  });
+
+  it('suppresses the recovered diagnostics popup while the explicit under-test flag is enabled', async () => {
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-under-test',
+        active: true,
+        cleanExit: false,
+        processingSnapshot: {
+          currentQueueId: 1,
+          currentStage: 'generate-gain-map',
+        },
+      }),
+    );
+    Object.defineProperty(window, '__ULTRAHDR_UNDER_TEST__', {
+      configurable: true,
+      value: true,
+    });
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
+    });
   });
 });

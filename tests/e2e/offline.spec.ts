@@ -1,5 +1,4 @@
-// @ts-check
-import { test, expect } from '@playwright/test';
+import { test, expect, type TestInfo } from '@playwright/test';
 import {
     assertOfflineDownload,
     clearOfflineRuntimeBundle,
@@ -11,17 +10,17 @@ import {
     resolveOfflineProjectConfig,
     uploadSingleFile,
     waitForProcessing,
-} from './offline-helpers.js';
+} from './offline-helpers.ts';
 
-function skipUnsupportedProject(testInfo) {
+function skipUnsupportedProject(testInfo: TestInfo): void {
     test.skip(
         !isOfflineCoverageProject(testInfo.project.name),
         `Offline coverage is limited to chromium and mobile-webkit-ios; got ${testInfo.project.name}.`,
     );
 }
 
-function maybeSkipKnownRuntimeIssue(testInfo, error) {
-    const message = String(error?.message || '');
+function maybeSkipKnownRuntimeIssue(testInfo: TestInfo, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error ?? '');
     if (
         testInfo.project.name.includes('webkit')
         && /cannot resolve operator 'GatherND'/i.test(message)
@@ -33,13 +32,15 @@ function maybeSkipKnownRuntimeIssue(testInfo, error) {
     }
 }
 
-function isWebKitOfflineNavigationError(testInfo, error) {
+function isWebKitOfflineNavigationError(testInfo: TestInfo, error: unknown): boolean {
     return testInfo.project.name === 'mobile-webkit-ios'
-        && /webkit encountered an internal error/i.test(String(error?.message || ''));
+        && /webkit encountered an internal error/i.test(
+            error instanceof Error ? error.message : String(error ?? ''),
+        );
 }
 
-function maybeSkipKnownWebKitOfflineProcessingLimitation(testInfo, error) {
-    const message = String(error?.message || '');
+function maybeSkipKnownWebKitOfflineProcessingLimitation(testInfo: TestInfo, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error ?? '');
     if (
         testInfo.project.name === 'mobile-webkit-ios'
         && /libultrahdr WASM module failed to load/i.test(message)

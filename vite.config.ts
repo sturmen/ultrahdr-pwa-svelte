@@ -215,9 +215,16 @@ export default defineConfig({
     exclude: ['@monogrid/gainmap-js/libultrahdr'],
   },
   build: {
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks(id: string) {
+          if (id.includes('node_modules/jszip/')) {
+            return 'zip-runtime';
+          }
+          if (id.includes('node_modules/jimp/') || id.includes('node_modules/fast-png/')) {
+            return 'raster-runtime';
+          }
           if (id.includes('node_modules/onnxruntime-web/')) {
             if (id.includes('/dist/ort.webgpu') || id.includes('/lib/backend-webgpu') || id.includes('/lib/wasm/jsep')) {
               return 'ort-webgpu-runtime';

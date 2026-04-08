@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
     testDir: './tests/e2e',
-    testMatch: '**/android-real-webgpu.spec.js',
+    testMatch: '**/android-real-webgpu.spec.ts',
     fullyParallel: false,
     retries: 0,
     workers: 1,

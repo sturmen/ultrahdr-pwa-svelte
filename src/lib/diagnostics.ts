@@ -59,10 +59,55 @@ export interface DiagnosticsReport {
   recentEvents: DiagnosticsEvent[];
 }
 
+export interface DiagnosticsInputFileSummary {
+  mimeType: string | null;
+  fileSize: number | null;
+  pixelWidth: number | null;
+  pixelHeight: number | null;
+}
+
+export interface DiagnosticsPipelineBreadcrumbSummary {
+  phase: string | null;
+  stage: string | null;
+  substage: string | null;
+  note: string | null;
+  stageProgress: number | null;
+  elapsedMs: number | null;
+}
+
+export interface DiagnosticsProcessingSnapshot {
+  currentQueueId: number | null;
+  queueIndex: number | null;
+  totalFiles: number | null;
+  currentStage: string | null;
+  currentPhase: string | null;
+  currentSubstage: string | null;
+  currentNote: string | null;
+  currentElapsedMs: number | null;
+  stageProgress: number | null;
+  pipelineId: string | null;
+  pipelineExecutionProvider: string | null;
+  gmnetMemoryMode: string | null;
+  gmnetCheckpointingMode: string | null;
+  settingsVersion: number | null;
+  rotation: number | null;
+  inputFile: DiagnosticsInputFileSummary | null;
+  gmnetCheckpointTilesCompleted: number | null;
+  gmnetCheckpointTilesTotal: number | null;
+  gmnetCheckpointResumed: boolean | null;
+  documentHidden: boolean | null;
+  lastPageHideAt: number | null;
+  storageQuotaBytes: number | null;
+  storageUsageBytes: number | null;
+  storageRemainingBytes: number | null;
+  recentPipelineBreadcrumbs: DiagnosticsPipelineBreadcrumbSummary[];
+}
+
 export interface DiagnosticsRecorder {
   record: (event: DiagnosticsEventInput) => DiagnosticsEvent;
   getEvents: () => DiagnosticsEvent[];
   markProcessingActive: (context?: Record<string, unknown>) => void;
+  updateProcessingSnapshot: (context?: Record<string, unknown>) => void;
   markProcessingComplete: (context?: Record<string, unknown>) => void;
   clearActiveSession: () => void;
 }
@@ -86,6 +131,16 @@ interface RuntimeLike {
     };
   };
   __ultrahdrDiagnosticsRecorder?: DiagnosticsRecorder;
+}
+
+interface DiagnosticsActiveSession {
+  sessionId: string;
+  active: boolean;
+  cleanExit: boolean;
+  updatedAt: number;
+  processingSnapshot?: DiagnosticsProcessingSnapshot;
+  queueId?: number | null;
+  stage?: string | null;
 }
 
 function now(): number {
@@ -136,6 +191,127 @@ function getPerformanceMemory(runtime: RuntimeLike): Record<string, number | nul
   };
 }
 
+function normalizeNullableNumber(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function normalizeNullableBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function sanitizeInputFileSummary(value: unknown): DiagnosticsInputFileSummary | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const input = value as Record<string, unknown>;
+  return {
+    mimeType: normalizeNullableString(input.mimeType),
+    fileSize: normalizeNullableNumber(input.fileSize),
+    pixelWidth: normalizeNullableNumber(input.pixelWidth),
+    pixelHeight: normalizeNullableNumber(input.pixelHeight),
+  };
+}
+
+function sanitizePipelineBreadcrumbSummary(
+  value: unknown,
+): DiagnosticsPipelineBreadcrumbSummary | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const input = value as Record<string, unknown>;
+  return {
+    phase: normalizeNullableString(input.phase),
+    stage: normalizeNullableString(input.stage),
+    substage: normalizeNullableString(input.substage),
+    note: normalizeNullableString(input.note),
+    stageProgress: normalizeNullableNumber(input.stageProgress),
+    elapsedMs: normalizeNullableNumber(input.elapsedMs),
+  };
+}
+
+function sanitizeProcessingSnapshot(value: unknown): DiagnosticsProcessingSnapshot | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const snapshot = value as Record<string, unknown>;
+  return {
+    currentQueueId: normalizeNullableNumber(snapshot.currentQueueId ?? snapshot.queueId),
+    queueIndex: normalizeNullableNumber(snapshot.queueIndex),
+    totalFiles: normalizeNullableNumber(snapshot.totalFiles),
+    currentStage: normalizeNullableString(snapshot.currentStage ?? snapshot.stage),
+    currentPhase: normalizeNullableString(snapshot.currentPhase ?? snapshot.phase),
+    currentSubstage: normalizeNullableString(snapshot.currentSubstage ?? snapshot.substage),
+    currentNote: normalizeNullableString(snapshot.currentNote ?? snapshot.note),
+    currentElapsedMs: normalizeNullableNumber(snapshot.currentElapsedMs ?? snapshot.elapsedMs),
+    stageProgress: normalizeNullableNumber(snapshot.stageProgress),
+    pipelineId: normalizeNullableString(snapshot.pipelineId),
+    pipelineExecutionProvider: normalizeNullableString(snapshot.pipelineExecutionProvider),
+    gmnetMemoryMode: normalizeNullableString(snapshot.gmnetMemoryMode),
+    gmnetCheckpointingMode: normalizeNullableString(snapshot.gmnetCheckpointingMode),
+    settingsVersion: normalizeNullableNumber(snapshot.settingsVersion),
+    rotation: normalizeNullableNumber(snapshot.rotation),
+    inputFile: sanitizeInputFileSummary(snapshot.inputFile),
+    gmnetCheckpointTilesCompleted: normalizeNullableNumber(
+      snapshot.gmnetCheckpointTilesCompleted,
+    ),
+    gmnetCheckpointTilesTotal: normalizeNullableNumber(snapshot.gmnetCheckpointTilesTotal),
+    gmnetCheckpointResumed: normalizeNullableBoolean(snapshot.gmnetCheckpointResumed),
+    documentHidden: normalizeNullableBoolean(snapshot.documentHidden),
+    lastPageHideAt: normalizeNullableNumber(snapshot.lastPageHideAt),
+    storageQuotaBytes: normalizeNullableNumber(snapshot.storageQuotaBytes),
+    storageUsageBytes: normalizeNullableNumber(snapshot.storageUsageBytes),
+    storageRemainingBytes: normalizeNullableNumber(snapshot.storageRemainingBytes),
+    recentPipelineBreadcrumbs: Array.isArray(snapshot.recentPipelineBreadcrumbs)
+      ? snapshot.recentPipelineBreadcrumbs
+          .map((breadcrumb) => sanitizePipelineBreadcrumbSummary(breadcrumb))
+          .filter((breadcrumb): breadcrumb is DiagnosticsPipelineBreadcrumbSummary => breadcrumb !== null)
+      : [],
+  };
+}
+
+function mergeProcessingSnapshots(
+  base: DiagnosticsProcessingSnapshot | null,
+  patch: DiagnosticsProcessingSnapshot | null,
+): DiagnosticsProcessingSnapshot | null {
+  if (!base) {
+    return patch;
+  }
+  if (!patch) {
+    return base;
+  }
+
+  return {
+    ...base,
+    ...patch,
+    inputFile: patch.inputFile ?? base.inputFile,
+    recentPipelineBreadcrumbs:
+      patch.recentPipelineBreadcrumbs.length > 0
+        ? patch.recentPipelineBreadcrumbs
+        : base.recentPipelineBreadcrumbs,
+  };
+}
+
+function getPersistedActiveSession(runtime: RuntimeLike): DiagnosticsActiveSession | null {
+  return safeParseJson<DiagnosticsActiveSession | null>(
+    runtime.localStorage?.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) || null,
+    null,
+  );
+}
+
+function getContextProcessingSnapshot(
+  context: Record<string, unknown>,
+): DiagnosticsProcessingSnapshot | null {
+  return sanitizeProcessingSnapshot(context.processingSnapshot ?? context);
+}
+
 export function createDiagnosticsRecorder(
   runtime: RuntimeLike = globalThis,
   options: DiagnosticsRecorderOptions = {},
@@ -159,6 +335,13 @@ export function createDiagnosticsRecorder(
   }
 
   function writeActiveSession(active: boolean, context: Record<string, unknown> = {}): void {
+    const persistedSession = getPersistedActiveSession(runtime);
+    const processingSnapshot = mergeProcessingSnapshots(
+      sanitizeProcessingSnapshot(persistedSession?.processingSnapshot),
+      getContextProcessingSnapshot(context),
+    );
+    const { processingSnapshot: ignoredProcessingSnapshot, ...restContext } = context;
+    void ignoredProcessingSnapshot;
     runtime.localStorage?.setItem(
       DIAGNOSTICS_ACTIVE_SESSION_KEY,
       JSON.stringify({
@@ -166,7 +349,10 @@ export function createDiagnosticsRecorder(
         active,
         cleanExit: !active,
         updatedAt: now(),
-        ...context,
+        ...restContext,
+        processingSnapshot,
+        queueId: processingSnapshot?.currentQueueId ?? null,
+        stage: processingSnapshot?.currentStage ?? null,
       }),
     );
   }
@@ -190,6 +376,9 @@ export function createDiagnosticsRecorder(
     },
     getEvents: () => events.map((event) => ({ ...event, context: { ...event.context } })),
     markProcessingActive: (context = {}) => {
+      writeActiveSession(true, context);
+    },
+    updateProcessingSnapshot: (context = {}) => {
       writeActiveSession(true, context);
     },
     markProcessingComplete: (context = {}) => {
@@ -327,10 +516,7 @@ export async function copyDiagnosticsReport(
 export function consumeRecoveredDiagnosticsReport(
   runtime: RuntimeLike = globalThis,
 ): DiagnosticsReport | null {
-  const activeSession = safeParseJson<Record<string, unknown> | null>(
-    runtime.localStorage?.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) || null,
-    null,
-  );
+  const activeSession = getPersistedActiveSession(runtime);
   if (!activeSession || activeSession.active !== true) {
     return null;
   }
@@ -347,11 +533,12 @@ export function consumeRecoveredDiagnosticsReport(
       confidence: 'medium',
       message: 'Recovered an incomplete processing session after relaunch.',
     },
-    context: {
-      currentStage:
-        typeof activeSession.stage === 'string' ? activeSession.stage : null,
-      currentQueueId:
-        typeof activeSession.queueId === 'number' ? activeSession.queueId : null,
-    },
+    context:
+      (sanitizeProcessingSnapshot(activeSession.processingSnapshot) as Record<string, unknown> | null) || {
+        currentStage:
+          typeof activeSession.stage === 'string' ? activeSession.stage : null,
+        currentQueueId:
+          typeof activeSession.queueId === 'number' ? activeSession.queueId : null,
+      },
   });
 }

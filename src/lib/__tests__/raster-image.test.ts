@@ -8,6 +8,7 @@ import path from 'node:path';
 const {
   JimpMock,
   jimpReadMock,
+  pngDecodeMock,
   resizeMock,
   rotateMock,
   bitmapState,
@@ -45,6 +46,12 @@ const {
     rotate: rotateMock,
   }));
 
+  const pngDecodeMock = vi.fn(() => ({
+    width: 2,
+    height: 1,
+    data: new Uint8Array([17, 34]),
+  }));
+
   function JimpMock() {
     return {
       bitmap: bitmapState,
@@ -56,6 +63,7 @@ const {
   return {
     JimpMock,
     jimpReadMock,
+    pngDecodeMock,
     resizeMock,
     rotateMock,
     bitmapState,
@@ -69,6 +77,10 @@ vi.mock('jimp', () => ({
   ResizeStrategy: {
     BILINEAR: 'bilinear',
   },
+}));
+
+vi.mock('fast-png', () => ({
+  decode: pngDecodeMock,
 }));
 
 describe('raster-image', () => {
@@ -123,6 +135,21 @@ describe('raster-image', () => {
       0, 255, 0, 255,
     ]);
     expect(rotateMock).not.toHaveBeenCalled();
+  });
+
+  it('expands grayscale png decodes to rgba image data', async () => {
+    const { decodeRasterBuffer } = await import('../raster-image.ts');
+
+    const result = await decodeRasterBuffer(new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]));
+
+    expect(result.width).toBe(2);
+    expect(result.height).toBe(1);
+    expect(Array.from(result.data)).toEqual([
+      17, 17, 17, 255,
+      34, 34, 34, 255,
+    ]);
   });
 
   it('does not import the node buffer module in the browser raster pipeline', () => {

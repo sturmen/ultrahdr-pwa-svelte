@@ -17,6 +17,7 @@ import {
   canUseProcessingWorker,
   resolveInferenceTimeoutMs,
   resolveWorkerInitTimeoutMs,
+  resolveWorkerWasmLoadTimeoutMs,
 } from './runtime-capability-policy.ts';
 import {
   STARTUP_CAPABILITY_CACHE_TTL_DEFAULT_MS,
@@ -47,7 +48,6 @@ const WORKER_SUPPORT_ERROR = 'Processing worker is unavailable in this environme
 const WORKER_INIT_ERROR = 'Processing worker failed to initialize.';
 const WORKER_MESSAGE_ERROR = 'Processing worker returned an unexpected response.';
 const WORKER_STALL_ERROR = 'Processing worker stalled before WASM initialization completed.';
-const WORKER_WASM_LOAD_TIMEOUT_MS = 20_000;
 const RUNTIME_INIT_FAILURE_TRACE_KEY = 'ultrahdr:runtime-init-failures:v1';
 const INFERENCE_STAGE_NAME = 'generate-gain-map';
 const INFERENCE_HEARTBEAT_INTERVAL_MS = 5_000;
@@ -728,7 +728,7 @@ function initializeWorkerClient(context, initOptions = null) {
                   worker.postMessage({ type: 'cancel', jobId });
                   pendingJob.reject(timeoutError);
                   disposeJob(jobId);
-                }, WORKER_WASM_LOAD_TIMEOUT_MS);
+                }, resolveWorkerWasmLoadTimeoutMs(globalThis));
 
                 if (abortSignal) {
                   abortListener = () => {

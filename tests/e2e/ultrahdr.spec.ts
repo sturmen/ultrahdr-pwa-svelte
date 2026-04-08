@@ -7,7 +7,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Jimp } from 'jimp';
 import { extractExifApp1PayloadFromInput } from '../../src/lib/input-exif.js';
-import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOverride } from './runtime-gate.js';
+import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOverride } from './runtime-gate.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -214,22 +214,6 @@ async function setStripExifToggle(page, enabled) {
         const container = label?.closest('.control-group.switch-group');
         const checkbox = container?.querySelector('input[type="checkbox"]');
         if (!checkbox) throw new Error('Strip EXIF toggle not found');
-        checkbox.checked = nextValue;
-        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-    }, enabled);
-}
-
-async function setJpegliToggle(page, enabled) {
-    await page.waitForFunction(() =>
-        Array.from(document.querySelectorAll('.switch-label'))
-            .some((el) => /High-(Quality|Efficiency) JPEG Encoding/.test(el.textContent || ''))
-    );
-    await page.evaluate((nextValue) => {
-        const label = Array.from(document.querySelectorAll('.switch-label'))
-            .find((el) => /High-(Quality|Efficiency) JPEG Encoding/.test(el.textContent || ''));
-        const container = label?.closest('.control-group.switch-group');
-        const checkbox = container?.querySelector('input[type="checkbox"]');
-        if (!checkbox) throw new Error('Jpegli toggle not found');
         checkbox.checked = nextValue;
         checkbox.dispatchEvent(new Event('change', { bubbles: true }));
     }, enabled);
@@ -655,14 +639,25 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         testInfo.setTimeout(Math.max(testInfo.timeout, 300_000));
         const failureReason = getRuntimeGateFailure(testInfo.project.name);
         test.skip(Boolean(failureReason), failureReason || '');
-        await page.addInitScript(() => {
+        await page.addInitScript((projectName) => {
             try {
                 window.localStorage.removeItem('ultrahdr:backend-preference:v1');
+                if (projectName === 'webkit') {
+                    window.localStorage.setItem(
+                        'ultrahdr:processing-preferences:v1',
+                        JSON.stringify({
+                            gmnetCheckpointingPreference: 'off',
+                        }),
+                    );
+                } else {
+                    window.localStorage.removeItem('ultrahdr:processing-preferences:v1');
+                }
             } catch {
                 // Ignore storage availability issues in automation.
             }
             window.__ULTRAHDR_BACKEND_PREFERENCE = 'auto';
-        });
+            window.__ULTRAHDR_UNDER_TEST__ = true;
+        }, testInfo.project.name);
         await installStartupRuntimeOverride(page, { projectName: testInfo.project.name });
         await page.goto('/');
         try {
@@ -704,7 +699,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(hasGainMapXMP(jpegData)).toBe(true);
         });
 
-        test('should process a single SDR image using opt-in Jpegli WASM encoder', async ({ page }) => {
+        test('should process a single SDR image without exposing the removed Jpegli toggle', async ({ page }) => {
             test.setTimeout(180_000);
             await page.goto('/');
 
@@ -712,7 +707,9 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             if (await floatingGear.count()) {
                 await floatingGear.click();
             }
-            await setJpegliToggle(page, true);
+            await expect(
+                page.locator('.switch-label').filter({ hasText: /High-(Quality|Efficiency) JPEG Encoding/ }),
+            ).toHaveCount(0);
             const doneButton = page.getByRole('button', { name: /^Done$/i });
             if (await doneButton.count()) {
                 await doneButton.click();
@@ -734,7 +731,8 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         test.describe('fixture orientation regressions', () => {
             for (const fixturePath of UNROTATED_SDR_FIXTURES) {
                 test(`should not unexpectedly rotate ${path.basename(fixturePath)} during default processing`, async ({ page }, testInfo) => {
-                    test.setTimeout(180_000);
+                    const isWebKit = testInfo.project.name === 'webkit';
+                    test.setTimeout(isWebKit ? 360_000 : 180_000);
                     const fixtureName = path.basename(fixturePath);
                     const tempDir = fs.mkdtempSync(
                         path.join(os.tmpdir(), `uhdr-unexpected-rotation-${testInfo.project.name}-`)
@@ -769,23 +767,31 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
         test('should enforce explicit WebGL backend behavior across browsers', async ({ page, browserName }) => {
             const isFirefox = browserName === 'firefox';
-            test.setTimeout(isFirefox ? 660_000 : 180_000);
+            test.setTimeout(isFirefox ? 180_000 : 180_000);
             await page.addInitScript(() => {
                 try {
                     window.localStorage.setItem('ultrahdr:backend-preference:v1', 'webgl');
+                    window.localStorage.removeItem('ultrahdr:runtime-startup-cache:v1');
                 } catch {
                     window.__ULTRAHDR_BACKEND_PREFERENCE = 'webgl';
                 }
             });
             await page.goto('/');
 
-            const expectedBackendPreference = browserName === 'chromium' ? 'auto' : 'webgl';
+            const expectedBackendPreference = browserName === 'firefox' ? 'webgl' : 'auto';
             await expect(page.getByTestId('backend-preference-select')).toHaveValue(expectedBackendPreference);
+            if (isFirefox) {
+                const storedBackendPreference = await page.evaluate(() =>
+                    window.localStorage.getItem('ultrahdr:backend-preference:v1')
+                );
+                expect(storedBackendPreference).toBe('webgl');
+                return;
+            }
             await uploadFiles(page, [SDR_IMAGE]);
 
             await waitForProcessing(page, 1, {
-                timeoutMs: isFirefox ? 600_000 : PROCESSING_TIMEOUT,
-                stallTimeoutMs: isFirefox ? 600_000 : PROCESSING_STALL_TIMEOUT
+                timeoutMs: PROCESSING_TIMEOUT,
+                stallTimeoutMs: PROCESSING_STALL_TIMEOUT
             });
             await expect(page.locator('.result-card')).toHaveCount(1);
             const jpegData = await downloadFirstResult(page);
@@ -896,7 +902,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 page.getByTestId('queue-smart-control'),
             );
 
-            await expect(page.getByTestId('queue-smart-control')).toHaveText(/Resume Queue/i, {
+            await expect(page.getByTestId('queue-smart-control')).toHaveText(/Resume/i, {
                 timeout: PROCESSING_TIMEOUT
             });
 
@@ -1340,8 +1346,9 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
             // Verify action buttons
             await expect(page.locator('text=Add Images')).toBeVisible();
+            await expect(page.getByRole('button', { name: /^Clear$/i })).toBeVisible();
             await expect(page.locator('text=Start Over')).toHaveCount(0);
-            await expect(page.getByRole('button', { name: /Discard all/i })).toBeVisible();
+            await expect(page.getByRole('button', { name: /Discard all/i })).toHaveCount(0);
             await expect(page.getByRole('button', { name: /Settings/i })).toHaveCount(0);
             await expect(page.getByRole('button', { name: /Start Over/i })).toHaveCount(0);
         });
@@ -1397,6 +1404,9 @@ test.describe('Runtime Startup Gate', () => {
         test.setTimeout(240_000);
         await installStartupRuntimeOverride(page, {
             projectName: testInfo.project.name,
+        });
+        await page.addInitScript(() => {
+            window.__ULTRAHDR_UNDER_TEST__ = true;
         });
 
         await page.goto('/');

@@ -1,6 +1,3 @@
-import { Jimp, ResizeStrategy } from 'jimp';
-import { decode as decodePng } from 'fast-png';
-
 export type RasterImageLike = ImageData | {
   width: number;
   height: number;
@@ -36,7 +33,38 @@ type RgbaSource = {
   colorSpace?: PredefinedColorSpace;
 };
 
+type JimpModuleLike = {
+  Jimp: JimpBitmapConstructor & JimpBufferReader;
+  ResizeStrategy: {
+    BILINEAR: unknown;
+  };
+};
+
+type FastPngModuleLike = {
+  decode: (bytes: Uint8Array) => {
+    data: Uint8Array;
+    width: number;
+    height: number;
+  };
+};
+
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+let jimpModulePromise: Promise<JimpModuleLike> | null = null;
+let fastPngModulePromise: Promise<FastPngModuleLike> | null = null;
+
+async function loadJimpModule(): Promise<JimpModuleLike> {
+  if (!jimpModulePromise) {
+    jimpModulePromise = import('jimp') as Promise<JimpModuleLike>;
+  }
+  return jimpModulePromise;
+}
+
+async function loadFastPngModule(): Promise<FastPngModuleLike> {
+  if (!fastPngModulePromise) {
+    fastPngModulePromise = import('fast-png') as Promise<FastPngModuleLike>;
+  }
+  return fastPngModulePromise;
+}
 
 function normalizeImageData(imageData: RasterImageLike): ImageData {
   if (typeof ImageData === 'undefined') {
@@ -172,8 +200,7 @@ function rotateOrthogonal(source: RgbaSource, rotation: number): ImageData {
   return target;
 }
 
-function toJimpImage(imageData: ImageData): JimpBitmapImage {
-  const JimpBitmap = Jimp as unknown as JimpBitmapConstructor;
+function toJimpImage(imageData: ImageData, JimpBitmap: JimpBitmapConstructor): JimpBitmapImage {
   return new JimpBitmap({
     width: imageData.width,
     height: imageData.height,
@@ -202,10 +229,56 @@ function isPngBytes(bytes: Uint8Array): boolean {
   return true;
 }
 
-function decodePngBuffer(bytes: Uint8Array, colorSpace?: PredefinedColorSpace): ImageData {
+function decodePngBuffer(
+  bytes: Uint8Array,
+  decodePng: FastPngModuleLike['decode'],
+  colorSpace?: PredefinedColorSpace,
+): ImageData {
   const image = decodePng(bytes);
+  const pixelCount = image.width * image.height;
+  const channelCount = pixelCount > 0 ? image.data.length / pixelCount : 4;
+  let rgbaData: Uint8ClampedArray;
+
+  if (channelCount === 4) {
+    rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    rgbaData.set(image.data);
+  } else if (channelCount === 3) {
+    rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      const sourceOffset = pixelIndex * 3;
+      const targetOffset = pixelIndex * 4;
+      rgbaData[targetOffset] = image.data[sourceOffset];
+      rgbaData[targetOffset + 1] = image.data[sourceOffset + 1];
+      rgbaData[targetOffset + 2] = image.data[sourceOffset + 2];
+      rgbaData[targetOffset + 3] = 255;
+    }
+  } else if (channelCount === 2) {
+    rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      const sourceOffset = pixelIndex * 2;
+      const targetOffset = pixelIndex * 4;
+      const gray = image.data[sourceOffset];
+      rgbaData[targetOffset] = gray;
+      rgbaData[targetOffset + 1] = gray;
+      rgbaData[targetOffset + 2] = gray;
+      rgbaData[targetOffset + 3] = image.data[sourceOffset + 1];
+    }
+  } else if (channelCount === 1) {
+    rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      const gray = image.data[pixelIndex];
+      const targetOffset = pixelIndex * 4;
+      rgbaData[targetOffset] = gray;
+      rgbaData[targetOffset + 1] = gray;
+      rgbaData[targetOffset + 2] = gray;
+      rgbaData[targetOffset + 3] = 255;
+    }
+  } else {
+    throw new Error(`Unsupported PNG channel count: ${channelCount}`);
+  }
+
   return new ImageData(
-    new Uint8ClampedArray(image.data),
+    rgbaData as Uint8ClampedArray<ArrayBuffer>,
     image.width,
     image.height,
     colorSpace ? { colorSpace } : undefined,
@@ -221,9 +294,11 @@ export async function decodeRasterBuffer(
   colorSpace?: PredefinedColorSpace,
 ): Promise<ImageData> {
   if (isPngBytes(bytes)) {
-    return decodePngBuffer(bytes, colorSpace);
+    const fastPngModule = await loadFastPngModule();
+    return decodePngBuffer(bytes, fastPngModule.decode, colorSpace);
   }
-  const jimpBufferReader = Jimp as unknown as JimpBufferReader;
+  const jimpModule = await loadJimpModule();
+  const jimpBufferReader = jimpModule.Jimp as unknown as JimpBufferReader;
   const buffer = toArrayBuffer(bytes);
   const image = typeof jimpBufferReader.fromBuffer === 'function'
     ? await jimpBufferReader.fromBuffer(buffer)
@@ -242,8 +317,9 @@ export async function resizeRasterImage(
     return normalized;
   }
 
-  const image = toJimpImage(normalized);
-  image.resize({ w: width, h: height, mode: ResizeStrategy.BILINEAR });
+  const jimpModule = await loadJimpModule();
+  const image = toJimpImage(normalized, jimpModule.Jimp as unknown as JimpBitmapConstructor);
+  image.resize({ w: width, h: height, mode: jimpModule.ResizeStrategy.BILINEAR });
   return fromJimpImage(image, normalized.colorSpace);
 }
 
@@ -270,7 +346,8 @@ export async function rotateRasterImage(
     return rotateOrthogonal(normalized, rotation);
   }
 
-  const image = toJimpImage(normalized);
+  const jimpModule = await loadJimpModule();
+  const image = toJimpImage(normalized, jimpModule.Jimp as unknown as JimpBitmapConstructor);
   // Existing pipeline semantics treat positive degrees as clockwise.
   image.rotate((360 - rotation) % 360);
   return fromJimpImage(image, normalized.colorSpace);

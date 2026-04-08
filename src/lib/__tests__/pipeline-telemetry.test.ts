@@ -1,26 +1,26 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PIPELINE_HISTORY_KEY,
   PIPELINE_PROGRESS_EVENT,
   PIPELINE_STATE_KEY,
-  createPipelineTelemetry
+  createPipelineTelemetry,
 } from '../pipeline-telemetry.js';
 
 describe('pipeline-telemetry', () => {
   beforeEach(() => {
-    window[PIPELINE_STATE_KEY] = undefined;
-    window[PIPELINE_HISTORY_KEY] = [];
+    (window as Window & Record<string, unknown>)[PIPELINE_STATE_KEY] = undefined;
+    (window as Window & Record<string, unknown>)[PIPELINE_HISTORY_KEY] = [];
   });
 
   it('publishes pipeline lifecycle events to callback and window state', async () => {
     const onProgress = vi.fn();
     const telemetry = createPipelineTelemetry({
       fileName: 'example.jpg',
-      onProgress
+      onProgress,
     });
 
     await telemetry.runStage('sample-stage', async () => 'ok');
@@ -29,24 +29,28 @@ describe('pipeline-telemetry', () => {
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'pipeline-start',
       stage: 'pipeline',
-      fileName: 'example.jpg'
+      fileName: 'example.jpg',
     }));
 
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'stage-complete',
-      stage: 'sample-stage'
+      stage: 'sample-stage',
     }));
 
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'pipeline-complete',
-      outputBytes: 123
+      outputBytes: 123,
     }));
 
-    expect(window[PIPELINE_STATE_KEY]).toEqual(expect.objectContaining({
-      phase: 'pipeline-complete'
-    }));
+    expect((window as Window & Record<string, unknown>)[PIPELINE_STATE_KEY]).toEqual(
+      expect.objectContaining({
+        phase: 'pipeline-complete',
+      }),
+    );
 
-    expect(window[PIPELINE_HISTORY_KEY].length).toBeGreaterThan(0);
+    expect(
+      ((window as Window & Record<string, unknown>)[PIPELINE_HISTORY_KEY] as unknown[]).length,
+    ).toBeGreaterThan(0);
   });
 
   it('publishes stage error and pipeline error payloads', async () => {
@@ -55,16 +59,16 @@ describe('pipeline-telemetry', () => {
     await expect(
       telemetry.runStage('explode', async () => {
         throw new Error('boom');
-      })
+      }),
     ).rejects.toThrow('boom');
 
     telemetry.fail(new Error('pipeline failed'));
 
-    expect(window[PIPELINE_HISTORY_KEY]).toEqual(
+    expect((window as Window & Record<string, unknown>)[PIPELINE_HISTORY_KEY]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ phase: 'stage-error', stage: 'explode' }),
-        expect.objectContaining({ phase: 'pipeline-error', stage: 'pipeline' })
-      ])
+        expect.objectContaining({ phase: 'pipeline-error', stage: 'pipeline' }),
+      ]),
     );
   });
 
@@ -91,13 +95,13 @@ describe('pipeline-telemetry', () => {
       phase: 'stage-progress',
       stage: 'generate-gain-map',
       stageProgress: 42.5,
-      note: 'Encoding gain map'
+      note: 'Encoding gain map',
     }));
 
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
       phase: 'stage-progress',
       stage: 'generate-gain-map',
-      stageProgress: 100
+      stageProgress: 100,
     }));
   });
 });

@@ -172,6 +172,109 @@ describe('diagnostics', () => {
     );
   });
 
+  it('sanitizes persisted processing snapshots when recovering an interrupted session', () => {
+    window.localStorage.setItem(
+      DIAGNOSTICS_REPORTS_KEY,
+      JSON.stringify({
+        events: [],
+      }),
+    );
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-2',
+        active: true,
+        cleanExit: false,
+        processingSnapshot: {
+          currentQueueId: 4,
+          queueIndex: 1,
+          totalFiles: 5,
+          currentStage: 'generate-gain-map',
+          currentPhase: 'stage-progress',
+          currentSubstage: 'gmnet-tile-5',
+          currentNote: 'Running gain map inference',
+          currentElapsedMs: 1480,
+          stageProgress: 62.5,
+          pipelineExecutionProvider: 'webgpu',
+          gmnetCheckpointTilesCompleted: 5,
+          gmnetCheckpointTilesTotal: 8,
+          gmnetCheckpointResumed: false,
+          inputFile: {
+            mimeType: 'image/jpeg',
+            fileSize: 1048576,
+            pixelWidth: 4032,
+            pixelHeight: 3024,
+          },
+          recentPipelineBreadcrumbs: [
+            {
+              phase: 'stage-start',
+              stage: 'generate-gain-map',
+              substage: null,
+              note: 'Preparing gain map model',
+              stageProgress: 0,
+              elapsedMs: 820,
+            },
+            {
+              phase: 'stage-progress',
+              stage: 'generate-gain-map',
+              substage: 'gmnet-tile-5',
+              note: 'Running gain map inference',
+              stageProgress: 62.5,
+              elapsedMs: 1480,
+            },
+          ],
+          originalFileName: 'private-photo.jpg',
+        },
+      }),
+    );
+
+    const report = consumeRecoveredDiagnosticsReport(window);
+
+    expect(report?.processing).toEqual(
+      expect.objectContaining({
+        currentQueueId: 4,
+        queueIndex: 1,
+        totalFiles: 5,
+        currentStage: 'generate-gain-map',
+        currentPhase: 'stage-progress',
+        currentSubstage: 'gmnet-tile-5',
+        currentNote: 'Running gain map inference',
+        currentElapsedMs: 1480,
+        stageProgress: 62.5,
+        pipelineExecutionProvider: 'webgpu',
+        gmnetCheckpointTilesCompleted: 5,
+        gmnetCheckpointTilesTotal: 8,
+        gmnetCheckpointResumed: false,
+        inputFile: expect.objectContaining({
+          mimeType: 'image/jpeg',
+          fileSize: 1048576,
+          pixelWidth: 4032,
+          pixelHeight: 3024,
+        }),
+        recentPipelineBreadcrumbs: [
+          {
+            phase: 'stage-start',
+            stage: 'generate-gain-map',
+            substage: null,
+            note: 'Preparing gain map model',
+            stageProgress: 0,
+            elapsedMs: 820,
+          },
+          {
+            phase: 'stage-progress',
+            stage: 'generate-gain-map',
+            substage: 'gmnet-tile-5',
+            note: 'Running gain map inference',
+            stageProgress: 62.5,
+            elapsedMs: 1480,
+          },
+        ],
+      }),
+    );
+    expect(report?.processing).not.toHaveProperty('originalFileName');
+    expect(JSON.stringify(report?.processing || {})).not.toContain('private-photo.jpg');
+  });
+
   it('shares diagnostics text through the browser share intent when available', async () => {
     const recorder = createDiagnosticsRecorder(window, {
       persistKey: '__test_share__',

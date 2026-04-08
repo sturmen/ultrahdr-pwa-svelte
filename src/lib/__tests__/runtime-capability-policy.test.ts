@@ -3,6 +3,7 @@ import {
   canUseProcessingWorker,
   resolveInferenceTimeoutMs,
   resolveWorkerInitTimeoutMs,
+  resolveWorkerWasmLoadTimeoutMs,
 } from '../runtime-capability-policy.js';
 
 describe('runtime-capability-policy', () => {
@@ -47,6 +48,27 @@ describe('runtime-capability-policy', () => {
     ).toBe(100);
   });
 
+  it('resolves worker wasm-load timeout based on runtime user agent', () => {
+    expect(
+      resolveWorkerWasmLoadTimeoutMs(
+        {
+          navigator: {
+            userAgent:
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+          },
+        },
+        { defaultTimeoutMs: 100, safariLikeTimeoutMs: 200 },
+      ),
+    ).toBe(200);
+
+    expect(
+      resolveWorkerWasmLoadTimeoutMs(
+        { navigator: { userAgent: 'Mozilla/5.0 Chrome/122.0' } },
+        { defaultTimeoutMs: 100, safariLikeTimeoutMs: 200 },
+      ),
+    ).toBe(100);
+  });
+
   it('resolves inference timeout by provider and runtime', () => {
     expect(
       resolveInferenceTimeoutMs(
@@ -62,5 +84,22 @@ describe('runtime-capability-policy', () => {
         { defaultTimeoutMs: 100, firefoxTimeoutMs: 200, wasmTimeoutMs: 300 },
       ),
     ).toBe(200);
+    expect(
+      resolveInferenceTimeoutMs(
+        {
+          navigator: {
+            userAgent:
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+          },
+        },
+        'webgl',
+        {
+          defaultTimeoutMs: 100,
+          firefoxTimeoutMs: 200,
+          wasmTimeoutMs: 300,
+          safariLikeTimeoutMs: 400,
+        },
+      ),
+    ).toBe(400);
   });
 });

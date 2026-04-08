@@ -111,6 +111,9 @@ function expectGainMapsWithinTolerance(
 
 test.describe('GMNet backend parity', () => {
   test('generates matching pre-encode gain maps across webgpu, webgl, and wasm', async ({ page, browserName }) => {
+    await page.addInitScript(() => {
+      window.__ULTRAHDR_UNDER_TEST__ = true;
+    });
     await page.goto('/');
     await waitForGainMapTestApi(page);
 
@@ -135,6 +138,9 @@ test.describe('GMNet backend parity', () => {
   });
 
   test('produces deterministic pre-encode gain maps for repeated wasm runs', async ({ page, browserName }) => {
+    await page.addInitScript(() => {
+      window.__ULTRAHDR_UNDER_TEST__ = true;
+    });
     await page.goto('/');
     await waitForGainMapTestApi(page);
 

@@ -1,8 +1,7 @@
-// @ts-check
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { expect } from '@playwright/test';
-import { ensureRuntimeGateReady, installStartupRuntimeOverride } from './runtime-gate.js';
+import { expect, type Page, type TestInfo } from '@playwright/test';
+import { ensureRuntimeGateReady, installStartupRuntimeOverride } from './runtime-gate.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,11 +14,20 @@ const PROCESSING_TIMEOUT = 120_000;
 const PROCESSING_TIMEOUT_FALLBACK_MS = 240_000;
 const POLL_INTERVAL = 250;
 
-export function isOfflineCoverageProject(projectName) {
+type OfflineProjectConfig = {
+  uploadImagePath: string;
+  processingTimeoutMs: number;
+  shouldAssertDownload: boolean;
+  runtimeGateOptions: {
+    expectedProviders?: string[];
+  };
+};
+
+export function isOfflineCoverageProject(projectName: string): boolean {
   return projectName === 'chromium' || projectName === 'mobile-webkit-ios';
 }
 
-export function resolveOfflineProjectConfig(projectName) {
+export function resolveOfflineProjectConfig(projectName: string): OfflineProjectConfig {
   const normalizedProjectName = String(projectName || '').toLowerCase();
   const isMobileWebkit = normalizedProjectName.includes('mobile-webkit-ios');
 
@@ -33,7 +41,7 @@ export function resolveOfflineProjectConfig(projectName) {
   };
 }
 
-export async function dismissWasmRecommendationIfVisible(page) {
+export async function dismissWasmRecommendationIfVisible(page: Page): Promise<void> {
   const modal = page.getByTestId('wasm-recommendation-modal');
   if (await modal.count()) {
     if (await modal.first().isVisible().catch(() => false)) {
@@ -43,7 +51,7 @@ export async function dismissWasmRecommendationIfVisible(page) {
   }
 }
 
-export async function uploadSingleFile(page, filePath) {
+export async function uploadSingleFile(page: Page, filePath: string): Promise<void> {
   await page.waitForFunction(() =>
     Boolean(document.querySelector('#file-upload') || document.querySelector('#add-files')),
   );
@@ -64,7 +72,7 @@ export async function uploadSingleFile(page, filePath) {
   await page.locator(targetSelector).setInputFiles(filePath);
 }
 
-export async function waitForProcessing(page, timeoutMs) {
+export async function waitForProcessing(page: Page, timeoutMs: number): Promise<void> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -96,7 +104,7 @@ export async function waitForProcessing(page, timeoutMs) {
   throw new Error(`Processing timed out after ${timeoutMs}ms`);
 }
 
-export async function waitForServiceWorkerControl(page) {
+export async function waitForServiceWorkerControl(page: Page): Promise<void> {
   await page.evaluate(async () => {
     if (!('serviceWorker' in navigator)) {
       throw new Error('Service workers are unavailable in this browser context.');
@@ -127,7 +135,7 @@ export async function waitForServiceWorkerControl(page) {
   });
 }
 
-export async function waitForBundleReady(page) {
+export async function waitForBundleReady(page: Page): Promise<void> {
   await page.waitForFunction((storageKey) => {
     try {
       const raw = window.localStorage.getItem(storageKey);
@@ -142,15 +150,15 @@ export async function waitForBundleReady(page) {
   }, OFFLINE_BUNDLE_STORAGE_KEY);
 }
 
-export async function gotoApp(page) {
+export async function gotoApp(page: Page): Promise<void> {
   await page.goto(APP_PATH);
 }
 
-export async function revisitCurrentAppUrl(page) {
+export async function revisitCurrentAppUrl(page: Page): Promise<void> {
   await page.goto(page.url(), { waitUntil: 'domcontentloaded' });
 }
 
-export async function primeOfflineRuntime(page, testInfo) {
+export async function primeOfflineRuntime(page: Page, testInfo: TestInfo): Promise<OfflineProjectConfig> {
   const config = resolveOfflineProjectConfig(testInfo.project.name);
   await installStartupRuntimeOverride(page, { projectName: testInfo.project.name });
   await gotoApp(page);
@@ -163,7 +171,7 @@ export async function primeOfflineRuntime(page, testInfo) {
   return config;
 }
 
-export async function clearOfflineRuntimeBundle(page) {
+export async function clearOfflineRuntimeBundle(page: Page): Promise<void> {
   await page.evaluate(async (storageKey) => {
     window.localStorage.removeItem(storageKey);
     const prefixes = [
@@ -182,7 +190,7 @@ export async function clearOfflineRuntimeBundle(page) {
   }, OFFLINE_BUNDLE_STORAGE_KEY);
 }
 
-export async function ensureSelectedResults(page) {
+export async function ensureSelectedResults(page: Page): Promise<void> {
   const toggleSelectionButton = page.getByRole('button', { name: /^(Select All|Clear Selection)$/i }).first();
   if (!await toggleSelectionButton.isVisible()) {
     return;
@@ -194,7 +202,7 @@ export async function ensureSelectedResults(page) {
   }
 }
 
-export async function openExportSheet(page) {
+export async function openExportSheet(page: Page): Promise<void> {
   await ensureSelectedResults(page);
   const mobileActionBar = page.getByTestId('mobile-action-bar');
   if (await mobileActionBar.count()) {
@@ -206,7 +214,7 @@ export async function openExportSheet(page) {
   await expect(page.getByTestId('export-sheet')).toBeVisible();
 }
 
-export async function assertOfflineDownload(page) {
+export async function assertOfflineDownload(page: Page): Promise<void> {
   const downloadPromise = page.waitForEvent('download');
   await page.getByTestId('export-sheet').getByRole('button', { name: /^Download$/i }).click();
   const download = await downloadPromise;

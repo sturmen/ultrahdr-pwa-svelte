@@ -5,7 +5,6 @@
   import MobileInferenceWarningDialog from "./MobileInferenceWarningDialog.svelte";
   import OfflineReadinessCard from "./OfflineReadinessCard.svelte";
   import { getCapabilities } from "./capabilities.js";
-  import JSZip from "jszip";
   import {
     clampMaxContentBoostStops,
     convertStopsToMaxContentBoost,
@@ -81,6 +80,9 @@
     classifyMemoryIssue,
     consumeRecoveredDiagnosticsReport,
     copyDiagnosticsReport,
+    type DiagnosticsInputFileSummary,
+    type DiagnosticsPipelineBreadcrumbSummary,
+    type DiagnosticsProcessingSnapshot,
     getSharedDiagnosticsRecorder,
     serializeDiagnosticsReport,
     shareDiagnosticsReport,
@@ -122,6 +124,8 @@
   let noticeTimer = null;
   let selectedQueueIds = new Set();
   let latestPipelineEvent = null;
+  let lastRecordedPipelineBreadcrumbKey = null;
+  let recentPipelineBreadcrumbs: DiagnosticsPipelineBreadcrumbSummary[] = [];
   let activeAbortController = null;
   let processingRunId = 0;
   let queueLoopActive = false;
@@ -192,6 +196,8 @@
   let diagnosticsReportOpen = false;
   let diagnosticsReport = null;
   let diagnosticsReportText = "";
+  let activeInputDiagnostics: DiagnosticsInputFileSummary | null = null;
+  let lastPageHideAt: number | null = null;
   let workflowCards = [];
   let exportableQueueIds = new Set();
   let currentViewerCard = null;
@@ -215,6 +221,24 @@
   const VIEWER_DOUBLE_TAP_DELAY_MS = 300;
   const VIEWER_DOUBLE_TAP_DISTANCE_PX = 24;
   const VIEWER_DESKTOP_CHROME_IDLE_MS = 1600;
+  let zipRuntimePromise: Promise<typeof import("jszip").default> | null = null;
+
+  function isUnderTestDiagnosticsMode(): boolean {
+    const runtime = globalThis as typeof globalThis & {
+      __ULTRAHDR_UNDER_TEST__?: boolean;
+      location?: Location;
+    };
+    if (runtime.__ULTRAHDR_UNDER_TEST__ === true) {
+      return true;
+    }
+
+    const search = typeof runtime.location?.search === "string"
+      ? runtime.location.search
+      : "";
+    const params = new URLSearchParams(search);
+    const flag = params.get("under-test");
+    return flag === "1" || flag === "true";
+  }
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
   $: showSettingsPanel = isDesktopLayout;
@@ -437,6 +461,7 @@
     activeProgressFileIndex = null;
     currentProcessingPath = "unknown";
     lastCompletedProcessingPath = "unknown";
+    recentPipelineBreadcrumbs = [];
     resetAiModelStatus();
   }
 
@@ -475,6 +500,8 @@
 
     if (phase === "pipeline-start") {
       currentProcessingPath = "unknown";
+      recentPipelineBreadcrumbs = [];
+      lastRecordedPipelineBreadcrumbKey = null;
     }
     if (processingPath !== "unknown") {
       currentProcessingPath = processingPath;
@@ -543,6 +570,40 @@
 
     if (phase === "pipeline-complete" || phase === "pipeline-error") {
       resetAiModelStatus();
+    }
+
+    if (queueId !== null && queueId !== undefined) {
+      persistPipelineDiagnosticsBreadcrumb(event);
+      syncProcessingDiagnosticsSnapshot({
+        currentQueueId: queueId,
+        queueIndex: Number.isFinite(fileIndex) ? fileIndex : null,
+        totalFiles: Number.isFinite(totalFiles) ? totalFiles : queue.length,
+        currentStage: event?.stage || null,
+        currentPhase: phase || null,
+        currentSubstage:
+          typeof event?.substage === "string" && event.substage
+            ? event.substage
+            : null,
+        currentNote: note || null,
+        currentElapsedMs: Number.isFinite(Number(event?.elapsedMs))
+          ? Number(event.elapsedMs)
+          : null,
+        stageProgress:
+          phase === "stage-progress" && Number.isFinite(Number(event?.stageProgress))
+            ? Number(event.stageProgress)
+            : null,
+        pipelineId:
+          typeof event?.pipelineId === "string" ? event.pipelineId : null,
+        pipelineExecutionProvider:
+          executionProvider ||
+          pipelineExecutionProvider ||
+          normalizeExecutionProvider(runtimeExecutionProvider),
+        gmnetMemoryMode:
+          typeof event?.gmnetMemoryMode === "string" ? event.gmnetMemoryMode : null,
+        gmnetCheckpointTilesCompleted: event?.gmnetCheckpointTilesCompleted ?? null,
+        gmnetCheckpointTilesTotal: event?.gmnetCheckpointTilesTotal ?? null,
+        gmnetCheckpointResumed: event?.gmnetCheckpointResumed ?? null,
+      });
     }
 
     pipelineCurrentFileProgress = estimatePipelineProgress(
@@ -635,19 +696,222 @@
     });
   }
 
-  function buildCurrentDiagnosticsContext(extra = {}) {
+  function buildPipelineDiagnosticsBreadcrumb(
+    event,
+  ): DiagnosticsPipelineBreadcrumbSummary {
+    return {
+      phase: typeof event?.phase === "string" && event.phase ? event.phase : null,
+      stage: typeof event?.stage === "string" && event.stage ? event.stage : null,
+      substage:
+        typeof event?.substage === "string" && event.substage ? event.substage : null,
+      note: typeof event?.note === "string" && event.note ? event.note : null,
+      stageProgress: Number.isFinite(Number(event?.stageProgress))
+        ? Number(event.stageProgress)
+        : null,
+      elapsedMs: Number.isFinite(Number(event?.elapsedMs))
+        ? Number(event.elapsedMs)
+        : null,
+    };
+  }
+
+  function persistPipelineDiagnosticsBreadcrumb(event): void {
+    const summary = buildPipelineDiagnosticsBreadcrumb(event);
+    if (!summary.phase) {
+      return;
+    }
+
+    const key = JSON.stringify([
+      summary.phase,
+      summary.stage,
+      summary.substage,
+      summary.note,
+      event?.processingPath || null,
+      event?.gmnetExecutionProvider || null,
+      event?.gmnetMemoryMode || null,
+      event?.gmnetCheckpointTilesCompleted ?? null,
+      event?.gmnetCheckpointTilesTotal ?? null,
+      event?.gmnetCheckpointResumed ?? null,
+      summary.stageProgress,
+    ]);
+
+    if (key === lastRecordedPipelineBreadcrumbKey) {
+      return;
+    }
+
+    const shouldRecord =
+      summary.phase === "pipeline-start" ||
+      summary.phase === "pipeline-complete" ||
+      summary.phase === "pipeline-error" ||
+      summary.phase === "stage-start" ||
+      summary.phase === "stage-complete" ||
+      summary.phase === "stage-error" ||
+      summary.substage !== null;
+
+    if (!shouldRecord) {
+      return;
+    }
+
+    lastRecordedPipelineBreadcrumbKey = key;
+    recentPipelineBreadcrumbs = [...recentPipelineBreadcrumbs, summary].slice(-5);
+    recordDiagnostics(
+      "pipeline",
+      summary.phase,
+      summary.phase === "pipeline-error" || summary.phase === "stage-error"
+        ? "error"
+        : "info",
+      {
+        pipelineId:
+          typeof event?.pipelineId === "string" ? event.pipelineId : null,
+        stage: summary.stage,
+        substage: summary.substage,
+        note: summary.note,
+        stageProgress: summary.stageProgress,
+        fileIndex: Number.isFinite(Number(event?.fileIndex))
+          ? Number(event.fileIndex)
+          : null,
+        totalFiles: Number.isFinite(Number(event?.totalFiles))
+          ? Number(event.totalFiles)
+          : null,
+        elapsedMs: Number.isFinite(Number(event?.elapsedMs))
+          ? Number(event.elapsedMs)
+          : null,
+        processingPath: event?.processingPath || null,
+        gmnetExecutionProvider: event?.gmnetExecutionProvider || null,
+        gmnetMemoryMode: event?.gmnetMemoryMode || null,
+        gmnetCheckpointTilesCompleted: event?.gmnetCheckpointTilesCompleted ?? null,
+        gmnetCheckpointTilesTotal: event?.gmnetCheckpointTilesTotal ?? null,
+        gmnetCheckpointResumed: event?.gmnetCheckpointResumed ?? null,
+        error:
+          event?.error && typeof event.error === "object" ? event.error : null,
+      },
+    );
+  }
+
+  async function loadZipRuntime(
+    operation: string,
+  ): Promise<typeof import("jszip").default> {
+    if (!zipRuntimePromise) {
+      recordDiagnostics("runtime", "zip-runtime-load-started", "info", {
+        operation,
+      });
+      zipRuntimePromise = import("jszip")
+        .then((module) => {
+          recordDiagnostics("runtime", "zip-runtime-load-completed", "info", {
+            operation,
+          });
+          return module.default;
+        })
+        .catch((error: unknown) => {
+          zipRuntimePromise = null;
+          recordDiagnostics("error", "zip-runtime-load-failed", "error", {
+            operation,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        });
+    }
+
+    return zipRuntimePromise;
+  }
+
+  async function buildZipBlobForSelection(operation: string): Promise<Blob> {
+    const loadedResults = await loadSelectedResultBlobs(results, selectedQueueIds, {
+      loadResultBlob: getQueueOutputBlob,
+    });
+    const JSZip = await loadZipRuntime(operation);
+    const zip = new JSZip();
+    for (const { result, blob } of loadedResults) {
+      const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
+      zip.file(filename, blob);
+    }
+    return zip.generateAsync({ type: "blob" });
+  }
+
+  function buildInputDiagnosticsSummary(
+    file: File | null,
+  ): DiagnosticsInputFileSummary | null {
+    if (!file) {
+      return null;
+    }
+
+    return {
+      mimeType: typeof file.type === "string" && file.type ? file.type : null,
+      fileSize: Number.isFinite(file.size) ? file.size : null,
+      pixelWidth: null,
+      pixelHeight: null,
+    };
+  }
+
+  function buildProcessingDiagnosticsSnapshot(
+    extra: Partial<DiagnosticsProcessingSnapshot> = {},
+  ): DiagnosticsProcessingSnapshot {
+    const queueIndex =
+      currentQueueId === null ? null : queue.findIndex((item) => item.id === currentQueueId);
+    const stageProgress = Number(latestPipelineEvent?.stageProgress);
+
     return {
       currentQueueId,
-      queueLength: queue.length,
-      resultCount: results.length,
+      queueIndex: queueIndex !== null && queueIndex >= 0 ? queueIndex : null,
+      totalFiles: queue.length,
       currentStage: latestPipelineEvent?.stage || null,
       currentPhase: latestPipelineEvent?.phase || null,
-      pipelineFileName: pipelineFileName || null,
+      currentSubstage:
+        typeof latestPipelineEvent?.substage === "string" &&
+        latestPipelineEvent.substage
+          ? latestPipelineEvent.substage
+          : null,
+      currentNote:
+        typeof latestPipelineEvent?.note === "string" && latestPipelineEvent.note
+          ? latestPipelineEvent.note
+          : null,
+      currentElapsedMs: Number.isFinite(Number(latestPipelineEvent?.elapsedMs))
+        ? Number(latestPipelineEvent.elapsedMs)
+        : null,
+      stageProgress: Number.isFinite(stageProgress) ? stageProgress : null,
+      pipelineId:
+        typeof latestPipelineEvent?.pipelineId === "string"
+          ? latestPipelineEvent.pipelineId
+          : null,
       pipelineExecutionProvider: pipelineExecutionProvider || null,
+      gmnetMemoryMode:
+        typeof latestPipelineEvent?.gmnetMemoryMode === "string"
+          ? latestPipelineEvent.gmnetMemoryMode
+          : null,
+      gmnetCheckpointingMode: resolveCheckpointingForRun(
+        gmnetCheckpointingPreference,
+        globalThis,
+      ),
+      settingsVersion,
+      rotation,
+      inputFile: activeInputDiagnostics,
       gmnetCheckpointTilesCompleted:
         latestPipelineEvent?.gmnetCheckpointTilesCompleted ?? null,
-      gmnetCheckpointTilesTotal:
-        latestPipelineEvent?.gmnetCheckpointTilesTotal ?? null,
+      gmnetCheckpointTilesTotal: latestPipelineEvent?.gmnetCheckpointTilesTotal ?? null,
+      gmnetCheckpointResumed: latestPipelineEvent?.gmnetCheckpointResumed ?? null,
+      documentHidden: typeof document === "undefined" ? null : document.hidden,
+      lastPageHideAt,
+      storageQuotaBytes: null,
+      storageUsageBytes: null,
+      storageRemainingBytes: null,
+      recentPipelineBreadcrumbs,
+      ...extra,
+    };
+  }
+
+  function syncProcessingDiagnosticsSnapshot(
+    extra: Partial<DiagnosticsProcessingSnapshot> = {},
+  ): void {
+    diagnosticsRecorder.updateProcessingSnapshot({
+      processingSnapshot: buildProcessingDiagnosticsSnapshot(extra),
+    });
+  }
+
+  function buildCurrentDiagnosticsContext(extra = {}) {
+    return {
+      ...buildProcessingDiagnosticsSnapshot(),
+      queueLength: queue.length,
+      resultCount: results.length,
+      pipelineFileName: pipelineFileName || null,
       ...extra,
     };
   }
@@ -1667,6 +1931,8 @@
         currentQueueId = nextItem.id;
         cancelCurrentRequested = false;
         latestPipelineEvent = null;
+        lastRecordedPipelineBreadcrumbKey = null;
+        activeInputDiagnostics = null;
         resetProgressUi();
         error = null;
         processing = true;
@@ -1691,9 +1957,18 @@
           if (!activeInput) {
             throw new Error("Queued input is unavailable in storage.");
           }
+          activeInputDiagnostics = buildInputDiagnosticsSummary(activeInput);
           diagnosticsRecorder.markProcessingActive({
-            queueId: nextItem.id,
-            stage: latestPipelineEvent?.stage || "queued",
+            processingSnapshot: buildProcessingDiagnosticsSnapshot({
+              currentQueueId: nextItem.id,
+              queueIndex,
+              totalFiles: queue.length,
+              currentStage: latestPipelineEvent?.stage || "queued",
+              currentPhase: "queue-item-processing-started",
+              inputFile: activeInputDiagnostics,
+              settingsVersion: activeSettingsVersion,
+              rotation: activeRotation,
+            }),
           });
           recordDiagnostics("pipeline", "queue-item-processing-started", "info", {
             queueId: nextItem.id,
@@ -1732,8 +2007,16 @@
             processingPath: itemProcessingPath,
           });
           diagnosticsRecorder.markProcessingComplete({
-            queueId: nextItem.id,
-            stage: "complete",
+            processingSnapshot: buildProcessingDiagnosticsSnapshot({
+              currentQueueId: nextItem.id,
+              queueIndex,
+              totalFiles: queue.length,
+              currentStage: "complete",
+              currentPhase: "pipeline-complete",
+              stageProgress: 100,
+              settingsVersion: activeSettingsVersion,
+              rotation: activeRotation,
+            }),
           });
           recordDiagnostics("pipeline", "queue-item-processing-complete", "info", {
             queueId: nextItem.id,
@@ -2233,16 +2516,14 @@
       return;
     }
 
-    const loadedResults = await loadSelectedResultBlobs(results, selectedQueueIds, {
-      loadResultBlob: getQueueOutputBlob,
-    });
-    const zip = new JSZip();
-    for (const { result, blob } of loadedResults) {
-      const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
-      zip.file(filename, blob);
+    let content: Blob;
+    try {
+      content = await buildZipBlobForSelection("download-selected-zip");
+    } catch (error) {
+      console.error("Error preparing zip download:", error);
+      setNotice("Zip export is unavailable. Download files separately or retry.");
+      return;
     }
-
-    const content = await zip.generateAsync({ type: "blob" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(content);
     const timestamp = new Date()
@@ -2279,24 +2560,11 @@
       }
 
       if (navigator.canShare && selectedResults.length > 1) {
-        const loadedResults = await loadSelectedResultBlobs(
-          results,
-          selectedQueueIds,
-          {
-            loadResultBlob: getQueueOutputBlob,
-          },
-        );
-        const zip = new JSZip();
-        for (const { result, blob } of loadedResults) {
-          const filename = `ultrahdr-${result.originalName.replace(/\.[^/.]+$/, "")}.jpg`;
-          zip.file(filename, blob);
-        }
-
         const timestamp = new Date()
           .toISOString()
           .replace(/[:.]/g, "-")
           .slice(0, 19);
-        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const zipBlob = await buildZipBlobForSelection("share-selected-zip");
         const zipFile = new File([zipBlob], `ultrahdr-batch-${timestamp}.zip`, {
           type: "application/zip",
         });
@@ -2445,6 +2713,10 @@
 
     const handleVisibilityChange = () => {
       if (typeof document === "undefined") return;
+      if (document.hidden) {
+        lastPageHideAt = Date.now();
+      }
+      syncProcessingDiagnosticsSnapshot();
       recordDiagnostics("lifecycle", "visibility-changed", "info", {
         hidden: document.hidden,
         workflowState,
@@ -2469,6 +2741,8 @@
     };
 
     const handlePageHide = () => {
+      lastPageHideAt = Date.now();
+      syncProcessingDiagnosticsSnapshot();
       recordDiagnostics("lifecycle", "pagehide", "warning", buildCurrentDiagnosticsContext());
       void persistQueueStateSnapshot();
     };
@@ -2504,7 +2778,7 @@
         launchSource,
       });
       const recoveredDiagnosticsReport = consumeRecoveredDiagnosticsReport(globalThis);
-      if (recoveredDiagnosticsReport) {
+      if (recoveredDiagnosticsReport && !isUnderTestDiagnosticsMode()) {
         diagnosticsReport = recoveredDiagnosticsReport;
         diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
         diagnosticsReportOpen = true;

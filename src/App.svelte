@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import ImageProcessor from "./lib/ImageProcessor.svelte";
   import InitializationGate from "./lib/InitializationGate.svelte";
   import {
     createProcessingRuntime,
@@ -67,7 +66,31 @@
   let runtimeInitMode: string | null = null;
   let runtimeInitDegraded = false;
   let appDisposed = false;
+  let ImageProcessorComponent: typeof import("./lib/ImageProcessor.svelte").default | null = null;
+  let imageProcessorComponentPromise:
+    | Promise<typeof import("./lib/ImageProcessor.svelte").default>
+    | null = null;
   const processingRuntime = createProcessingRuntime();
+
+  async function ensureImageProcessorComponentLoaded(): Promise<
+    typeof import("./lib/ImageProcessor.svelte").default
+  > {
+    if (ImageProcessorComponent) {
+      return ImageProcessorComponent;
+    }
+    if (!imageProcessorComponentPromise) {
+      imageProcessorComponentPromise = import("./lib/ImageProcessor.svelte")
+        .then((module) => {
+          ImageProcessorComponent = module.default;
+          return ImageProcessorComponent;
+        })
+        .catch((error: unknown) => {
+          imageProcessorComponentPromise = null;
+          throw error;
+        });
+    }
+    return imageProcessorComponentPromise;
+  }
 
   function createRuntimeInitSteps(): RuntimeInitStep[] {
     return RUNTIME_INIT_STEP_ORDER.map((stepId) => ({
@@ -316,6 +339,7 @@
       return;
     }
     await initializeLaunchContext();
+    await ensureImageProcessorComponentLoaded();
   }
 
   function handleReset() {
@@ -550,8 +574,13 @@
       <div class="drop-container">
         <p class="share-loading">Loading shared images...</p>
       </div>
+    {:else if !ImageProcessorComponent}
+      <div class="drop-container">
+        <p class="share-loading">Loading editor...</p>
+      </div>
     {:else}
-      <ImageProcessor
+      <svelte:component
+        this={ImageProcessorComponent}
         {files}
         {launchSource}
         {launchIntent}
