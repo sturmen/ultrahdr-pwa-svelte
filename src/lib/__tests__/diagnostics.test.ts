@@ -150,6 +150,7 @@ describe('diagnostics', () => {
       JSON.stringify({
         sessionId: 'session-1',
         active: true,
+        processingActiveAtLastPersist: true,
         stage: 'generate-gain-map',
         queueId: 4,
         cleanExit: false,
@@ -172,6 +173,39 @@ describe('diagnostics', () => {
     );
   });
 
+  it('does not recover a diagnostics report when the persisted session was idle', () => {
+    window.localStorage.setItem(
+      DIAGNOSTICS_REPORTS_KEY,
+      JSON.stringify({
+        events: [
+          {
+            eventId: 'evt-1',
+            sessionId: 'session-1',
+            sequence: 0,
+            timestamp: 123,
+            category: 'lifecycle',
+            name: 'pagehide',
+            severity: 'warning',
+            context: { workflowState: 'empty' },
+          },
+        ],
+      }),
+    );
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-1',
+        active: true,
+        processingActiveAtLastPersist: false,
+        stage: null,
+        queueId: null,
+        cleanExit: false,
+      }),
+    );
+
+    expect(consumeRecoveredDiagnosticsReport(window)).toBeNull();
+  });
+
   it('sanitizes persisted processing snapshots when recovering an interrupted session', () => {
     window.localStorage.setItem(
       DIAGNOSTICS_REPORTS_KEY,
@@ -184,6 +218,7 @@ describe('diagnostics', () => {
       JSON.stringify({
         sessionId: 'session-2',
         active: true,
+        processingActiveAtLastPersist: true,
         cleanExit: false,
         processingSnapshot: {
           currentQueueId: 4,

@@ -138,6 +138,7 @@ interface DiagnosticsActiveSession {
   active: boolean;
   cleanExit: boolean;
   updatedAt: number;
+  processingActiveAtLastPersist?: boolean;
   processingSnapshot?: DiagnosticsProcessingSnapshot;
   queueId?: number | null;
   stage?: string | null;
@@ -312,6 +313,12 @@ function getContextProcessingSnapshot(
   return sanitizeProcessingSnapshot(context.processingSnapshot ?? context);
 }
 
+function getContextProcessingActiveFlag(
+  context: Record<string, unknown>,
+): boolean | null {
+  return normalizeNullableBoolean(context.processingActiveAtLastPersist);
+}
+
 export function createDiagnosticsRecorder(
   runtime: RuntimeLike = globalThis,
   options: DiagnosticsRecorderOptions = {},
@@ -340,6 +347,12 @@ export function createDiagnosticsRecorder(
       sanitizeProcessingSnapshot(persistedSession?.processingSnapshot),
       getContextProcessingSnapshot(context),
     );
+    const persistedProcessingActive =
+      typeof persistedSession?.processingActiveAtLastPersist === 'boolean'
+        ? persistedSession.processingActiveAtLastPersist
+        : false;
+    const processingActiveAtLastPersist =
+      getContextProcessingActiveFlag(context) ?? persistedProcessingActive;
     const { processingSnapshot: ignoredProcessingSnapshot, ...restContext } = context;
     void ignoredProcessingSnapshot;
     runtime.localStorage?.setItem(
@@ -349,6 +362,7 @@ export function createDiagnosticsRecorder(
         active,
         cleanExit: !active,
         updatedAt: now(),
+        processingActiveAtLastPersist,
         ...restContext,
         processingSnapshot,
         queueId: processingSnapshot?.currentQueueId ?? null,
@@ -376,13 +390,19 @@ export function createDiagnosticsRecorder(
     },
     getEvents: () => events.map((event) => ({ ...event, context: { ...event.context } })),
     markProcessingActive: (context = {}) => {
-      writeActiveSession(true, context);
+      writeActiveSession(true, {
+        ...context,
+        processingActiveAtLastPersist: true,
+      });
     },
     updateProcessingSnapshot: (context = {}) => {
       writeActiveSession(true, context);
     },
     markProcessingComplete: (context = {}) => {
-      writeActiveSession(false, context);
+      writeActiveSession(false, {
+        ...context,
+        processingActiveAtLastPersist: false,
+      });
     },
     clearActiveSession: () => {
       runtime.localStorage?.removeItem(DIAGNOSTICS_ACTIVE_SESSION_KEY);
@@ -522,6 +542,9 @@ export function consumeRecoveredDiagnosticsReport(
   }
 
   runtime.localStorage?.removeItem(DIAGNOSTICS_ACTIVE_SESSION_KEY);
+  if (activeSession.processingActiveAtLastPersist !== true) {
+    return null;
+  }
   const recorder = createDiagnosticsRecorder(runtime, {
     persistKey: DIAGNOSTICS_REPORTS_KEY,
   });

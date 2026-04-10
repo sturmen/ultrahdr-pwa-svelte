@@ -2,10 +2,11 @@
  * @vitest-environment jsdom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import ImageProcessor from '../ImageProcessor.svelte';
+import { DIAGNOSTICS_ACTIVE_SESSION_KEY } from '../diagnostics.ts';
 import { storeQueuePreviewBlob, storeQueueState } from '../share-store.ts';
 
 const runtimeProcessMock = vi.fn();
@@ -177,6 +178,31 @@ describe('ImageProcessor lifecycle durability', () => {
     });
 
     processingGate.resolve();
+  });
+
+  it('does not reopen the diagnostics popup after an idle background relaunch', async () => {
+    const firstRender = render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await Promise.resolve();
+    window.dispatchEvent(new Event('pagehide'));
+    firstRender.unmount();
+
+    expect(window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY)).toBeTruthy();
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await Promise.resolve();
+    expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
   });
 
   it('uses scheduler.postTask for non-urgent queue persistence when available', async () => {

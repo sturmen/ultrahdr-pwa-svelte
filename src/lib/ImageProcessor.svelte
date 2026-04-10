@@ -903,6 +903,10 @@
   ): void {
     diagnosticsRecorder.updateProcessingSnapshot({
       processingSnapshot: buildProcessingDiagnosticsSnapshot(extra),
+      processingActiveAtLastPersist:
+        processing ||
+        workflowState === WORKFLOW_STATES.PROCESSING_ACTIVE ||
+        workflowState === WORKFLOW_STATES.PROCESSING_PAUSING,
     });
   }
 
@@ -2643,6 +2647,7 @@
     activeDesktopTab = "all";
     openSheet = "none";
 
+    diagnosticsRecorder.clearActiveSession();
     await clearQueueState();
     await clearSessionQueuePayloads();
     dispatch("reset");
