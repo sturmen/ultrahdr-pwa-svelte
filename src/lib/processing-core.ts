@@ -126,6 +126,22 @@ function decodedRasterToImageData(input: DecodedRasterImage): ImageData {
     return new ImageData(data, input.width, input.height);
 }
 
+function buildDecodedRasterWrapPayload(
+    substage: string,
+    input: DecodedRasterImage,
+    processingPath: ProcessingPathClassification,
+): Record<string, unknown> {
+    return {
+        stage: 'decode-image-data',
+        substage,
+        processingPath,
+        width: input.width,
+        height: input.height,
+        pixelBytes: input.data.byteLength,
+        wrappedWithoutCopy: input.data instanceof Uint8ClampedArray,
+    };
+}
+
 
 /**
  * Converts EXIF Orientation (1-8) to rotation degrees (0, 90, 180, 270).
@@ -836,7 +852,15 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             console.log('[Process] Gain map decision: preserving existing gain map from source input');
             console.log('[Process] Using pre-decoded components (likely HEIC with native gain map)');
             let imageData = decodedRasterToImageData(workingFile.sdr);
+            telemetry.emit(
+                'decoded-raster-wrapped',
+                buildDecodedRasterWrapPayload('preserved-heic-sdr', workingFile.sdr, processingPath),
+            );
             let gainMapImageData = decodedRasterToImageData(workingFile.gainMap);
+            telemetry.emit(
+                'decoded-raster-wrapped',
+                buildDecodedRasterWrapPayload('preserved-heic-gain-map', workingFile.gainMap, processingPath),
+            );
             // Preserve source gain-map metadata when provided by the preprocessor.
             // This avoids re-scaling preserved gain maps based on UI maxContentBoost.
             const gainMapHeadroom = workingFile.gainMapHeadroom ?? 0;

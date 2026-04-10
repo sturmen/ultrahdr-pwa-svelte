@@ -648,6 +648,41 @@ describe('processImage UltraHDR preservation path', () => {
         expect(imageUtils.toMonochromeGainMapImageData).not.toHaveBeenCalled();
     });
 
+    it('emits bounded breadcrumbs when wrapping preserved HEIC decoded rasters', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+        const onProgress = vi.fn();
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true,
+            onProgress,
+        });
+
+        const wrapEvents = onProgress.mock.calls
+            .map(([event]) => event)
+            .filter((event) => event?.phase === 'decoded-raster-wrapped');
+        expect(wrapEvents).toEqual([
+            expect.objectContaining({
+                stage: 'decode-image-data',
+                substage: 'preserved-heic-sdr',
+                processingPath: 'preserved',
+                pixelBytes: 16,
+            }),
+            expect.objectContaining({
+                stage: 'decode-image-data',
+                substage: 'preserved-heic-gain-map',
+                processingPath: 'preserved',
+                pixelBytes: 16,
+            }),
+        ]);
+        expect(wrapEvents[0]).not.toHaveProperty('data');
+        expect(wrapEvents[1]).not.toHaveProperty('data');
+    });
+
     it('rebuilds an existing UltraHDR JPEG using the encoder even with rotation=0 to ensure ISO compliance', async () => {
         const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
