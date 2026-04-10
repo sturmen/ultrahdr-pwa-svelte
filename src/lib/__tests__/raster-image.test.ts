@@ -12,6 +12,7 @@ const {
   resizeMock,
   rotateMock,
   bitmapState,
+  constructedInputs,
 } = vi.hoisted(() => {
   const bitmapState = {
     width: 2,
@@ -52,7 +53,15 @@ const {
     data: new Uint8Array([17, 34]),
   }));
 
-  function JimpMock() {
+  const constructedInputs: Uint8Array[] = [];
+
+  function JimpMock(options?: { data?: Uint8Array; width?: number; height?: number }) {
+    if (options?.data) {
+      constructedInputs.push(options.data);
+      bitmapState.width = options.width ?? bitmapState.width;
+      bitmapState.height = options.height ?? bitmapState.height;
+      bitmapState.data = options.data;
+    }
     return {
       bitmap: bitmapState,
       resize: resizeMock,
@@ -67,6 +76,7 @@ const {
     resizeMock,
     rotateMock,
     bitmapState,
+    constructedInputs,
   };
 });
 
@@ -93,6 +103,7 @@ describe('raster-image', () => {
       255, 0, 0, 255,
       0, 255, 0, 255,
     ]);
+    constructedInputs.length = 0;
   });
 
   it('resizes rgba raster buffers without browser drawing primitives', async () => {
@@ -149,6 +160,27 @@ describe('raster-image', () => {
     expect(Array.from(result.data)).toEqual([
       17, 17, 17, 255,
       34, 34, 34, 255,
+    ]);
+  });
+
+  it('isolates caller-owned pixels before passing raster data into jimp transforms', async () => {
+    const { resizeRasterImage } = await import('../raster-image.ts');
+    const sourcePixels = new Uint8ClampedArray([
+      255, 0, 0, 255,
+      0, 255, 0, 255,
+    ]);
+
+    await resizeRasterImage({
+      width: 2,
+      height: 1,
+      data: sourcePixels,
+    }, 4, 3);
+
+    expect(constructedInputs).toHaveLength(1);
+    expect(constructedInputs[0]).not.toBe(sourcePixels);
+    expect(Array.from(sourcePixels)).toEqual([
+      255, 0, 0, 255,
+      0, 255, 0, 255,
     ]);
   });
 
