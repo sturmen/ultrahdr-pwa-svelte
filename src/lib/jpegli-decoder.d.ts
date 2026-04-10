@@ -16,5 +16,5 @@ export function decodeJpegli(
 ): Promise<{
     width: number;
     height: number;
-    data: Uint8ClampedArray;
+    data: Uint8ClampedArray<ArrayBuffer>;
 }>;

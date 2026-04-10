@@ -8,7 +8,7 @@ export type JpegliEncodeOptions = {
 export type DecodedJpegliImage = {
   width: number;
   height: number;
-  data: Uint8ClampedArray;
+  data: Uint8ClampedArray<ArrayBuffer>;
 };
 
 type JpegliWasmModule = {

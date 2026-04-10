@@ -35,9 +35,7 @@ export async function loadImageData(
         const decoded = await decodeJpegli(await blobToUint8Array(blob));
         const width = decoded.width;
         const height = decoded.height;
-        const copiedData = new Uint8ClampedArray(decoded.data.length);
-        copiedData.set(decoded.data);
-        const imageData = new ImageData(copiedData, width, height);
+        const imageData = new ImageData(decoded.data, width, height);
         return { imageData, width, height };
     }
 
@@ -116,9 +114,7 @@ export async function jpegBytesToImageData(
 ): Promise<ImageData> {
     void config;
     const decoded = await decodeJpegli(jpegBytes);
-    const copiedData = new Uint8ClampedArray(decoded.data.length);
-    copiedData.set(decoded.data);
-    return new ImageData(copiedData, decoded.width, decoded.height);
+    return new ImageData(decoded.data, decoded.width, decoded.height);
 }
 
 export async function imageDataToJpegBlob(imageData: ImageDataLike, quality = 0.95): Promise<Blob> {

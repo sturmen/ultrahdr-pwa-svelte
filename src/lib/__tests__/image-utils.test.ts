@@ -3,19 +3,23 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { decodedJpegData } = vi.hoisted(() => ({
+  decodedJpegData: new Uint8ClampedArray([
+    255, 0, 0, 255,
+    0, 255, 0, 255,
+  ]),
+}));
+
 vi.mock('../jpegli-decoder.js', () => ({
   encodeJpegli: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
   decodeJpegli: vi.fn(async () => ({
     width: 2,
     height: 1,
-    data: new Uint8ClampedArray([
-      255, 0, 0, 255,
-      0, 255, 0, 255,
-    ]),
+    data: decodedJpegData,
   })),
 }));
 
-import { imageDataToJpegBlob, transformImageData } from '../image-utils.js';
+import { imageDataToJpegBlob, jpegBytesToImageData, loadImageData, transformImageData } from '../image-utils.js';
 
 describe('imageDataToJpegBlob', () => {
   it('returns a jpeg blob without requiring legacy browser export shims', async () => {
@@ -33,6 +37,18 @@ describe('imageDataToJpegBlob', () => {
 
     expect(result).toBeInstanceOf(Blob);
     expect(result.type).toBe('image/jpeg');
+  });
+});
+
+describe('JPEG decode helpers', () => {
+  it('wraps jpegli decoded pixels without an extra full-frame copy', async () => {
+    const blob = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' });
+
+    const loaded = await loadImageData(blob);
+    const direct = await jpegBytesToImageData(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
+
+    expect(loaded.imageData.data).toBe(decodedJpegData);
+    expect(direct.data).toBe(decodedJpegData);
   });
 });
 
