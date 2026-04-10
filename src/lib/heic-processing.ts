@@ -267,7 +267,7 @@ export async function decodeHeifPreviewImage(file: File): Promise<DecodedRasterI
  * @returns {boolean}
  */
 function _isGainMapMonochrome(
-    imageData: { data: Uint8Array; width: number; height: number },
+    imageData: { data: Uint8Array | Uint8ClampedArray<ArrayBuffer>; width: number; height: number },
     tolerance = 10,
 ): boolean {
     const { data, width, height } = imageData;

@@ -35,7 +35,7 @@ export interface HdrIntentHeifResult {
 }
 
 export interface DecodedRasterImage {
-  data: Uint8Array;
+  data: Uint8Array | Uint8ClampedArray<ArrayBuffer>;
   width: number;
   height: number;
   strideBytes: number;

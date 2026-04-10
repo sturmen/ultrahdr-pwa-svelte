@@ -120,7 +120,10 @@ function isDecodedRasterInput(input: unknown): input is DecodedRasterImage {
 }
 
 function decodedRasterToImageData(input: DecodedRasterImage): ImageData {
-    return new ImageData(new Uint8ClampedArray(input.data), input.width, input.height);
+    const data = input.data instanceof Uint8ClampedArray
+        ? input.data
+        : new Uint8ClampedArray(input.data);
+    return new ImageData(data, input.width, input.height);
 }
 
 

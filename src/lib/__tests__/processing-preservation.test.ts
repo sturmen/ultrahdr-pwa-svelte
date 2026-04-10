@@ -577,6 +577,59 @@ describe('processImage UltraHDR preservation path', () => {
         ).toBe(false);
     });
 
+    it('wraps owned HEIC preserved RGBA buffers without cloning before JPEG encoding', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { processHeic } = await import('../heic-processing.js');
+        const { encodeJpegli } = await import('../jpegli-decoder.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const sdrData = new Uint8ClampedArray([
+            100, 110, 120, 255,
+            130, 140, 150, 255,
+            120, 130, 140, 255,
+            140, 150, 160, 255,
+        ]);
+        const gainMapData = new Uint8ClampedArray([
+            10, 10, 10, 255,
+            20, 20, 20, 255,
+            30, 30, 30, 255,
+            40, 40, 40, 255,
+        ]);
+        processHeic.mockResolvedValueOnce({
+            sdr: {
+                data: sdrData,
+                width: 2,
+                height: 2,
+                strideBytes: 8,
+                pixelFormat: 'rgba8',
+                bitDepth: 8,
+            },
+            gainMap: {
+                data: gainMapData,
+                width: 2,
+                height: 2,
+                strideBytes: 8,
+                pixelFormat: 'rgba8',
+                bitDepth: 8,
+            },
+            gainMapMetadata,
+            name: 'input.heic',
+        });
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true,
+        });
+
+        const encodedImageData = encodeJpegli.mock.calls.map(([imageData]) => imageData);
+        expect(encodedImageData.some((imageData) => imageData.data === sdrData)).toBe(true);
+        expect(encodedImageData.some((imageData) => imageData.data === gainMapData)).toBe(true);
+    });
+
     it('rebuilds an existing UltraHDR JPEG using the encoder even with rotation=0 to ensure ISO compliance', async () => {
         const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
