@@ -12,6 +12,7 @@ export type ImageDataLike = ImageData | {
 export async function loadImageData(
     source: string | Blob,
     config: { imageOrientation?: string } & Record<string, unknown> = {},
+    preloadedBytes: Uint8Array | null = null,
 ): Promise<{
     imageData: ImageData;
     width: number;
@@ -31,15 +32,17 @@ export async function loadImageData(
         }
     }
 
+    const bytes = preloadedBytes ?? await blobToUint8Array(blob);
+
     if (blob.type === 'image/jpeg') {
-        const decoded = await decodeJpegli(await blobToUint8Array(blob));
+        const decoded = await decodeJpegli(bytes);
         const width = decoded.width;
         const height = decoded.height;
         const imageData = new ImageData(decoded.data, width, height);
         return { imageData, width, height };
     }
 
-    const imageData = await decodeRasterBuffer(await blobToUint8Array(blob));
+    const imageData = await decodeRasterBuffer(bytes);
     const width = imageData.width;
     const height = imageData.height;
     return { imageData, width, height };

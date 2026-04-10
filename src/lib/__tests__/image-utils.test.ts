@@ -50,6 +50,21 @@ describe('JPEG decode helpers', () => {
     expect(loaded.imageData.data).toBe(decodedJpegData);
     expect(direct.data).toBe(decodedJpegData);
   });
+
+  it('decodes from preloaded compressed bytes without rereading the source blob', async () => {
+    const preloadedBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    const blob = new Blob([preloadedBytes], { type: 'image/jpeg' });
+    vi.spyOn(blob, 'arrayBuffer').mockRejectedValue(new Error('unexpected reread'));
+
+    const result = await (loadImageData as unknown as (
+      source: Blob,
+      config: Record<string, unknown>,
+      preloadedBytes: Uint8Array,
+    ) => ReturnType<typeof loadImageData>)(blob, {}, preloadedBytes);
+
+    expect(result.imageData.data).toBe(decodedJpegData);
+    expect(blob.arrayBuffer).not.toHaveBeenCalled();
+  });
 });
 
 describe('transformImageData', () => {

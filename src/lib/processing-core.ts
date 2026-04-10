@@ -879,7 +879,13 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             console.log('[Process] File loaded and EXIF extraction complete');
             throwIfAborted(mergedOptions.abortSignal);
 
-            const { imageData } = await telemetry.runStage('decode-image-data', async () => loadImageData(decodeSource));
+            const preloadedDecodeBytes =
+                decodeSource === sourceInputFile && sourceInputBytes !== null
+                    ? sourceInputBytes
+                    : null;
+            const { imageData } = await telemetry.runStage('decode-image-data', async () =>
+                loadImageData(decodeSource, {}, preloadedDecodeBytes)
+            );
             workingImageData = imageData;
         }
         console.log('[Process] Image data retrieved');
