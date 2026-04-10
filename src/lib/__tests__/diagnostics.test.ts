@@ -340,4 +340,87 @@ describe('diagnostics', () => {
       }),
     );
   });
+
+  it('includes a bounded offline-readiness snapshot when provided in diagnostics context', () => {
+    const recorder = createDiagnosticsRecorder(window, {
+      persistKey: '__test_offline_readiness__',
+    });
+
+    const report = buildMemoryDiagnosticsReport('manual', {
+      runtime: window,
+      recorder,
+      context: {
+        currentStage: 'idle',
+        offlineReadiness: {
+          offlineReady: false,
+          bundleReady: false,
+          bundleState: 'FAILED',
+          bundleLastValidatedAt: 1710000000000,
+          offlineReadinessAction: 'validate',
+          offlineBundleActionInFlight: false,
+          offlineBundleActionError: 'Network unreachable',
+          bundleError: 'Manifest fetch failed',
+          offlineBundleAssetCount: 26,
+          offlineBundleTotalBytes: 123456789,
+          bundleDiagnostics: {
+            missingAssetCount: 2,
+            mismatchedAssetCount: 1,
+            missingAssetIds: ['gmnet-weights', 'runtime-manifest'],
+            mismatchedAssetIds: ['jpegli-wasm'],
+            fetchAttempts: [{ id: 'should-not-survive' }],
+          },
+          cachedManifest: { should: 'not survive' },
+        },
+      },
+    });
+
+    expect(report.processing).toEqual(
+      expect.objectContaining({
+        currentStage: 'idle',
+        offlineReadiness: {
+          offlineReady: false,
+          bundleReady: false,
+          bundleState: 'FAILED',
+          bundleLastValidatedAt: 1710000000000,
+          offlineReadinessAction: 'validate',
+          offlineBundleActionInFlight: false,
+          offlineBundleActionError: 'Network unreachable',
+          bundleError: 'Manifest fetch failed',
+          offlineBundleAssetCount: 26,
+          offlineBundleTotalBytes: 123456789,
+          bundleDiagnostics: {
+            missingAssetCount: 2,
+            mismatchedAssetCount: 1,
+            missingAssetIds: ['gmnet-weights', 'runtime-manifest'],
+            mismatchedAssetIds: ['jpegli-wasm'],
+          },
+        },
+      }),
+    );
+    expect(
+      JSON.stringify((report.processing as Record<string, unknown>).offlineReadiness),
+    ).not.toContain('fetchAttempts');
+    expect(
+      JSON.stringify((report.processing as Record<string, unknown>).offlineReadiness),
+    ).not.toContain('cachedManifest');
+  });
+
+  it('omits offline-readiness details when they are absent from diagnostics context', () => {
+    const recorder = createDiagnosticsRecorder(window, {
+      persistKey: '__test_offline_readiness_absent__',
+    });
+
+    const report = buildMemoryDiagnosticsReport('manual', {
+      runtime: window,
+      recorder,
+      context: { currentStage: 'idle' },
+    });
+
+    expect(report.processing).toEqual(
+      expect.objectContaining({
+        currentStage: 'idle',
+      }),
+    );
+    expect(report.processing).not.toHaveProperty('offlineReadiness');
+  });
 });

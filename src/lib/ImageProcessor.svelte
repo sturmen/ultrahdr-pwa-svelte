@@ -87,6 +87,7 @@
     serializeDiagnosticsReport,
     shareDiagnosticsReport,
   } from "./diagnostics.ts";
+  import type { OfflineReadinessState } from "./offline-readiness.ts";
 
   export let files = [];
   export let launchSource = "regular";
@@ -911,12 +912,72 @@
   }
 
   function buildCurrentDiagnosticsContext(extra = {}) {
+    const offlineReadiness = buildOfflineReadinessDiagnosticsSnapshot(pwaUpdateState);
     return {
       ...buildProcessingDiagnosticsSnapshot(),
       queueLength: queue.length,
       resultCount: results.length,
       pipelineFileName: pipelineFileName || null,
+      ...(offlineReadiness ? { offlineReadiness } : {}),
       ...extra,
+    };
+  }
+
+  function buildOfflineReadinessDiagnosticsSnapshot(
+    state: OfflineReadinessState | null,
+  ): OfflineReadinessState | null {
+    if (!state || typeof state !== "object") {
+      return null;
+    }
+
+    return {
+      offlineReady: typeof state.offlineReady === "boolean" ? state.offlineReady : undefined,
+      bundleReady: typeof state.bundleReady === "boolean" ? state.bundleReady : undefined,
+      bundleState: typeof state.bundleState === "string" ? state.bundleState : null,
+      bundleLastValidatedAt:
+        Number.isFinite(Number(state.bundleLastValidatedAt))
+          ? Number(state.bundleLastValidatedAt)
+          : null,
+      offlineReadinessAction:
+        typeof state.offlineReadinessAction === "string"
+          ? state.offlineReadinessAction
+          : null,
+      offlineBundleActionInFlight:
+        typeof state.offlineBundleActionInFlight === "boolean"
+          ? state.offlineBundleActionInFlight
+          : undefined,
+      offlineBundleActionError:
+        typeof state.offlineBundleActionError === "string"
+          ? state.offlineBundleActionError
+          : null,
+      bundleError: typeof state.bundleError === "string" ? state.bundleError : null,
+      offlineBundleAssetCount:
+        Number.isFinite(Number(state.offlineBundleAssetCount))
+          ? Number(state.offlineBundleAssetCount)
+          : null,
+      offlineBundleTotalBytes:
+        Number.isFinite(Number(state.offlineBundleTotalBytes))
+          ? Number(state.offlineBundleTotalBytes)
+          : null,
+      bundleDiagnostics:
+        state.bundleDiagnostics && typeof state.bundleDiagnostics === "object"
+          ? {
+              missingAssetCount:
+                Number.isFinite(Number(state.bundleDiagnostics.missingAssetCount))
+                  ? Number(state.bundleDiagnostics.missingAssetCount)
+                  : null,
+              mismatchedAssetCount:
+                Number.isFinite(Number(state.bundleDiagnostics.mismatchedAssetCount))
+                  ? Number(state.bundleDiagnostics.mismatchedAssetCount)
+                  : null,
+              missingAssetIds: Array.isArray(state.bundleDiagnostics.missingAssetIds)
+                ? state.bundleDiagnostics.missingAssetIds
+                : null,
+              mismatchedAssetIds: Array.isArray(state.bundleDiagnostics.mismatchedAssetIds)
+                ? state.bundleDiagnostics.mismatchedAssetIds
+                : null,
+            }
+          : null,
     };
   }
 

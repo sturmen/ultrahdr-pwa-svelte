@@ -90,6 +90,45 @@ describe('ImageProcessor diagnostics', () => {
     expect(window.navigator.share).toHaveBeenCalledTimes(1);
   });
 
+  it('includes offline-readiness validation details in the manual diagnostics report', async () => {
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+        pwaUpdateState: {
+          offlineReady: false,
+          bundleReady: false,
+          bundleState: 'FAILED',
+          bundleLastValidatedAt: 1710000000000,
+          offlineReadinessAction: 'validate',
+          offlineBundleActionInFlight: false,
+          offlineBundleActionError: 'Network unreachable',
+          bundleError: 'Manifest fetch failed',
+          offlineBundleAssetCount: 26,
+          offlineBundleTotalBytes: 123456789,
+          bundleDiagnostics: {
+            missingAssetCount: 2,
+            mismatchedAssetCount: 1,
+            missingAssetIds: ['gmnet-weights'],
+            mismatchedAssetIds: ['jpegli-wasm'],
+          },
+        },
+      },
+    });
+
+    await fireEvent.click(screen.getByTestId('floating-gear'));
+    await fireEvent.click(screen.getByTestId('open-debug-report'));
+
+    const textarea = await screen.findByLabelText(/diagnostics timeline/i);
+    const reportText = (textarea as HTMLTextAreaElement).value;
+    expect(reportText).toContain('"offlineReadiness"');
+    expect(reportText).toContain('"bundleState": "FAILED"');
+    expect(reportText).toContain('"offlineBundleActionError": "Network unreachable"');
+    expect(reportText).toContain('"bundleError": "Manifest fetch failed"');
+    expect(reportText).toContain('"missingAssetCount": 2');
+    expect(reportText).toContain('"mismatchedAssetCount": 1');
+  });
+
   it('opens the diagnostics modal automatically when processing fails with a memory allocation error', async () => {
     diagnosticsMocks.runtimeProcessMock.mockRejectedValue(
       new Error('Failed to allocate memory for JPEG input'),

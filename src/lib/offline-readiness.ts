@@ -8,8 +8,10 @@ export type OfflineReadinessDiagnostics = {
 };
 
 export type OfflineReadinessState = {
+  offlineReady?: boolean;
   bundleReady?: boolean;
   bundleState?: string | null;
+  bundleError?: string | null;
   bundleLastValidatedAt?: number | null;
   offlineReadinessAction?: OfflineReadinessAction | null;
   offlineBundleActionInFlight?: boolean;

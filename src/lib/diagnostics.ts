@@ -103,6 +103,25 @@ export interface DiagnosticsProcessingSnapshot {
   recentPipelineBreadcrumbs: DiagnosticsPipelineBreadcrumbSummary[];
 }
 
+export interface DiagnosticsOfflineReadinessSummary {
+  offlineReady: boolean | null;
+  bundleReady: boolean | null;
+  bundleState: string | null;
+  bundleLastValidatedAt: number | null;
+  offlineReadinessAction: string | null;
+  offlineBundleActionInFlight: boolean | null;
+  offlineBundleActionError: string | null;
+  bundleError: string | null;
+  offlineBundleAssetCount: number | null;
+  offlineBundleTotalBytes: number | null;
+  bundleDiagnostics: {
+    missingAssetCount: number | null;
+    mismatchedAssetCount: number | null;
+    missingAssetIds: string[];
+    mismatchedAssetIds: string[];
+  } | null;
+}
+
 export interface DiagnosticsRecorder {
   record: (event: DiagnosticsEventInput) => DiagnosticsEvent;
   getEvents: () => DiagnosticsEvent[];
@@ -275,6 +294,53 @@ function sanitizeProcessingSnapshot(value: unknown): DiagnosticsProcessingSnapsh
           .map((breadcrumb) => sanitizePipelineBreadcrumbSummary(breadcrumb))
           .filter((breadcrumb): breadcrumb is DiagnosticsPipelineBreadcrumbSummary => breadcrumb !== null)
       : [],
+  };
+}
+
+function sanitizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => normalizeNullableString(entry))
+    .filter((entry): entry is string => entry !== null)
+    .slice(0, 20);
+}
+
+function sanitizeOfflineReadinessSummary(
+  value: unknown,
+): DiagnosticsOfflineReadinessSummary | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const snapshot = value as Record<string, unknown>;
+  const diagnostics =
+    snapshot.bundleDiagnostics && typeof snapshot.bundleDiagnostics === 'object'
+      ? (snapshot.bundleDiagnostics as Record<string, unknown>)
+      : null;
+
+  return {
+    offlineReady: normalizeNullableBoolean(snapshot.offlineReady),
+    bundleReady: normalizeNullableBoolean(snapshot.bundleReady),
+    bundleState: normalizeNullableString(snapshot.bundleState),
+    bundleLastValidatedAt: normalizeNullableNumber(snapshot.bundleLastValidatedAt),
+    offlineReadinessAction: normalizeNullableString(snapshot.offlineReadinessAction),
+    offlineBundleActionInFlight: normalizeNullableBoolean(
+      snapshot.offlineBundleActionInFlight,
+    ),
+    offlineBundleActionError: normalizeNullableString(snapshot.offlineBundleActionError),
+    bundleError: normalizeNullableString(snapshot.bundleError),
+    offlineBundleAssetCount: normalizeNullableNumber(snapshot.offlineBundleAssetCount),
+    offlineBundleTotalBytes: normalizeNullableNumber(snapshot.offlineBundleTotalBytes),
+    bundleDiagnostics: diagnostics
+      ? {
+          missingAssetCount: normalizeNullableNumber(diagnostics.missingAssetCount),
+          mismatchedAssetCount: normalizeNullableNumber(diagnostics.mismatchedAssetCount),
+          missingAssetIds: sanitizeStringArray(diagnostics.missingAssetIds),
+          mismatchedAssetIds: sanitizeStringArray(diagnostics.mismatchedAssetIds),
+        }
+      : null,
   };
 }
 
@@ -479,6 +545,10 @@ export function buildMemoryDiagnosticsReport(
       message: 'Manual diagnostics report',
     } as MemoryIssueSummary);
 
+  const rawContext = options.context || {};
+  const { offlineReadiness: rawOfflineReadiness, ...processingContext } = rawContext;
+  const offlineReadiness = sanitizeOfflineReadinessSummary(rawOfflineReadiness);
+
   return {
     reportId: createId('report'),
     trigger,
@@ -497,7 +567,8 @@ export function buildMemoryDiagnosticsReport(
       ...getPerformanceMemory(runtime),
     },
     processing: {
-      ...(options.context || {}),
+      ...processingContext,
+      ...(offlineReadiness ? { offlineReadiness } : {}),
     },
     incident,
     recentEvents: recorder.getEvents(),
