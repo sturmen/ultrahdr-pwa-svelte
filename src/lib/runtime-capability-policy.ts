@@ -8,7 +8,7 @@ const WASM_INFERENCE_TIMEOUT_MS = 600_000;
 const DEFAULT_WORKER_INIT_TIMEOUT_MS = 240_000;
 const FIREFOX_WORKER_INIT_TIMEOUT_MS = 300_000;
 const DEFAULT_WORKER_WASM_LOAD_TIMEOUT_MS = 20_000;
-const SAFARI_LIKE_WORKER_WASM_LOAD_TIMEOUT_MS = 60_000;
+const SAFARI_LIKE_WORKER_WASM_LOAD_TIMEOUT_MS = 180_000;
 
 type RuntimeLike = Partial<typeof globalThis> & {
   navigator?: Partial<Navigator> & { userAgent?: string };

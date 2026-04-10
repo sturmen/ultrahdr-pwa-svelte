@@ -32,6 +32,8 @@ const EXIF_MATRIX_FIXTURES = [
 // Timeouts for processing diagnostics. Give very generous buffers for slow CI.
 const PROCESSING_TIMEOUT = 300_000;
 const PROCESSING_STALL_TIMEOUT = 240_000;
+const SLOW_BROWSER_PROCESSING_TIMEOUT = 600_000;
+const SLOW_BROWSER_MATRIX_TIMEOUT = 1_800_000;
 const POLL_INTERVAL = 250;
 const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
 const MOBILE_INFERENCE_ACKNOWLEDGEMENT =
@@ -178,7 +180,7 @@ async function waitForProcessing(page, expectedResults = 1, options = {}) {
  * Helper: wait for re-processing after a settings change.
  * processAll() clears results first, so we wait for results to disappear then reappear.
  */
-async function waitForReprocessing(page) {
+async function waitForReprocessing(page, options = {}) {
     await dismissWasmRecommendationIfVisible(page);
     const prompt = page.getByTestId('stale-reprocess-prompt');
     if (await prompt.count()) {
@@ -190,7 +192,7 @@ async function waitForReprocessing(page) {
         }
     }
     await dismissWasmRecommendationIfVisible(page);
-    await waitForProcessing(page, 1);
+    await waitForProcessing(page, 1, options);
 }
 
 async function dismissWasmRecommendationIfVisible(page) {
@@ -732,7 +734,8 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             for (const fixturePath of UNROTATED_SDR_FIXTURES) {
                 test(`should not unexpectedly rotate ${path.basename(fixturePath)} during default processing`, async ({ page }, testInfo) => {
                     const isWebKit = testInfo.project.name === 'webkit';
-                    test.setTimeout(isWebKit ? 360_000 : 180_000);
+                    const processingTimeoutMs = isWebKit ? 600_000 : PROCESSING_TIMEOUT;
+                    test.setTimeout(isWebKit ? 660_000 : 180_000);
                     const fixtureName = path.basename(fixturePath);
                     const tempDir = fs.mkdtempSync(
                         path.join(os.tmpdir(), `uhdr-unexpected-rotation-${testInfo.project.name}-`)
@@ -741,7 +744,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                     try {
                         await page.goto('/');
                         await uploadFiles(page, [fixturePath]);
-                        await waitForProcessing(page);
+                        await waitForProcessing(page, 1, { timeoutMs: processingTimeoutMs });
 
                         const result = await downloadFirstResult(page);
                         const outputPath = writeTempJpeg(result, tempDir, `${fixtureName}-output.jpg`);
@@ -1066,13 +1069,14 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             }
         });
 
-        test('should regenerate gain map when "Discard existing gain map(s)" is enabled', async ({ page }) => {
-            test.setTimeout(120_000); // Re-processing takes time
+        test('should regenerate gain map when "Discard existing gain map(s)" is enabled', async ({ page, browserName }) => {
+            const processingTimeoutMs = browserName === 'webkit' ? 600_000 : PROCESSING_TIMEOUT;
+            test.setTimeout(browserName === 'webkit' ? 660_000 : 120_000); // Re-processing takes time
             await page.goto('/');
 
             // Upload gain map image with default settings (preserves existing gain map)
             await uploadFiles(page, [GAIN_MAP_JPEG]);
-            await waitForProcessing(page);
+            await waitForProcessing(page, 1, { timeoutMs: processingTimeoutMs });
             const preservedResult = await downloadFirstResult(page);
             const preservedSize = preservedResult.length;
 
@@ -1087,7 +1091,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 checkbox.dispatchEvent(new Event('change', { bubbles: true }));
             });
 
-            await waitForReprocessing(page);
+            await waitForReprocessing(page, { timeoutMs: processingTimeoutMs });
 
             // Download the re-processed result
             const discardedResult = await downloadFirstResult(page);
@@ -1100,20 +1104,21 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(Buffer.compare(preservedResult, discardedResult)).not.toBe(0);
         });
 
-        test('should preserve existing gain map when rotation is applied', async ({ page }) => {
-            test.setTimeout(120_000); // Re-processing takes time
+        test('should preserve existing gain map when rotation is applied', async ({ page, browserName }) => {
+            const processingTimeoutMs = browserName === 'webkit' ? 600_000 : PROCESSING_TIMEOUT;
+            test.setTimeout(browserName === 'webkit' ? 660_000 : 120_000); // Re-processing takes time
             await page.goto('/');
 
             // Upload JPEG with existing gain map (default: no rotation, preserves gain map)
             await uploadFiles(page, [GAIN_MAP_JPEG]);
-            await waitForProcessing(page);
+            await waitForProcessing(page, 1, { timeoutMs: processingTimeoutMs });
             const unrotatedResult = await downloadFirstResult(page);
 
             // Now apply 90° rotation via the "Rotate Right" button
             await page.click('button[title="Rotate Right"]');
 
             // Wait for re-processing to start (results clear) and finish
-            await waitForReprocessing(page);
+            await waitForReprocessing(page, { timeoutMs: processingTimeoutMs });
 
             // Download the rotated result
             const rotatedResult = await downloadFirstResult(page);
@@ -1172,12 +1177,15 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         });
 
         test('should strip EXIF metadata across all supported input formats', async ({ page, browserName }) => {
-            test.setTimeout(browserName === 'webkit' ? 1_200_000 : 600_000);
+            const processingTimeoutMs = browserName === 'firefox' || browserName === 'webkit'
+                ? SLOW_BROWSER_PROCESSING_TIMEOUT
+                : PROCESSING_TIMEOUT;
+            test.setTimeout(browserName === 'firefox' || browserName === 'webkit' ? SLOW_BROWSER_MATRIX_TIMEOUT : 600_000);
             for (const fixturePath of EXIF_MATRIX_FIXTURES) {
                 const fixtureName = path.basename(fixturePath);
                 await page.goto('/');
                 await uploadFiles(page, [fixturePath]);
-                await waitForProcessing(page);
+                await waitForProcessing(page, 1, { timeoutMs: processingTimeoutMs });
 
                 if (isTiffFixture(fixturePath)) {
                     const sourceTags = normalizeTiffExifForComparison(readExifTags(fixturePath));
@@ -1190,7 +1198,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                 }
 
                 await setStripExifToggle(page, true);
-                await waitForReprocessing(page);
+                await waitForReprocessing(page, { timeoutMs: processingTimeoutMs });
 
                 const strippedResult = await downloadFirstResult(page);
                 expect(extractExifSegmentBytes(strippedResult), `${fixtureName}: output still contains APP1 EXIF payload`).toBeNull();
@@ -1199,7 +1207,10 @@ test.describe('UltraHDR PWA E2E Tests', () => {
         });
 
         test('should normalize EXIF Orientation=1 when rotation is applied for all supported input formats', async ({ page, browserName }) => {
-            test.setTimeout(600_000);
+            const processingTimeoutMs = browserName === 'firefox' || browserName === 'webkit'
+                ? SLOW_BROWSER_PROCESSING_TIMEOUT
+                : PROCESSING_TIMEOUT;
+            test.setTimeout(browserName === 'firefox' || browserName === 'webkit' ? SLOW_BROWSER_MATRIX_TIMEOUT : 600_000);
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `uhdr-exif-matrix-rotation-${browserName}-`));
 
             try {
@@ -1207,10 +1218,10 @@ test.describe('UltraHDR PWA E2E Tests', () => {
                     const fixtureName = path.basename(fixturePath);
                     await page.goto('/');
                     await uploadFiles(page, [fixturePath]);
-                    await waitForProcessing(page);
+                    await waitForProcessing(page, 1, { timeoutMs: processingTimeoutMs });
 
                     await page.click('button[title="Rotate Right"]');
-                    await waitForReprocessing(page);
+                    await waitForReprocessing(page, { timeoutMs: processingTimeoutMs });
 
                     const rotatedResult = await downloadFirstResult(page);
                     const outputPath = writeTempJpeg(rotatedResult, tempDir, `${fixtureName}-rotated-output.jpg`);

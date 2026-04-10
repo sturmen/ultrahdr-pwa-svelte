@@ -49,17 +49,21 @@ describe('runtime-capability-policy', () => {
   });
 
   it('resolves worker wasm-load timeout based on runtime user agent', () => {
+    const safariLikeRuntime = {
+      navigator: {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+      },
+    };
+
     expect(
       resolveWorkerWasmLoadTimeoutMs(
-        {
-          navigator: {
-            userAgent:
-              'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
-          },
-        },
+        safariLikeRuntime,
         { defaultTimeoutMs: 100, safariLikeTimeoutMs: 200 },
       ),
     ).toBe(200);
+
+    expect(resolveWorkerWasmLoadTimeoutMs(safariLikeRuntime)).toBeGreaterThanOrEqual(180_000);
 
     expect(
       resolveWorkerWasmLoadTimeoutMs(

@@ -12,7 +12,7 @@ export default defineConfig({
     fullyParallel: false,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
-    workers: process.env.CI ? 1 : 2,
+    workers: 1,
     reporter: 'html',
     timeout: 180000,
 
@@ -69,6 +69,6 @@ export default defineConfig({
         command: 'npm run build:wasm && npm run build && npm run preview',
         url: 'http://localhost:4173/ultrahdr-pwa-svelte/',
         reuseExistingServer: false,
-        timeout: 240 * 1000,
+        timeout: 600 * 1000,
     },
 });
