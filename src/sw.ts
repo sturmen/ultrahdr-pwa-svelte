@@ -1,7 +1,6 @@
 /// <reference lib="webworker" />
 
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
-import { clientsClaim } from 'workbox-core';
 import { registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
@@ -81,9 +80,6 @@ declare const self: ServiceWorkerGlobalScopeWithManifest;
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
 
-self.skipWaiting();
-clientsClaim();
-
 const MAX_SHARED_FILES = 32;
 const MAX_SHARED_TOTAL_BYTES = 300 * 1024 * 1024;
 const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
@@ -104,6 +100,13 @@ const WASM_ASSET_CACHE = CACHE_NAMES.wasmAssets;
 const LIBHEIF_ASSET_CACHE = CACHE_NAMES.libheifAssets;
 const AI_MODEL_CACHE = CACHE_NAMES.aiModels;
 const ONNX_WASM_CACHE = CACHE_NAMES.onnxWasmAssets;
+
+self.addEventListener('message', (event) => {
+    const message = event.data as { type?: unknown } | null;
+    if (message?.type === 'SKIP_WAITING') {
+        void self.skipWaiting();
+    }
+});
 
 function resolveBasePath(): string {
     const scope = self.registration?.scope || self.location?.origin || '/';

@@ -119,7 +119,7 @@ export default defineConfig({
   plugins: [
     svelte(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg', 'models/gmnet-smoke-128.png'],
       manifest: {
         name: 'UltraHDR Converter',

@@ -197,6 +197,7 @@ export function createDefaultPwaUpdateState() {
 
 export function createPwaUpdateCoordinator({
   onStateChange = () => {},
+  onDiagnosticEvent = () => {},
   isBusy = () => false,
 } = {}) {
   let state = {
@@ -217,6 +218,21 @@ export function createPwaUpdateCoordinator({
   function patchState(changes) {
     state = { ...state, ...changes };
     emit();
+  }
+
+  function recordDiagnostic(name, severity = 'info', context = {}) {
+    onDiagnosticEvent({
+      category: 'lifecycle',
+      name,
+      severity,
+      context: {
+        updateAvailable: Boolean(state.updateAvailable),
+        pendingUntilIdle: Boolean(state.pendingUntilIdle),
+        applying: Boolean(state.applying),
+        availableVersion: state.availableVersion || null,
+        ...context,
+      },
+    });
   }
 
   function patchBundleState(bundleResult) {
@@ -356,6 +372,9 @@ export function createPwaUpdateCoordinator({
       pendingUntilIdle: Boolean(isBusy()),
       applying: false,
     });
+    recordDiagnostic('pwa-update-available', 'info', {
+      ignored,
+    });
   }
 
   function scheduleUpdateChecks() {
@@ -433,15 +452,22 @@ export function createPwaUpdateCoordinator({
     }
     if (Boolean(isBusy())) {
       patchState({ pendingUntilIdle: true });
+      recordDiagnostic('pwa-update-activation-deferred', 'warning', {
+        reason: 'processing-busy',
+      });
       return false;
     }
 
     patchState({ applying: true, lastError: null, pendingUntilIdle: false });
+    recordDiagnostic('pwa-update-activation-requested', 'info');
     try {
       await updateSw(true);
       return true;
     } catch (error) {
       patchState({ applying: false, lastError: String(error?.message || error) });
+      recordDiagnostic('pwa-update-activation-failed', 'error', {
+        message: String(error?.message || error),
+      });
       return false;
     }
   }
@@ -460,10 +486,17 @@ export function createPwaUpdateCoordinator({
     if (isProcessingBusy) {
       if (state.updateAvailable && !state.pendingUntilIdle) {
         patchState({ pendingUntilIdle: true });
+        recordDiagnostic('pwa-update-activation-deferred', 'warning', {
+          reason: 'processing-busy',
+        });
       }
       return;
     }
+    const wasPendingUntilIdle = Boolean(state.pendingUntilIdle);
     updatePendingStateFromBusy();
+    if (wasPendingUntilIdle && state.updateAvailable && !state.pendingUntilIdle) {
+      recordDiagnostic('pwa-update-awaiting-user-reload', 'info');
+    }
   }
 
   function dispose() {

@@ -357,6 +357,69 @@ describe('pwa updater coordinator', () => {
     coordinator.dispose();
   });
 
+  it('emits bounded diagnostics breadcrumbs for update availability and deferred activation', async () => {
+    let onNeedRefresh;
+    globalThis.__dynamicImport__ = vi.fn(async (specifier) => {
+      if (specifier === 'virtual:pwa-register') {
+        return {
+          registerSW: (options) => {
+            onNeedRefresh = options.onNeedRefresh;
+            options.onRegisteredSW?.('/sw.js', registrationMock);
+            return updateSWMock;
+          },
+        };
+      }
+      throw new Error(`Unexpected import: ${specifier}`);
+    });
+
+    const diagnosticEvents = [];
+    let busy = true;
+    const coordinator = createPwaUpdateCoordinator({
+      onDiagnosticEvent: (event) => diagnosticEvents.push(event),
+      onStateChange: () => {},
+      isBusy: () => busy,
+    });
+
+    await flushPromises();
+    onNeedRefresh?.();
+    await flushPromises();
+    await coordinator.applyUpdate();
+    busy = false;
+    coordinator.setBusy(false);
+
+    expect(diagnosticEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'lifecycle',
+          name: 'pwa-update-available',
+          severity: 'info',
+          context: expect.objectContaining({
+            pendingUntilIdle: true,
+            updateAvailable: true,
+          }),
+        }),
+        expect.objectContaining({
+          category: 'lifecycle',
+          name: 'pwa-update-activation-deferred',
+          severity: 'warning',
+          context: expect.objectContaining({
+            reason: 'processing-busy',
+          }),
+        }),
+        expect.objectContaining({
+          category: 'lifecycle',
+          name: 'pwa-update-awaiting-user-reload',
+          severity: 'info',
+          context: expect.objectContaining({
+            pendingUntilIdle: false,
+            updateAvailable: true,
+          }),
+        }),
+      ]),
+    );
+    coordinator.dispose();
+  });
+
   it('fails silently for offline update checks', async () => {
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,

@@ -14,6 +14,7 @@
     createDefaultPwaUpdateState,
     createPwaUpdateCoordinator,
   } from "./lib/pwa-updater.js";
+  import { getSharedDiagnosticsRecorder } from "./lib/diagnostics.ts";
 
   const version = import.meta.env.VITE_APP_VERSION || "dev";
   const ABOUT_HASH = "#about";
@@ -71,6 +72,7 @@
     | Promise<typeof import("./lib/ImageProcessor.svelte").default>
     | null = null;
   const processingRuntime = createProcessingRuntime();
+  const diagnosticsRecorder = getSharedDiagnosticsRecorder(globalThis);
 
   async function ensureImageProcessorComponentLoaded(): Promise<
     typeof import("./lib/ImageProcessor.svelte").default
@@ -475,6 +477,9 @@
     pwaUpdateCoordinator = createPwaUpdateCoordinator({
       onStateChange: (nextState) => {
         pwaUpdateState = nextState;
+      },
+      onDiagnosticEvent: (event) => {
+        diagnosticsRecorder.record(event);
       },
       isBusy: () => isProcessingBusy,
     });
