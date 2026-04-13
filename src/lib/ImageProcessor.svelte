@@ -23,12 +23,14 @@
     deleteQueuePayloads,
     getQueueInputFile,
     getQueueOutputBlob,
+    getQueueOutputPreviewBlob,
     getQueuePreviewBlob,
     loadQueueState,
     normalizePersistedQueueState,
     shouldPauseForStorageWrite,
     storeQueueInputFile,
     storeQueueOutputBlob,
+    storeQueueOutputPreviewBlob,
     storeQueuePreviewBlob,
     storeQueueState,
   } from "./share-store.ts";
@@ -58,6 +60,7 @@
     probeInputProcessingPathFromHeaders,
   } from "./processing-path.js";
   import {
+    createPreviewBlobFromImageBlob,
     createInputPreviewTask,
     INPUT_PREVIEW_PLACEHOLDER_URL,
   } from "./input-preview.ts";
@@ -130,6 +133,7 @@
   let activeAbortController = null;
   let processingRunId = 0;
   let queueLoopActive = false;
+  let queueRestartPending = false;
   let pauseRequested = false;
   let resumeRequestedFromLaunch = false;
   let cancelCurrentRequested = false;
@@ -140,6 +144,7 @@
   let lastReportedProcessingBusy = null;
 
   let activeMobileTab = "convert";
+  let preserveConvertTabOnQueueDrain = false;
   let activeDesktopTab = "all";
   let openSheet = "none";
   let viewerOpen = false;
@@ -206,6 +211,8 @@
   let viewerPreviewKind = "single";
   let viewerImageSrc = "";
   let viewerImageAlt = "";
+  let viewerOutputFullUrl = "";
+  let viewerHydrationRun = 0;
   let viewerIsZoomed = false;
   let viewerFilmstripElement = null;
   let effectiveViewerDesktopChromeVisible = false;
@@ -223,6 +230,7 @@
   const VIEWER_DOUBLE_TAP_DISTANCE_PX = 24;
   const VIEWER_DESKTOP_CHROME_IDLE_MS = 1600;
   let zipRuntimePromise: Promise<typeof import("jszip").default> | null = null;
+  const deferredPreviewFailureKeys = new Set();
 
   function isUnderTestDiagnosticsMode(): boolean {
     const runtime = globalThis as typeof globalThis & {
@@ -315,7 +323,10 @@
     : "single";
   $: viewerImageSrc = viewerPreviewKind === "source"
     ? currentViewerCard?.sourcePreviewUrl
-    : currentViewerCard?.comparePreviewUrl || currentViewerCard?.previewUrl || "";
+    : viewerOutputFullUrl ||
+      currentViewerCard?.comparePreviewUrl ||
+      currentViewerCard?.previewUrl ||
+      "";
   $: viewerImageAlt = currentViewerCard?.previewAlt || "";
   $: viewerIsZoomed = viewerZoomScale > 1;
   $: if (!viewerOpen) {
@@ -1028,6 +1039,11 @@
   }
 
   function setActiveTab(tab) {
+    if (tab === "convert" && processing) {
+      preserveConvertTabOnQueueDrain = true;
+    } else if (tab !== "convert") {
+      preserveConvertTabOnQueueDrain = false;
+    }
     activeMobileTab = tab;
     openSheet = "none";
   }
@@ -1229,15 +1245,44 @@
     viewerCompareActive = false;
   }
 
+  function releaseViewerOutputUrl() {
+    if (viewerOutputFullUrl) {
+      URL.revokeObjectURL(viewerOutputFullUrl);
+      recordDiagnostics("storage", "full-output-viewer-url-released", "info", {
+        queueId: currentViewerCard?.queueId ?? null,
+        trigger: "viewer-close",
+      });
+    }
+    viewerOutputFullUrl = "";
+  }
+
+  async function hydrateViewerOutput(queueId) {
+    const hydrationRun = ++viewerHydrationRun;
+    releaseViewerOutputUrl();
+    const outputBlob = await getQueueOutputBlob(queueId);
+    if (!outputBlob || hydrationRun !== viewerHydrationRun) {
+      return;
+    }
+    viewerOutputFullUrl = URL.createObjectURL(outputBlob);
+    recordDiagnostics("storage", "full-output-hydrated-on-demand", "info", {
+      queueId,
+      artifactBytes: outputBlob.size,
+      trigger: "viewer-open",
+    });
+  }
+
   function openViewer(index) {
     if (!Number.isInteger(index) || !workflowCards[index]) return;
     viewerIndex = index;
     viewerOpen = true;
     viewerBounceDirection = "none";
     resetViewerEphemeralState();
+    void hydrateViewerOutput(workflowCards[index].queueId);
   }
 
   function closeViewer() {
+    viewerHydrationRun += 1;
+    releaseViewerOutputUrl();
     viewerOpen = false;
     viewerIndex = -1;
     viewerBounceDirection = "none";
@@ -1254,6 +1299,7 @@
     viewerIndex -= 1;
     viewerBounceDirection = "none";
     resetViewerEphemeralState();
+    void hydrateViewerOutput(workflowCards[viewerIndex].queueId);
   }
 
   function showNextInViewer() {
@@ -1265,6 +1311,7 @@
     viewerIndex += 1;
     viewerBounceDirection = "none";
     resetViewerEphemeralState();
+    void hydrateViewerOutput(workflowCards[viewerIndex].queueId);
   }
 
   function showViewerIndex(index) {
@@ -1274,6 +1321,7 @@
     viewerIndex = index;
     viewerBounceDirection = "none";
     resetViewerEphemeralState();
+    void hydrateViewerOutput(workflowCards[index].queueId);
   }
 
   async function scrollViewerFilmstripToActive(index) {
@@ -1486,6 +1534,15 @@
     }
   }
 
+  function createUnavailablePreviewBlob() {
+    return new Blob(
+      [
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' fill='#e8eef6'/><path d='M16 44l10-12 8 9 6-7 8 10H16z' fill='#92a5bb'/><circle cx='24' cy='22' r='5' fill='#b8c7d8'/></svg>",
+      ],
+      { type: "image/svg+xml" },
+    );
+  }
+
   async function storeQueueItemPreviewBlob(queueId, previewBlob) {
     await storeQueuePreviewBlob(queueId, previewBlob);
     const previewUrl = URL.createObjectURL(previewBlob);
@@ -1507,11 +1564,44 @@
     }
   }
 
+  function summarizePreviewErrorMessage(previewError) {
+    if (previewError instanceof Error && typeof previewError.message === "string") {
+      return previewError.message;
+    }
+    if (typeof previewError === "string") {
+      return previewError;
+    }
+    return "Unknown error";
+  }
+
+  function classifyDeferredPreviewError(previewError) {
+    const message = summarizePreviewErrorMessage(previewError).toLowerCase();
+    if (message.includes("jpegli wasm module failed to load")) {
+      return "jpegli-load-failed";
+    }
+    if (message.includes("failed to fetch") || message.includes("network")) {
+      return "asset-fetch-failed";
+    }
+    return "preview-generation-failed";
+  }
+
   function scheduleDeferredPreview(queueId, previewTaskPromise) {
     void previewTaskPromise
       .then((previewBlob) => storeQueueItemPreviewBlob(queueId, previewBlob))
       .catch((previewError) => {
-        console.warn("[UI] Failed to finish deferred input preview:", previewError);
+        const message = summarizePreviewErrorMessage(previewError).slice(0, 200);
+        const errorCategory = classifyDeferredPreviewError(previewError);
+        const failureKey = `${errorCategory}:${message}`;
+        if (!deferredPreviewFailureKeys.has(failureKey)) {
+          deferredPreviewFailureKeys.add(failureKey);
+          console.warn("[UI] Failed to finish deferred input preview:", previewError);
+        }
+        recordDiagnostics("runtime", "deferred-input-preview-failed", "warning", {
+          queueId,
+          trigger: "deferred-input-preview",
+          errorCategory,
+          message,
+        });
       });
   }
 
@@ -1570,10 +1660,9 @@
     return WORKFLOW_STATES.EMPTY;
   }
 
-  function createResultRecordFromQueueItem(queueItem, outputUrl, blobSize) {
+  function createResultRecordFromQueueItem(queueItem, blobSize) {
     return {
       originalName: queueItem.name,
-      url: outputUrl,
       size: blobSize,
       index: queueItem.id,
       queueId: queueItem.id,
@@ -1593,10 +1682,10 @@
     for (const item of snapshot.queue) {
       const storedInput = await getQueueInputFile(item.id);
       const storedPreview = await getQueuePreviewBlob(item.id);
-      const storedOutput =
+      const storedOutputPreview =
         item.status === QUEUE_ITEM_STATES.COMPLETED ||
         item.status === QUEUE_ITEM_STATES.STALE
-          ? await getQueueOutputBlob(item.id)
+          ? await getQueueOutputPreviewBlob(item.id)
           : null;
       const isPendingItem =
         item.status === QUEUE_ITEM_STATES.QUEUED ||
@@ -1637,7 +1726,9 @@
           });
         }
       }
-      const outputPreviewUrl = storedOutput ? URL.createObjectURL(storedOutput) : null;
+      const outputPreviewUrl = storedOutputPreview
+        ? URL.createObjectURL(storedOutputPreview)
+        : null;
       const normalizedStatus =
         item.status === QUEUE_ITEM_STATES.PROCESSING
           ? QUEUE_ITEM_STATES.QUEUED
@@ -1652,10 +1743,12 @@
         processingPath: item.processingPath,
         inputPreviewUrl,
         outputPreviewUrl,
-        result: storedOutput
+        result:
+          item.status === QUEUE_ITEM_STATES.COMPLETED ||
+          item.status === QUEUE_ITEM_STATES.STALE
           ? {
-              outputUrl: outputPreviewUrl,
-              size: storedOutput.size,
+              previewUrl: outputPreviewUrl,
+              size: 0,
               persisted: true,
             }
           : null,
@@ -1666,13 +1759,19 @@
         resumedCount += 1;
       }
 
-      if (storedOutput && outputPreviewUrl) {
+      if (
+        item.status === QUEUE_ITEM_STATES.COMPLETED ||
+        item.status === QUEUE_ITEM_STATES.STALE
+      ) {
+        if (outputPreviewUrl) {
+          recordDiagnostics("storage", "queue-restored-from-persisted-previews", "info", {
+            queueId: item.id,
+            previewBytes: storedOutputPreview?.size ?? null,
+            trigger: "restore",
+          });
+        }
         restoredResults.push(
-          createResultRecordFromQueueItem(
-            restoredQueueItem,
-            outputPreviewUrl,
-            storedOutput.size,
-          ),
+          createResultRecordFromQueueItem(restoredQueueItem, storedOutputPreview?.size ?? 0),
         );
       }
 
@@ -1811,7 +1910,6 @@
 
   function upsertResult(
     queueItem,
-    outputUrl,
     blobSize,
     appliedSettingsVersion,
     appliedRotation,
@@ -1819,7 +1917,6 @@
   ) {
     const resultRecord = {
       originalName: queueItem.name,
-      url: outputUrl,
       size: blobSize,
       index: queueItem.id,
       queueId: queueItem.id,
@@ -1833,7 +1930,6 @@
     );
     const nextSelection = new Set(selectedQueueIds);
     if (existingIndex >= 0) {
-      URL.revokeObjectURL(results[existingIndex].url);
       results = results.map((result, index) =>
         index === existingIndex ? resultRecord : result,
       );
@@ -1843,14 +1939,28 @@
       nextSelection.add(queueItem.id);
     }
     selectedQueueIds = nextSelection;
-    updateQueueItem(queueItem.id, {
-      outputPreviewUrl: outputUrl,
-      result: {
-        outputUrl,
-        size: blobSize,
-        persisted: true,
-      },
-      progress: null,
+  }
+
+  async function storeQueueItemOutputPreviewBlob(queueId, previewBlob) {
+    await storeQueueOutputPreviewBlob(queueId, previewBlob);
+    const previewUrl = URL.createObjectURL(previewBlob);
+    updateQueueItem(queueId, (item) => {
+      revokePreviewUrl(item.outputPreviewUrl);
+      return {
+        ...item,
+        outputPreviewUrl: previewUrl,
+        result: item.result
+          ? {
+              ...item.result,
+              previewUrl,
+            }
+          : item.result,
+      };
+    });
+    recordDiagnostics("storage", "output-preview-persisted", "info", {
+      queueId,
+      previewBytes: previewBlob.size,
+      trigger: "processing-complete",
     });
   }
 
@@ -1868,24 +1978,46 @@
     }
 
     await storeQueueOutputBlob(queueItem.id, blob);
-    const outputUrl = URL.createObjectURL(blob);
+    recordDiagnostics("storage", "output-artifact-persisted", "info", {
+      queueId: queueItem.id,
+      artifactBytes: blob.size,
+      trigger: "processing-complete",
+    });
+    let previewBlob;
+    try {
+      previewBlob = await createPreviewBlobFromImageBlob(blob);
+    } catch (previewError) {
+      console.warn("[UI] Failed to create output preview:", previewError);
+      previewBlob = createUnavailablePreviewBlob();
+    }
+    await storeQueueItemOutputPreviewBlob(queueItem.id, previewBlob);
     upsertResult(
       queueItem,
-      outputUrl,
       blob.size,
       appliedSettingsVersion,
       appliedRotation,
       processingPath,
     );
+    updateQueueItem(queueItem.id, {
+      result: {
+        size: blob.size,
+        persisted: true,
+        previewUrl: queue.find((item) => item.id === queueItem.id)?.outputPreviewUrl ?? null,
+      },
+      progress: null,
+    });
   }
 
   function startQueue() {
-    if (queueLoopActive) return;
-
     const hasQueuedItems = queue.some(
       (item) => item.status === QUEUE_ITEM_STATES.QUEUED,
     );
     if (!hasQueuedItems) return;
+
+    if (queueLoopActive) {
+      queueRestartPending = true;
+      return;
+    }
 
     if (workflowState === WORKFLOW_STATES.EMPTY) {
       setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
@@ -1979,7 +2111,11 @@
           }
 
           if (!isDesktopLayout && results.length > 0) {
-            activeMobileTab = "results";
+            if (preserveConvertTabOnQueueDrain) {
+              preserveConvertTabOnQueueDrain = false;
+            } else {
+              activeMobileTab = "results";
+            }
           }
 
           if (launchSource === "share-target" && results.length > 0) {
@@ -1989,7 +2125,7 @@
           }
 
           await releaseWakeLock();
-          schedulePersistQueueState();
+          await persistQueueStateSnapshot();
           break;
         }
 
@@ -2065,12 +2201,18 @@
             activeRotation,
             itemProcessingPath,
           );
+          const completedWithStaleSettings = activeSettingsVersion !== settingsVersion;
           updateQueueItem(nextItem.id, {
-            status: QUEUE_ITEM_STATES.COMPLETED,
+            status: completedWithStaleSettings
+              ? QUEUE_ITEM_STATES.STALE
+              : QUEUE_ITEM_STATES.COMPLETED,
             settingsVersion: activeSettingsVersion,
             error: null,
             processingPath: itemProcessingPath,
           });
+          if (completedWithStaleSettings) {
+            showStalePrompt = true;
+          }
           diagnosticsRecorder.markProcessingComplete({
             processingSnapshot: buildProcessingDiagnosticsSnapshot({
               currentQueueId: nextItem.id,
@@ -2154,6 +2296,12 @@
         await releaseProcessingLock();
       }
       queueLoopActive = false;
+      if (queueRestartPending) {
+        queueRestartPending = false;
+        if (queue.some((item) => item.status === QUEUE_ITEM_STATES.QUEUED)) {
+          startQueue();
+        }
+      }
     }
   }
 
@@ -2350,6 +2498,14 @@
     return ids;
   }
 
+  function allStaleQueueIds() {
+    return new Set(
+      queue
+        .filter((item) => item.status === QUEUE_ITEM_STATES.STALE)
+        .map((item) => item.id),
+    );
+  }
+
   function requeueByIds(queueIds) {
     if (!queueIds || queueIds.size === 0) return false;
     let changed = false;
@@ -2386,8 +2542,9 @@
 
   function reprocessSelectedStale() {
     const staleIds = selectedStaleQueueIds();
-    if (requeueByIds(staleIds)) {
-      showStalePrompt = staleCount > staleIds.size;
+    const targetIds = staleIds.size > 0 ? staleIds : allStaleQueueIds();
+    if (requeueByIds(targetIds)) {
+      showStalePrompt = staleCount > targetIds.size;
       closeSheet();
       startQueue();
     }
@@ -2705,6 +2862,7 @@
     notice = null;
     error = null;
     activeMobileTab = "convert";
+    preserveConvertTabOnQueueDrain = false;
     activeDesktopTab = "all";
     openSheet = "none";
 
