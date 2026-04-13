@@ -1,12 +1,17 @@
 /**
  * @vitest-environment jsdom
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import {
   DIAGNOSTICS_ACTIVE_SESSION_KEY,
   DIAGNOSTICS_REPORTS_KEY,
 } from '../diagnostics.ts';
+import {
+  clearQueueState,
+  clearSessionQueuePayloads,
+  __resetShareStoreForTests,
+} from '../share-store.ts';
 
 const diagnosticsMocks = vi.hoisted(() => ({
   runtimeProcessMock: vi.fn(),
@@ -44,6 +49,7 @@ describe('ImageProcessor diagnostics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    __resetShareStoreForTests();
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: false,
       media: '(min-width: 1024px)',
@@ -68,6 +74,11 @@ describe('ImageProcessor diagnostics', () => {
         writeText: vi.fn(async () => {}),
       },
     });
+  });
+
+  afterEach(async () => {
+    await clearQueueState();
+    await clearSessionQueuePayloads();
   });
 
   it('opens a manual debug report modal from settings and shares the report', async () => {
