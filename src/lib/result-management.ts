@@ -1,18 +1,16 @@
 export interface ResultRecord {
   originalName: string;
-  blob?: Blob;
-  url?: string;
   size: number;
   index: number;
   queueId: number;
   settingsVersion?: number;
   rotation?: number;
   processingPath?: string;
+  url?: string | null;
+  blob?: Blob | null;
 }
 
-export interface StoredResultRecord extends Omit<ResultRecord, 'blob'> {
-  blob?: Blob;
-}
+export type StoredResultRecord = ResultRecord;
 
 export interface LoadedResultBlobRecord {
   result: StoredResultRecord;
@@ -29,14 +27,14 @@ function normalizeJpegName(originalName: string) {
 }
 
 export function releaseResultUrls(
-  results: Array<ResultRecord | null | undefined>,
+  results: Array<(ResultRecord & { url?: string | null }) | null | undefined>,
   revokeObjectURL: (url: string) => void = URL.revokeObjectURL,
 ) {
-  (results || []).forEach((result) => {
-    if (result?.url) {
+  for (const result of results) {
+    if (typeof result?.url === 'string' && result.url) {
       revokeObjectURL(result.url);
     }
-  });
+  }
 }
 
 function resolveSelectedQueueIds(results: ResultRecord[], selectedIds: Set<number>) {
@@ -67,16 +65,6 @@ export function getSelectedResults(results: ResultRecord[], selectedIds: Set<num
   );
 }
 
-export async function buildShareFiles(results: ResultRecord[], selectedIds: Set<number>) {
-  const selectedResults = getSelectedResults(results, selectedIds);
-  return selectedResults.map((result) => {
-    const blob = result.blob;
-    return new File([blob], normalizeJpegName(result.originalName), {
-      type: 'image/jpeg',
-    });
-  });
-}
-
 export async function loadSelectedResultBlobs(
   results: StoredResultRecord[],
   selectedIds: Set<number>,
@@ -85,7 +73,7 @@ export async function loadSelectedResultBlobs(
   const selectedResults = getSelectedResults(results, selectedIds);
   const loaded = await Promise.all(
     selectedResults.map(async (result) => {
-      const blob = result.blob ?? await loadResultBlob(result.queueId);
+      const blob = await loadResultBlob(result.queueId);
       if (!blob) {
         return null;
       }
@@ -110,4 +98,22 @@ export async function buildShareFilesFromStorage(
       type: 'image/jpeg',
     }),
   );
+}
+
+export async function buildShareFiles(
+  results: Array<ResultRecord & { blob?: Blob | null }>,
+  selectedIds: Set<number>,
+  loader?: ResultBlobLoader,
+) {
+  if (loader) {
+    return buildShareFilesFromStorage(results, selectedIds, loader);
+  }
+
+  return getSelectedResults(results, selectedIds)
+    .filter((result): result is ResultRecord & { blob: Blob } => result.blob instanceof Blob)
+    .map((result) =>
+      new File([result.blob], normalizeJpegName(result.originalName), {
+        type: 'image/jpeg',
+      }),
+    );
 }

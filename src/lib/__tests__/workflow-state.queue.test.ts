@@ -45,8 +45,8 @@ describe('workflow-state queue-centric selectors', () => {
       type: 'ITEM_COMPLETED',
       queueId: completedId,
       result: {
-        blob: new Blob(['done'], { type: 'image/jpeg' }),
-        outputUrl: 'blob:done',
+        persisted: true,
+        previewUrl: 'blob:done',
         size: 4,
       },
     });
@@ -101,8 +101,8 @@ describe('workflow-state queue-centric selectors', () => {
       type: 'ITEM_COMPLETED',
       queueId: secondId,
       result: {
-        blob: new Blob(['done'], { type: 'image/jpeg' }),
-        outputUrl: 'blob:two',
+        persisted: true,
+        previewUrl: 'blob:two',
         size: 4,
       },
     });
@@ -149,6 +149,41 @@ describe('workflow-state queue-centric selectors', () => {
       expect.objectContaining({
         hasOutput: true,
         previewUrl: 'blob:output',
+      }),
+    );
+  });
+
+  it('keeps completed items exportable without any resident output blob or full output URL', () => {
+    const state = {
+      mode: 'done',
+      activeQueueId: null,
+      pendingIntent: null,
+      nextQueueId: 1,
+      queue: [
+        {
+          id: 0,
+          name: 'stored.jpg',
+          status: 'completed',
+          settingsVersion: 1,
+          processingPath: 'generated',
+          error: null,
+          inputPreviewUrl: 'blob:input-preview',
+          outputPreviewUrl: 'blob:output-preview',
+          result: {
+            size: 123,
+            persisted: true,
+          },
+          progress: null,
+        },
+      ],
+    };
+
+    expect(selectExportableQueueIds(state)).toEqual([0]);
+    expect(selectWorkflowCards(state)[0]).toEqual(
+      expect.objectContaining({
+        hasOutput: true,
+        previewUrl: 'blob:output-preview',
+        comparePreviewUrl: 'blob:output-preview',
       }),
     );
   });

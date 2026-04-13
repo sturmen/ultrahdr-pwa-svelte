@@ -77,8 +77,8 @@ describe('workflow-state', () => {
       type: 'ITEM_COMPLETED',
       queueId: 0,
       result: {
-        blob: new Blob(['output'], { type: 'image/jpeg' }),
-        outputUrl: 'blob:output-preview',
+        persisted: true,
+        previewUrl: 'blob:output-preview',
         size: 1024,
       },
     });
