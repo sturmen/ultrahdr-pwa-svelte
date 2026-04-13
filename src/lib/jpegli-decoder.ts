@@ -11,6 +11,11 @@ export type DecodedJpegliImage = {
   data: Uint8ClampedArray<ArrayBuffer>;
 };
 
+interface JpegliWasmFactoryOptions {
+  wasmBinary: ArrayBuffer;
+  locateFile: (path: string) => string;
+}
+
 type JpegliWasmModule = {
   HEAPU8: Uint8Array;
   _malloc(size: number): number;
@@ -37,6 +42,9 @@ type JpegliWasmModule = {
 };
 
 let jpegliWasmModule: JpegliWasmModule | null = null;
+let jpegliWasmModulePromise: Promise<JpegliWasmModule> | null = null;
+let jpegliWasmLoadState: 'idle' | 'loading' | 'ready' | 'failed' = 'idle';
+let jpegliWasmLoadError: Error | null = null;
 
 const DEFAULT_CHUNK_ROWS = 64;
 
@@ -58,6 +66,184 @@ function appendVersionQuery(url: string): string {
   }
   const separator = url.includes('?') ? '&' : '?';
   return `${url}${separator}v=${encodeURIComponent(WASM_ASSET_VERSION)}`;
+}
+
+type RuntimeGlobal = typeof globalThis & {
+  createJpegliWasm?: ((options: JpegliWasmFactoryOptions) => Promise<JpegliWasmModule>) | null;
+  window?: {
+    createJpegliWasm?: ((options: JpegliWasmFactoryOptions) => Promise<JpegliWasmModule>) | null;
+  };
+};
+
+type JpegliWasmFactory = (options: JpegliWasmFactoryOptions) => Promise<JpegliWasmModule>;
+
+function getRuntimeGlobal(): RuntimeGlobal {
+  return globalThis as RuntimeGlobal;
+}
+
+function toJpegliFactory(candidate: unknown): JpegliWasmFactory | null {
+  return typeof candidate === 'function' ? (candidate as JpegliWasmFactory) : null;
+}
+
+function getGlobalJpegliFactory(): JpegliWasmFactory | null {
+  const runtimeGlobal = getRuntimeGlobal();
+  return toJpegliFactory(runtimeGlobal.createJpegliWasm ?? runtimeGlobal.window?.createJpegliWasm);
+}
+
+function getSharedDiagnosticsRecorderSafe() {
+  try {
+    return getSharedDiagnosticsRecorder(globalThis);
+  } catch {
+    return null;
+  }
+}
+
+function recordJpegliDiagnostic(
+  name: string,
+  severity: 'info' | 'warning' | 'error' = 'info',
+  context: Record<string, unknown> = {},
+): void {
+  getSharedDiagnosticsRecorderSafe()?.record({
+    category: name === 'jpegli-loader-failed' ? 'error' : 'runtime',
+    name,
+    severity,
+    context,
+  });
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  if (error instanceof Error && typeof error.message === 'string') {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return 'Unknown error';
+}
+
+function classifyLoaderError(error: unknown): string {
+  const message = normalizeErrorMessage(error).toLowerCase();
+  if (message.includes('timed out')) {
+    return 'factory-load-timeout';
+  }
+  if (message.includes('failed to fetch') || message.includes('offline') || message.includes('network')) {
+    return 'asset-fetch-failed';
+  }
+  if (message.includes('not found')) {
+    return 'factory-not-found';
+  }
+  if (message.includes('missing wasmbinary')) {
+    return 'missing-wasm-binary';
+  }
+  return 'unknown';
+}
+
+function resolveFetchableAssetUrl(assetUrl: string): string {
+  try {
+    return new URL(assetUrl, globalThis.location?.href || 'https://ultrahdr.invalid/').toString();
+  } catch {
+    return assetUrl;
+  }
+}
+
+async function loadWasmBinaryWithOfflineFallback(
+  wasmBinaryPath: string,
+): Promise<{ wasmBinary: ArrayBuffer; cacheSource: 'network' | 'cache' }> {
+  const requestUrl = resolveFetchableAssetUrl(wasmBinaryPath);
+  try {
+    const response = await fetch(requestUrl, { credentials: 'same-origin' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Jpegli WASM binary: ${response.status}`);
+    }
+    return {
+      wasmBinary: await response.arrayBuffer(),
+      cacheSource: 'network',
+    };
+  } catch (fetchError) {
+    const cacheStorage = globalThis.caches;
+    if (!cacheStorage || typeof cacheStorage.match !== 'function') {
+      throw fetchError;
+    }
+
+    const cachedResponse = await cacheStorage.match(requestUrl) || await cacheStorage.match(wasmBinaryPath);
+    if (!cachedResponse) {
+      throw fetchError;
+    }
+
+    return {
+      wasmBinary: await cachedResponse.arrayBuffer(),
+      cacheSource: 'cache',
+    };
+  }
+}
+
+async function loadJpegliFactoryViaScriptTag(wasmJsPath: string): Promise<JpegliWasmFactory> {
+  const existingFactory = getGlobalJpegliFactory();
+  if (existingFactory) {
+    return existingFactory;
+  }
+
+  if (typeof document === 'undefined') {
+    throw new Error('document is unavailable for jpegli script loading');
+  }
+
+  return new Promise<JpegliWasmFactory>((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(new Error(`Timed out loading Jpegli WASM script from ${wasmJsPath}`));
+    }, 3_000);
+
+    const settle = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      callback();
+    };
+
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${wasmJsPath}"]`);
+    if (existingScript) {
+      const scriptFactory = getGlobalJpegliFactory();
+      if (scriptFactory) {
+        settle(() => resolve(scriptFactory));
+        return;
+      }
+
+      existingScript.addEventListener('load', () => {
+        const loadedFactory = getGlobalJpegliFactory();
+        if (loadedFactory) {
+          settle(() => resolve(loadedFactory));
+          return;
+        }
+        settle(() => reject(new Error('Jpegli WASM factory not found after existing script load')));
+      }, { once: true });
+      existingScript.addEventListener('error', () => {
+        settle(() => reject(new Error(`Failed to load Jpegli WASM script from ${wasmJsPath}`)));
+      }, { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = wasmJsPath;
+    script.onload = () => {
+      const loadedFactory = getGlobalJpegliFactory();
+      if (loadedFactory) {
+        settle(() => resolve(loadedFactory));
+        return;
+      }
+      settle(() => reject(new Error('Jpegli WASM factory not found after script load')));
+    };
+    script.onerror = () => {
+      settle(() => reject(new Error(`Failed to load Jpegli WASM script from ${wasmJsPath}`)));
+    };
+    (document.head || document.body || document.documentElement).appendChild(script);
+  });
 }
 
 function normalizeQualityRatio(quality: number): number {
@@ -283,50 +469,63 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
   if (jpegliWasmModule) {
     return jpegliWasmModule;
   }
+  if (jpegliWasmModulePromise) {
+    return jpegliWasmModulePromise;
+  }
+  if (jpegliWasmLoadState === 'failed' && jpegliWasmLoadError) {
+    throw jpegliWasmLoadError;
+  }
 
   const baseUrl = resolveWasmBaseUrl();
-  const globalFactory = (globalThis as { createJpegliWasm?: (options: Record<string, unknown>) => Promise<JpegliWasmModule> }).createJpegliWasm;
-
-  if (typeof globalFactory === 'function') {
-    jpegliWasmModule = await globalFactory({
-      locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
-    });
-    return jpegliWasmModule as JpegliWasmModule;
-  }
-
+  const wasmBinaryPath = appendVersionQuery(`${baseUrl}assets/jpegli_wasm.wasm`);
   const wasmJsPath = appendVersionQuery(`${baseUrl}assets/jpegli_wasm.js`);
-  try {
-    const importedModule = await import(/* @vite-ignore */ wasmJsPath);
-    const createWasm = importedModule?.default || importedModule?.createJpegliWasm;
-    if (typeof createWasm === 'function') {
-      jpegliWasmModule = await createWasm({
+  jpegliWasmLoadState = 'loading';
+  recordJpegliDiagnostic('jpegli-loader-started', 'info', {
+    trigger: 'module-load',
+    hasGlobalFactory: getGlobalJpegliFactory() !== null,
+  });
+
+  jpegliWasmModulePromise = (async () => {
+    try {
+      const { wasmBinary, cacheSource } = await loadWasmBinaryWithOfflineFallback(wasmBinaryPath);
+      recordJpegliDiagnostic('jpegli-wasm-binary-fetched', 'info', {
+        trigger: 'module-load',
+        byteLength: wasmBinary.byteLength,
+        cacheSource,
+      });
+
+      const factory = getGlobalJpegliFactory() ?? await loadJpegliFactoryViaScriptTag(wasmJsPath);
+      recordJpegliDiagnostic('jpegli-factory-resolved', 'info', {
+        trigger: 'module-load',
+        source: getGlobalJpegliFactory() ? 'global' : 'script-tag',
+      });
+
+      jpegliWasmModule = await factory({
+        wasmBinary,
         locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
       });
+      jpegliWasmLoadState = 'ready';
+      jpegliWasmLoadError = null;
+      recordJpegliDiagnostic('jpegli-loader-ready', 'info', {
+        trigger: 'module-load',
+      });
       return jpegliWasmModule as JpegliWasmModule;
+    } catch (error) {
+      const normalizedError = new Error('Jpegli WASM module failed to load');
+      const errorMessage = normalizeErrorMessage(error);
+      normalizedError.cause = error;
+      jpegliWasmLoadState = 'failed';
+      jpegliWasmLoadError = normalizedError;
+      recordJpegliDiagnostic('jpegli-loader-failed', 'error', {
+        trigger: 'module-load',
+        errorCategory: classifyLoaderError(error),
+        message: errorMessage.slice(0, 200),
+      });
+      throw normalizedError;
     }
-    throw new Error('createJpegliWasm not found in imported module');
-  } catch (error) {
-    try {
-      const response = await fetch(wasmJsPath);
-      const source = typeof response.text === 'function' ? await response.text() : '';
-      if (source) {
-        const evaluateFactory = new Function(
-          `${source}\nreturn (typeof createJpegliWasm === "function" ? createJpegliWasm : (typeof globalThis !== "undefined" ? globalThis.createJpegliWasm : null));`,
-        );
-        const createWasm = evaluateFactory();
-        if (typeof createWasm === 'function') {
-          jpegliWasmModule = await createWasm({
-            locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
-          });
-          return jpegliWasmModule as JpegliWasmModule;
-        }
-      }
-    } catch (fetchError) {
-      console.warn('Fallback eval failed:', fetchError);
-    }
-    console.warn('Failed to load jpegli WASM dynamically:', error);
-    throw new Error('Jpegli WASM module failed to load');
-  }
+  })();
+
+  return jpegliWasmModulePromise;
 }
 
 export async function encodeJpegliLegacyForTests(imageData: RgbaLike, quality = 95): Promise<Uint8Array> {
@@ -413,5 +612,9 @@ export async function decodeJpegli(inputBytes: Uint8Array | ArrayBuffer): Promis
 
 export function __resetJpegliWasmModuleForTests(): void {
   jpegliWasmModule = null;
+  jpegliWasmModulePromise = null;
+  jpegliWasmLoadState = 'idle';
+  jpegliWasmLoadError = null;
 }
 import { decodeRasterBuffer } from './raster-image.ts';
+import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
