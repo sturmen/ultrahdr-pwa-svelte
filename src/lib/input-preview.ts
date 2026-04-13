@@ -63,9 +63,13 @@ async function createJpegPreviewBlob(source: ImageDataLike): Promise<Blob> {
   return imageDataToJpegBlob(resized, PREVIEW_JPEG_QUALITY);
 }
 
-async function createStandardRasterPreview(file: File): Promise<Blob> {
-  const { imageData } = await loadImageData(file);
+export async function createPreviewBlobFromImageBlob(blob: Blob): Promise<Blob> {
+  const { imageData } = await loadImageData(blob);
   return createJpegPreviewBlob(imageData);
+}
+
+async function createStandardRasterPreview(file: File): Promise<Blob> {
+  return createPreviewBlobFromImageBlob(file);
 }
 
 async function createTiffPreview(file: File): Promise<Blob> {
