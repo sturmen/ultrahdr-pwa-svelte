@@ -217,6 +217,18 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
+      onwarn(warning, defaultHandler) {
+        const isKnownJimpEvalWarning =
+          warning.code === 'EVAL'
+          && typeof warning.id === 'string'
+          && warning.id.includes('node_modules/jimp/dist/browser/index.js');
+
+        if (isKnownJimpEvalWarning) {
+          return;
+        }
+
+        defaultHandler(warning);
+      },
       output: {
         manualChunks(id: string) {
           if (id.includes('node_modules/jszip/')) {
