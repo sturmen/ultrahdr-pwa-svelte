@@ -5,6 +5,7 @@
   import MobileInferenceWarningDialog from "./MobileInferenceWarningDialog.svelte";
   import OfflineReadinessCard from "./OfflineReadinessCard.svelte";
   import { getCapabilities } from "./capabilities.js";
+  import { getProcessingProfile } from "./capabilities.js";
   import {
     clampMaxContentBoostStops,
     convertStopsToMaxContentBoost,
@@ -218,6 +219,7 @@
   let effectiveViewerDesktopChromeVisible = false;
 
   const capabilities = getCapabilities();
+  const processingProfile = getProcessingProfile(capabilities);
   const diagnosticsRecorder = getSharedDiagnosticsRecorder(globalThis);
   const dispatch = createEventDispatcher();
   const VIEWER_SWIPE_THRESHOLD_PX = 48;
@@ -251,6 +253,7 @@
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
   $: showSettingsPanel = isDesktopLayout;
+  $: restrictUploadToSingleFile = processingProfile.memoryTier === "low";
   $: shouldRestrictInferenceBrowser =
     !isSupportedDesktopChromeBrowser(capabilities);
   $: workflowCards = selectWorkflowCards({
@@ -2309,14 +2312,17 @@
     const normalizedFiles = Array.from(initialFiles || []).filter(
       (file) => file instanceof File,
     );
-    if (normalizedFiles.length === 0) {
+    const filesForIntake = restrictUploadToSingleFile
+      ? normalizedFiles.slice(0, 1)
+      : normalizedFiles;
+    if (filesForIntake.length === 0) {
       workflowState = WORKFLOW_STATES.EMPTY;
       return;
     }
 
     const persistedItems = (
       await Promise.all(
-        normalizedFiles.map((file) => persistFileBackedQueueItem(file)),
+        filesForIntake.map((file) => persistFileBackedQueueItem(file)),
       )
     ).filter(Boolean);
     if (persistedItems.length === 0) {
@@ -2566,10 +2572,13 @@
     const newFiles = Array.from(fileList || []).filter(
       (file) => file instanceof File,
     );
-    if (newFiles.length === 0) return false;
+    const filesForIntake = restrictUploadToSingleFile
+      ? newFiles.slice(0, 1)
+      : newFiles;
+    if (filesForIntake.length === 0) return false;
 
     const addedItems = (
-      await Promise.all(newFiles.map((file) => persistFileBackedQueueItem(file)))
+      await Promise.all(filesForIntake.map((file) => persistFileBackedQueueItem(file)))
     ).filter(Boolean);
     if (addedItems.length === 0) {
       return false;
@@ -3148,7 +3157,7 @@
             <input
               type="file"
               id="add-files"
-              multiple
+              multiple={ !restrictUploadToSingleFile }
               accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.hif,.tif,.tiff"
               style="display: none;"
               on:change={handleAddFiles}
@@ -3698,7 +3707,7 @@
           {:else if !processing}
             {#if queue.length === 0}
               <div class="results-placeholder card results-empty-gallery">
-                <DropZone on:files={handleDropZoneFiles} />
+                <DropZone allowMultiple={!restrictUploadToSingleFile} on:files={handleDropZoneFiles} />
               </div>
             {:else}
               <div class="results-placeholder card">

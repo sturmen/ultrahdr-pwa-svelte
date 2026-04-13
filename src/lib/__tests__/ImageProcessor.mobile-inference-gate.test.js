@@ -51,6 +51,9 @@ vi.mock('../capabilities.js', () => ({
     supportsWakeLock: true,
     supportsOffscreenWorker: true,
   })),
+  getProcessingProfile: vi.fn((capabilities) => ({
+    memoryTier: capabilities?.isIOS ? 'low' : 'mid',
+  })),
 }));
 
 function createMatchMedia(matchesDesktop) {
@@ -117,6 +120,22 @@ describe('ImageProcessor smartphone inference warning gate', () => {
       expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
     });
     expect(screen.queryByTestId('mobile-inference-warning-dialog')).not.toBeInTheDocument();
+  });
+
+  it('limits picker selection to one file on low-memory devices', async () => {
+    capabilitiesState.isIOS = true;
+    classifyInputProcessingPathMock.mockResolvedValue('preserved');
+    renderProcessor();
+
+    const input = document.getElementById('add-files');
+    expect(input).not.toHaveAttribute('multiple');
+
+    await addFiles([makeFile('first.jpg'), makeFile('second.jpg')]);
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+    expect(runtimeProcessMock.mock.calls[0][0].name).toBe('first.jpg');
   });
 
   it('does not show the warning on unsupported browsers for preserved-path files', async () => {

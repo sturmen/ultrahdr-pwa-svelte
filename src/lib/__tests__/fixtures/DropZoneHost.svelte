@@ -2,6 +2,7 @@
   import DropZone from '../../DropZone.svelte';
 
   export let onFiles;
+  export let allowMultiple = true;
 </script>
 
-<DropZone on:files={(event) => onFiles?.(event.detail)} />
+<DropZone {allowMultiple} on:files={(event) => onFiles?.(event.detail)} />

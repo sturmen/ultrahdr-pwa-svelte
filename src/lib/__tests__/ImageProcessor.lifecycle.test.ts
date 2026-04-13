@@ -31,6 +31,9 @@ vi.mock('../capabilities.js', () => ({
     supportsWakeLock: true,
     supportsOffscreenWorker: true,
   })),
+  getProcessingProfile: vi.fn(() => ({
+    memoryTier: 'mid',
+  })),
 }));
 
 vi.mock('../share-store.ts', () => ({

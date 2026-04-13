@@ -85,6 +85,9 @@ vi.mock('../capabilities.js', () => ({
     supportsWakeLock: false,
     supportsOffscreenWorker: true,
   })),
+  getProcessingProfile: vi.fn(() => ({
+    memoryTier: 'mid',
+  })),
 }));
 
 vi.mock('../processing-path.js', () => ({

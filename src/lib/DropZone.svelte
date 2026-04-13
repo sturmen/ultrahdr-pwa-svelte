@@ -1,6 +1,8 @@
 <script>
   import { createEventDispatcher, onMount } from "svelte";
 
+  export let allowMultiple = true;
+
   const dispatch = createEventDispatcher();
   let isDragOver = false;
   let isDesktopLayout = false;
@@ -172,6 +174,11 @@
     return files;
   }
 
+  function normalizeSelectedFiles(fileCollection) {
+    const files = Array.from(fileCollection || []);
+    return allowMultiple ? files : files.slice(0, 1);
+  }
+
   function handleDragOver(e) {
     e.preventDefault();
     isDragOver = true;
@@ -187,13 +194,13 @@
 
     const files = await extractFilesFromDataTransfer(e.dataTransfer);
     if (files.length > 0) {
-      dispatch("files", files);
+      dispatch("files", normalizeSelectedFiles(files));
     }
   }
 
   function handleFiles(e) {
     if (e.target.files && e.target.files.length > 0) {
-      dispatch("files", e.target.files);
+      dispatch("files", normalizeSelectedFiles(e.target.files));
     }
   }
 
@@ -241,7 +248,7 @@
   <input
     type="file"
     id="file-upload"
-    multiple
+    multiple={allowMultiple}
     accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.hif,.tif,.tiff"
     on:change={handleFiles}
     hidden

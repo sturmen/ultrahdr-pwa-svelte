@@ -130,6 +130,36 @@ describe('DropZone - touch-first UI and fallbacks', () => {
     expect(files[0].name).toBe('picked.jpg');
   });
 
+  it('disables multiple selection and trims input files to one when constrained', async () => {
+    const received = vi.fn();
+    render(DropZoneHost, {
+      props: {
+        onFiles: received,
+        allowMultiple: false,
+      },
+    });
+
+    const input = document.getElementById('file-upload');
+    expect(input).not.toHaveAttribute('multiple');
+
+    await fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['one'], 'picked-1.jpg', { type: 'image/jpeg' }),
+          new File(['two'], 'picked-2.jpg', { type: 'image/jpeg' }),
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    const [[files]] = received.mock.calls;
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe('picked-1.jpg');
+  });
+
   it('uses getAsFileSystemHandle when available and avoids eager file materialization', async () => {
     const received = vi.fn();
     render(DropZoneHost, { props: { onFiles: received } });
@@ -202,5 +232,34 @@ describe('DropZone - touch-first UI and fallbacks', () => {
     const [[files]] = received.mock.calls;
     expect(files).toHaveLength(1);
     expect(files[0].name).toBe('nested.jpg');
+  });
+
+  it('trims dropped files to one when constrained', async () => {
+    const received = vi.fn();
+    render(DropZoneHost, {
+      props: {
+        onFiles: received,
+        allowMultiple: false,
+      },
+    });
+
+    const dropZone = screen.getByTestId('upload-drop-zone');
+    const first = new File(['first'], 'first.jpg', { type: 'image/jpeg' });
+    const second = new File(['second'], 'second.jpg', { type: 'image/jpeg' });
+
+    await fireEvent.drop(dropZone, {
+      dataTransfer: {
+        items: null,
+        files: [first, second],
+      },
+    });
+
+    await waitFor(() => {
+      expect(received).toHaveBeenCalledTimes(1);
+    });
+
+    const [[files]] = received.mock.calls;
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toBe('first.jpg');
   });
 });
