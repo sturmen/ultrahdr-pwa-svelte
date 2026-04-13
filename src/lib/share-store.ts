@@ -6,12 +6,13 @@ import {
 } from './storage-diagnostics.ts';
 
 const DB_NAME = 'ultrahdr-share-store';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const SHARED_FILES_STORE = 'shared-files';
 const QUEUE_STATE_STORE = 'queue-state';
 const QUEUE_INPUT_STORE = 'queue-inputs';
 const QUEUE_OUTPUT_STORE = 'queue-outputs';
-const QUEUE_PREVIEW_STORE = 'queue-previews';
+const QUEUE_INPUT_PREVIEW_STORE = 'queue-input-previews';
+const QUEUE_OUTPUT_PREVIEW_STORE = 'queue-output-previews';
 const QUEUE_STATE_KEY = 'latest';
 const MEMORY_STORE_KEY = '__ultrahdrShareStoreMemory';
 
@@ -20,7 +21,8 @@ interface ShareStoreMemory {
   queueState: unknown;
   queueInputs: Map<number, File>;
   queueOutputs: Map<number, Blob>;
-  queuePreviews: Map<number, Blob>;
+  queueInputPreviews: Map<number, Blob>;
+  queueOutputPreviews: Map<number, Blob>;
 }
 
 interface QueuePayloadDeleteOptions {
@@ -113,7 +115,8 @@ function getMemoryStore(): ShareStoreMemory {
       queueState: null,
       queueInputs: new Map<number, File>(),
       queueOutputs: new Map<number, Blob>(),
-      queuePreviews: new Map<number, Blob>(),
+      queueInputPreviews: new Map<number, Blob>(),
+      queueOutputPreviews: new Map<number, Blob>(),
     };
   }
   return runtime[MEMORY_STORE_KEY] as ShareStoreMemory;
@@ -241,8 +244,11 @@ function openDb(): Promise<IDBDatabase> | null {
       if (!db.objectStoreNames.contains(QUEUE_OUTPUT_STORE)) {
         db.createObjectStore(QUEUE_OUTPUT_STORE);
       }
-      if (!db.objectStoreNames.contains(QUEUE_PREVIEW_STORE)) {
-        db.createObjectStore(QUEUE_PREVIEW_STORE);
+      if (!db.objectStoreNames.contains(QUEUE_INPUT_PREVIEW_STORE)) {
+        db.createObjectStore(QUEUE_INPUT_PREVIEW_STORE);
+      }
+      if (!db.objectStoreNames.contains(QUEUE_OUTPUT_PREVIEW_STORE)) {
+        db.createObjectStore(QUEUE_OUTPUT_PREVIEW_STORE);
       }
     };
 
@@ -335,15 +341,19 @@ async function putBlobRecord(storeName: string, queueId: number, value: Blob): P
     () => {
       if (storeName === QUEUE_OUTPUT_STORE) {
         memory.queueOutputs.set(queueId, value);
-      } else if (storeName === QUEUE_PREVIEW_STORE) {
-        memory.queuePreviews.set(queueId, value);
+      } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+        memory.queueInputPreviews.set(queueId, value);
+      } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+        memory.queueOutputPreviews.set(queueId, value);
       }
     },
   );
   if (storeName === QUEUE_OUTPUT_STORE) {
     memory.queueOutputs.set(queueId, value);
-  } else if (storeName === QUEUE_PREVIEW_STORE) {
-    memory.queuePreviews.set(queueId, value);
+  } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+    memory.queueInputPreviews.set(queueId, value);
+  } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+    memory.queueOutputPreviews.set(queueId, value);
   }
 }
 
@@ -365,8 +375,11 @@ async function getBlobRecord(storeName: string, queueId: number): Promise<Blob |
       if (storeName === QUEUE_OUTPUT_STORE) {
         return memory.queueOutputs.get(queueId) ?? null;
       }
-      if (storeName === QUEUE_PREVIEW_STORE) {
-        return memory.queuePreviews.get(queueId) ?? null;
+      if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+        return memory.queueInputPreviews.get(queueId) ?? null;
+      }
+      if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+        return memory.queueOutputPreviews.get(queueId) ?? null;
       }
       return null;
     },
@@ -423,8 +436,10 @@ async function clearStore(storeName: string): Promise<void> {
     memory.queueInputs.clear();
   } else if (storeName === QUEUE_OUTPUT_STORE) {
     memory.queueOutputs.clear();
-  } else if (storeName === QUEUE_PREVIEW_STORE) {
-    memory.queuePreviews.clear();
+  } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+    memory.queueInputPreviews.clear();
+  } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+    memory.queueOutputPreviews.clear();
   } else if (storeName === SHARED_FILES_STORE) {
     memory.sharedFiles = [];
   } else if (storeName === QUEUE_STATE_STORE) {
@@ -444,7 +459,9 @@ async function deleteQueuePayloadRecords(
   const stores: string[] = [];
   if (deleteInput) stores.push(QUEUE_INPUT_STORE);
   if (deleteOutput) stores.push(QUEUE_OUTPUT_STORE);
-  if (deletePreview) stores.push(QUEUE_PREVIEW_STORE);
+  if (deletePreview) {
+    stores.push(QUEUE_INPUT_PREVIEW_STORE, QUEUE_OUTPUT_PREVIEW_STORE);
+  }
 
   if (canUseIndexedDb()) {
     try {
@@ -466,7 +483,10 @@ async function deleteQueuePayloadRecords(
 
   if (deleteInput) memory.queueInputs.delete(queueId);
   if (deleteOutput) memory.queueOutputs.delete(queueId);
-  if (deletePreview) memory.queuePreviews.delete(queueId);
+  if (deletePreview) {
+    memory.queueInputPreviews.delete(queueId);
+    memory.queueOutputPreviews.delete(queueId);
+  }
 }
 
 export async function storeSharedFiles(files: Blob[]): Promise<void> {
@@ -609,11 +629,19 @@ export async function getQueueOutputBlob(queueId: number): Promise<Blob | null> 
 }
 
 export async function storeQueuePreviewBlob(queueId: number, blob: Blob): Promise<void> {
-  await putBlobRecord(QUEUE_PREVIEW_STORE, queueId, blob);
+  await putBlobRecord(QUEUE_INPUT_PREVIEW_STORE, queueId, blob);
 }
 
 export async function getQueuePreviewBlob(queueId: number): Promise<Blob | null> {
-  return getBlobRecord(QUEUE_PREVIEW_STORE, queueId);
+  return getBlobRecord(QUEUE_INPUT_PREVIEW_STORE, queueId);
+}
+
+export async function storeQueueOutputPreviewBlob(queueId: number, blob: Blob): Promise<void> {
+  await putBlobRecord(QUEUE_OUTPUT_PREVIEW_STORE, queueId, blob);
+}
+
+export async function getQueueOutputPreviewBlob(queueId: number): Promise<Blob | null> {
+  return getBlobRecord(QUEUE_OUTPUT_PREVIEW_STORE, queueId);
 }
 
 export async function deleteQueuePayloads(
@@ -627,7 +655,8 @@ export async function clearSessionQueuePayloads(): Promise<void> {
   await Promise.all([
     clearStore(QUEUE_INPUT_STORE),
     clearStore(QUEUE_OUTPUT_STORE),
-    clearStore(QUEUE_PREVIEW_STORE),
+    clearStore(QUEUE_INPUT_PREVIEW_STORE),
+    clearStore(QUEUE_OUTPUT_PREVIEW_STORE),
   ]);
 }
 

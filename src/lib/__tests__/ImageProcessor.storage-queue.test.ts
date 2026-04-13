@@ -16,6 +16,8 @@ const storageMocks = vi.hoisted(() => ({
   getQueueOutputBlobMock: vi.fn(async (_queueId: number) => null),
   storeQueuePreviewBlobMock: vi.fn(async () => {}),
   getQueuePreviewBlobMock: vi.fn(async (_queueId: number) => null),
+  storeQueueOutputPreviewBlobMock: vi.fn(async () => {}),
+  getQueueOutputPreviewBlobMock: vi.fn(async (_queueId: number) => null),
   deleteQueuePayloadsMock: vi.fn(async () => {}),
   clearSessionQueuePayloadsMock: vi.fn(async () => {}),
   shouldPauseForStorageWriteMock: vi.fn(async () => ({
@@ -23,6 +25,16 @@ const storageMocks = vi.hoisted(() => ({
     remaining: 1024 * 1024 * 1024,
     requiredBytes: 0,
   })),
+}));
+
+const previewMocks = vi.hoisted(() => ({
+  createInputPreviewTaskMock: vi.fn(async () => ({
+    status: 'ready' as const,
+    blob: new Blob(['input-preview'], { type: 'image/jpeg' }),
+  })),
+  createPreviewBlobFromImageBlobMock: vi.fn(
+    async () => new Blob(['output-preview'], { type: 'image/jpeg' }),
+  ),
 }));
 
 const {
@@ -37,10 +49,14 @@ const {
   getQueueOutputBlobMock,
   storeQueuePreviewBlobMock,
   getQueuePreviewBlobMock,
+  storeQueueOutputPreviewBlobMock,
+  getQueueOutputPreviewBlobMock,
   deleteQueuePayloadsMock,
   clearSessionQueuePayloadsMock,
   shouldPauseForStorageWriteMock,
 } = storageMocks;
+
+const { createInputPreviewTaskMock, createPreviewBlobFromImageBlobMock } = previewMocks;
 
 vi.mock('../share-store.ts', () => ({
   clearQueueState: storageMocks.clearQueueStateMock,
@@ -53,9 +69,17 @@ vi.mock('../share-store.ts', () => ({
   getQueueOutputBlob: storageMocks.getQueueOutputBlobMock,
   storeQueuePreviewBlob: storageMocks.storeQueuePreviewBlobMock,
   getQueuePreviewBlob: storageMocks.getQueuePreviewBlobMock,
+  storeQueueOutputPreviewBlob: storageMocks.storeQueueOutputPreviewBlobMock,
+  getQueueOutputPreviewBlob: storageMocks.getQueueOutputPreviewBlobMock,
   deleteQueuePayloads: storageMocks.deleteQueuePayloadsMock,
   clearSessionQueuePayloads: storageMocks.clearSessionQueuePayloadsMock,
   shouldPauseForStorageWrite: storageMocks.shouldPauseForStorageWriteMock,
+}));
+
+vi.mock('../input-preview.ts', () => ({
+  INPUT_PREVIEW_PLACEHOLDER_URL: 'data:image/svg+xml,%3Csvg/%3E',
+  createInputPreviewTask: previewMocks.createInputPreviewTaskMock,
+  createPreviewBlobFromImageBlob: previewMocks.createPreviewBlobFromImageBlobMock,
 }));
 
 vi.mock('../capabilities.js', () => ({
@@ -115,6 +139,17 @@ describe('ImageProcessor storage-backed queue', () => {
     getQueueOutputBlobMock.mockResolvedValue(null);
     getQueuePreviewBlobMock.mockReset();
     getQueuePreviewBlobMock.mockResolvedValue(null);
+    getQueueOutputPreviewBlobMock.mockReset();
+    getQueueOutputPreviewBlobMock.mockResolvedValue(null);
+    createInputPreviewTaskMock.mockReset();
+    createInputPreviewTaskMock.mockResolvedValue({
+      status: 'ready',
+      blob: new Blob(['input-preview'], { type: 'image/jpeg' }),
+    });
+    createPreviewBlobFromImageBlobMock.mockReset();
+    createPreviewBlobFromImageBlobMock.mockResolvedValue(
+      new Blob(['output-preview'], { type: 'image/jpeg' }),
+    );
     runtimeProcessMock.mockReset();
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: false,
@@ -344,6 +379,117 @@ describe('ImageProcessor storage-backed queue', () => {
     await waitFor(() => {
       expect(getQueueOutputBlobMock).toHaveBeenCalledWith(0);
       expect(clickSpy).toHaveBeenCalled();
+    });
+  });
+
+  it('persists a bounded output preview alongside the output artifact after processing completes', async () => {
+    getQueueInputFileMock.mockResolvedValue(
+      new File(['stored-0'], 'photo-0.jpg', { type: 'image/jpeg' }),
+    );
+    runtimeProcessMock.mockResolvedValue(
+      new Blob(['runtime-output'], { type: 'image/jpeg' }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: makeFiles(1),
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(storeQueueOutputBlobMock).toHaveBeenCalledWith(0, expect.any(Blob));
+    });
+
+    expect(storeQueueOutputPreviewBlobMock).toHaveBeenCalledWith(0, expect.any(Blob));
+  });
+
+  it('restores completed items from preview storage without hydrating the full output artifact', async () => {
+    loadQueueStateMock.mockResolvedValue({
+      workflowState: 'PROCESSING_DONE',
+      settingsVersion: 1,
+      launchSource: 'regular',
+      hasPending: false,
+      updatedAt: 456,
+      queue: [
+        {
+          id: 0,
+          name: 'done.jpg',
+          status: 'completed',
+          settingsVersion: 1,
+          error: null,
+          processingPath: 'generated',
+        },
+      ],
+    });
+    getQueueInputFileMock.mockResolvedValue(
+      new File(['done-input'], 'done.jpg', { type: 'image/jpeg' }),
+    );
+    getQueuePreviewBlobMock.mockResolvedValue(
+      new Blob(['preview'], { type: 'image/jpeg' }),
+    );
+    getQueueOutputPreviewBlobMock.mockResolvedValue(
+      new Blob(['output-preview'], { type: 'image/jpeg' }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    expect(getQueueOutputBlobMock).not.toHaveBeenCalled();
+  });
+
+  it('marks a completed item stale when settings change during output finalization', async () => {
+    const previewGate = createDeferred();
+
+    getQueueInputFileMock.mockResolvedValue(
+      new File(['stored-0'], 'photo-0.jpg', { type: 'image/jpeg' }),
+    );
+    runtimeProcessMock.mockResolvedValue(
+      new Blob(['runtime-output'], { type: 'image/jpeg' }),
+    );
+    createPreviewBlobFromImageBlobMock.mockImplementationOnce(
+      async () => await previewGate.promise,
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: makeFiles(1),
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    await fireEvent.input(screen.getByLabelText(/max content boost/i), {
+      target: { value: '4.0' },
+    });
+
+    previewGate.resolve(new Blob(['delayed-output-preview'], { type: 'image/jpeg' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    await fireEvent.click(screen.getByTestId('tab-convert'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('stale-reprocess-prompt')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: /^reprocess$/i }));
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
   });
 
