@@ -3,6 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/svelte';
+import { DIAGNOSTICS_REPORTS_KEY } from '../diagnostics.ts';
 
 const previewMocks = vi.hoisted(() => ({
   runtimeProcessMock: vi.fn(),
@@ -16,6 +17,8 @@ const previewMocks = vi.hoisted(() => ({
   getQueueOutputBlobMock: vi.fn(async (_queueId: number) => null),
   storeQueuePreviewBlobMock: vi.fn(async () => {}),
   getQueuePreviewBlobMock: vi.fn(async (_queueId: number) => null),
+  storeQueueOutputPreviewBlobMock: vi.fn(async () => {}),
+  getQueueOutputPreviewBlobMock: vi.fn(async (_queueId: number) => null),
   deleteQueuePayloadsMock: vi.fn(async () => {}),
   clearSessionQueuePayloadsMock: vi.fn(async () => {}),
   shouldPauseForStorageWriteMock: vi.fn(async () => ({
@@ -61,6 +64,8 @@ vi.mock('../share-store.ts', () => ({
   getQueueOutputBlob: previewMocks.getQueueOutputBlobMock,
   storeQueuePreviewBlob: previewMocks.storeQueuePreviewBlobMock,
   getQueuePreviewBlob: previewMocks.getQueuePreviewBlobMock,
+  storeQueueOutputPreviewBlob: previewMocks.storeQueueOutputPreviewBlobMock,
+  getQueueOutputPreviewBlob: previewMocks.getQueueOutputPreviewBlobMock,
   deleteQueuePayloads: previewMocks.deleteQueuePayloadsMock,
   clearSessionQueuePayloads: previewMocks.clearSessionQueuePayloadsMock,
   shouldPauseForStorageWrite: previewMocks.shouldPauseForStorageWriteMock,
@@ -124,9 +129,29 @@ function createRuntime() {
   };
 }
 
+function createMemoryStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'clear'> {
+  const data = new Map<string, string>();
+  return {
+    getItem: vi.fn((key: string) => (data.has(key) ? data.get(key)! : null)),
+    setItem: vi.fn((key: string, value: string) => {
+      data.set(String(key), String(value));
+    }),
+    removeItem: vi.fn((key: string) => {
+      data.delete(String(key));
+    }),
+    clear: vi.fn(() => {
+      data.clear();
+    }),
+  };
+}
+
 describe('ImageProcessor input previews', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: createMemoryStorage(),
+    });
     previewMocks.loadQueueStateMock.mockResolvedValue(null);
     previewMocks.getQueueInputFileMock.mockImplementation(async (queueId: number) =>
       new File([`stored-${queueId}`], `photo-${queueId}.jpg`, { type: 'image/jpeg' }),
@@ -290,5 +315,51 @@ describe('ImageProcessor input previews', () => {
 
     const previewBlob = previewMocks.storeQueuePreviewBlobMock.mock.calls.at(-1)?.[1];
     expect(previewBlob?.type).toBe('image/jpeg');
+  });
+
+  it('records a deferred preview diagnostics breadcrumb and keeps the queue healthy when jpegli preview decode fails', async () => {
+    previewMocks.probeInputProcessingPathFromHeadersMock.mockResolvedValue('hdr-intent');
+    previewMocks.loadImageDataMock.mockRejectedValueOnce(
+      new Error('browser cannot decode HDR HEIF preview source'),
+    );
+    previewMocks.decodeHeifPreviewImageMock.mockRejectedValueOnce(
+      new Error('Jpegli WASM module failed to load'),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [new File(['hdr-heif'], 'photo.hif', { type: 'image/heif' })],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      const persisted = JSON.parse(
+        window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+      ) as { events: Array<{ name: string; severity: string; context: Record<string, unknown> }> };
+      expect(
+        persisted.events.some((event) => event.name === 'deferred-input-preview-failed'),
+      ).toBe(true);
+    });
+
+    expect(previewMocks.storeQueuePreviewBlobMock).not.toHaveBeenCalled();
+    expect(screen.getAllByTestId('workflow-card-0').length).toBeGreaterThan(0);
+
+    const persisted = JSON.parse(
+      window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+    ) as { events: Array<{ name: string; severity: string; context: Record<string, unknown> }> };
+    const previewFailure = persisted.events.find(
+      (event) => event.name === 'deferred-input-preview-failed',
+    );
+    expect(previewFailure).toEqual(
+      expect.objectContaining({
+        severity: 'warning',
+        context: expect.objectContaining({
+          queueId: 0,
+          trigger: 'deferred-input-preview',
+          errorCategory: 'jpegli-load-failed',
+        }),
+      }),
+    );
   });
 });
