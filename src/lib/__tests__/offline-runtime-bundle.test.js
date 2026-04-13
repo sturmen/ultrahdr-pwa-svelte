@@ -138,6 +138,131 @@ describe('offline runtime bundle', () => {
     expect(result.state).toBe(BUNDLE_STATES.READY);
   });
 
+  it('treats both jpegli runtime assets as required bundle members during validation', async () => {
+    const cacheStorage = new MemoryCacheStorage();
+    const candidateCacheNames = new Set([
+      'uhdr-wasm-assets-test',
+      buildRuntimeBundleCacheNames('dev-unversioned-app').wasmAssets,
+      buildRuntimeBundleCacheNames(import.meta.env.VITE_APP_ASSET_VERSION || '').wasmAssets,
+    ]);
+    const manifest = {
+      bundleVersion: '1|jpegli',
+      requiredAssets: [
+        {
+          id: 'jpegli-wasm-js',
+          url: 'assets/jpegli_wasm.js?v=test',
+          cacheName: 'uhdr-wasm-assets-test',
+          sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          byteLength: 4,
+          kind: 'runtime-script',
+        },
+        {
+          id: 'jpegli-wasm-bin',
+          url: 'assets/jpegli_wasm.wasm?v=test',
+          cacheName: 'uhdr-wasm-assets-test',
+          sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          byteLength: 4,
+          kind: 'wasm',
+        },
+      ],
+    };
+
+    for (const cacheName of candidateCacheNames) {
+      const cache = await cacheStorage.open(cacheName);
+      await cache.put(
+        '/ultrahdr-pwa-svelte/assets/jpegli_wasm.js?v=test',
+        new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }),
+      );
+    }
+
+    const result = await validateBundle({
+      runtime: {
+        caches: cacheStorage,
+        fetch: vi.fn(),
+        localStorage: createStorage(),
+      },
+      manifest,
+      hashBuffer: async (buffer) => {
+        const bytes = new Uint8Array(buffer);
+        if (bytes[0] === 1) {
+          return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        }
+        return 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      },
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.state).toBe(BUNDLE_STATES.EMPTY);
+    expect(result.diagnostics).toMatchObject({
+      missingAssetIds: expect.arrayContaining(['jpegli-wasm-bin']),
+    });
+  });
+
+  it('repairs missing jpegli runtime assets into the offline bundle cache', async () => {
+    const cacheStorage = new MemoryCacheStorage();
+    const localStorage = createStorage();
+    const manifest = {
+      bundleVersion: '1|jpegli',
+      requiredAssets: [
+        {
+          id: 'jpegli-wasm-js',
+          url: 'assets/jpegli_wasm.js?v=test',
+          cacheName: 'uhdr-wasm-assets-test',
+          sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          byteLength: 4,
+          kind: 'runtime-script',
+        },
+        {
+          id: 'jpegli-wasm-bin',
+          url: 'assets/jpegli_wasm.wasm?v=test',
+          cacheName: 'uhdr-wasm-assets-test',
+          sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          byteLength: 4,
+          kind: 'wasm',
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.includes('jpegli_wasm.js')) {
+        return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 });
+      }
+      if (url.includes('jpegli_wasm.wasm')) {
+        return new Response(new Uint8Array([5, 6, 7, 8]), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch for ${url}`);
+    });
+
+    const { repairBundle } = await import('../offline-runtime-bundle.js');
+    const result = await repairBundle({
+      runtime: {
+        navigator: { onLine: true, serviceWorker: { controller: null, ready: Promise.resolve(null) } },
+        localStorage,
+        caches: cacheStorage,
+        fetch: fetchMock,
+      },
+      manifest,
+      hashBuffer: async (buffer) => {
+        const bytes = new Uint8Array(buffer);
+        if (bytes[0] === 1) {
+          return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        }
+        return 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      },
+    });
+
+    expect(result.ready).toBe(true);
+    expect(result.state).toBe(BUNDLE_STATES.READY);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('jpegli_wasm.js?v=test'),
+        expect.stringContaining('jpegli_wasm.wasm?v=test'),
+      ]),
+    );
+  });
+
   it('hard-blocks ensureBundleReady when offline and readiness record is missing', async () => {
     const localStorage = createStorage();
 

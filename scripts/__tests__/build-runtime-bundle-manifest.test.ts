@@ -133,6 +133,13 @@ describe('build-runtime-bundle-manifest', () => {
     expect(libheifAsset?.cacheName).toBe('uhdr-libheif-assets-runtime-bundle');
   });
 
+  it('includes both jpegli runtime assets in the default offline bundle spec', () => {
+    const requiredAssetIds = new Set(DEFAULT_REQUIRED_ASSET_SPECS.map((asset) => asset.id));
+
+    expect(requiredAssetIds.has('jpegli-wasm-js')).toBe(true);
+    expect(requiredAssetIds.has('jpegli-wasm-bin')).toBe(true);
+  });
+
   it('adds version query tokens to runtime asset URLs that are requested with cache-busting parameters', async () => {
     const root = makeTempDir();
     fs.mkdirSync(path.join(root, 'public', 'models'), { recursive: true });
