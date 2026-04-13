@@ -18,6 +18,7 @@ export type MemoryIssueKind =
   | 'pressure'
   | 'allocation-failure'
   | 'watchdog-abort'
+  | 'foreground-kill-recovered'
   | 'background-kill-recovered'
   | 'unknown';
 export type MemoryIssueConfidence = 'high' | 'medium' | 'low';
@@ -158,10 +159,24 @@ interface DiagnosticsActiveSession {
   cleanExit: boolean;
   updatedAt: number;
   processingActiveAtLastPersist?: boolean;
+  recentProcessingCompletionAt?: number | null;
   processingSnapshot?: DiagnosticsProcessingSnapshot;
   queueId?: number | null;
   stage?: string | null;
 }
+
+interface RecoveredSessionClassification {
+  memoryIssueKind: MemoryIssueKind;
+  confidence: MemoryIssueConfidence;
+  message: string;
+  events: Array<{
+    name: string;
+    severity: DiagnosticsEventSeverity;
+    context: Record<string, unknown>;
+  }>;
+}
+
+const POST_COMPLETION_RESTART_WINDOW_MS = 10_000;
 
 function now(): number {
   return Date.now();
@@ -212,6 +227,9 @@ function getPerformanceMemory(runtime: RuntimeLike): Record<string, number | nul
 }
 
 function normalizeNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -385,6 +403,125 @@ function getContextProcessingActiveFlag(
   return normalizeNullableBoolean(context.processingActiveAtLastPersist);
 }
 
+function hasRecoveredProcessingEvidence(
+  activeSession: DiagnosticsActiveSession,
+): boolean {
+  const snapshot = sanitizeProcessingSnapshot(activeSession.processingSnapshot);
+  if (activeSession.processingActiveAtLastPersist === true) {
+    return true;
+  }
+  if (snapshot && (snapshot.currentQueueId !== null || snapshot.currentStage !== null)) {
+    return true;
+  }
+  if (snapshot && (snapshot.currentPhase !== null || (snapshot.totalFiles ?? 0) > 0)) {
+    return true;
+  }
+  if (normalizeNullableNumber(activeSession.queueId) !== null) {
+    return true;
+  }
+  if (normalizeNullableString(activeSession.stage) !== null) {
+    return true;
+  }
+  return false;
+}
+
+function classifyRecoveredSession(
+  activeSession: DiagnosticsActiveSession,
+): RecoveredSessionClassification {
+  const snapshot = sanitizeProcessingSnapshot(activeSession.processingSnapshot);
+  const updatedAt = normalizeNullableNumber(activeSession.updatedAt);
+  const documentHidden = snapshot?.documentHidden === true;
+  const lastPageHideAt = normalizeNullableNumber(snapshot?.lastPageHideAt);
+  const recentPageHide =
+    lastPageHideAt !== null &&
+    updatedAt !== null &&
+    updatedAt >= lastPageHideAt &&
+    updatedAt - lastPageHideAt <= 5000;
+  const backgroundEvidence = documentHidden || recentPageHide;
+  const eventContext = {
+    processingActiveAtLastPersist: activeSession.processingActiveAtLastPersist === true,
+    documentHidden,
+    lastPageHideAt,
+    updatedAt,
+    currentQueueId: snapshot?.currentQueueId ?? normalizeNullableNumber(activeSession.queueId),
+    currentStage: snapshot?.currentStage ?? normalizeNullableString(activeSession.stage),
+  };
+
+  if (backgroundEvidence) {
+    return {
+      memoryIssueKind: 'background-kill-recovered',
+      confidence: 'medium',
+      message: 'Recovered an incomplete background processing session after relaunch.',
+      events: [
+        {
+          name: 'recovery-classified-background',
+          severity: 'warning',
+          context: eventContext,
+        },
+      ],
+    };
+  }
+
+  return {
+    memoryIssueKind: 'foreground-kill-recovered',
+    confidence: 'medium',
+    message: 'Recovered an incomplete foreground processing session after relaunch.',
+    events: [
+      {
+        name: 'recovery-classified-foreground',
+        severity: 'warning',
+        context: eventContext,
+      },
+    ],
+  };
+}
+
+function classifyRecoveredPostCompletionSession(
+  activeSession: DiagnosticsActiveSession,
+): RecoveredSessionClassification | null {
+  const recentProcessingCompletionAt = normalizeNullableNumber(
+    activeSession.recentProcessingCompletionAt,
+  );
+  if (recentProcessingCompletionAt === null) {
+    return null;
+  }
+  const completionAgeMs = now() - recentProcessingCompletionAt;
+  if (completionAgeMs < 0 || completionAgeMs > POST_COMPLETION_RESTART_WINDOW_MS) {
+    return null;
+  }
+
+  const base = classifyRecoveredSession(activeSession);
+  const snapshot = sanitizeProcessingSnapshot(activeSession.processingSnapshot);
+  const completionContext = {
+    recentProcessingCompletionAt,
+    completionAgeMs,
+    currentQueueId: snapshot?.currentQueueId ?? normalizeNullableNumber(activeSession.queueId),
+    currentStage: snapshot?.currentStage ?? normalizeNullableString(activeSession.stage),
+  };
+  const events = [...base.events];
+  events.push({
+    name: 'post-completion-restart-suspected',
+    severity: 'warning',
+    context: completionContext,
+  });
+  if (base.memoryIssueKind === 'foreground-kill-recovered') {
+    events.push({
+      name: 'foreground-restart-without-pagehide',
+      severity: 'warning',
+      context: completionContext,
+    });
+  }
+
+  return {
+    ...base,
+    message:
+      base.memoryIssueKind === 'background-kill-recovered'
+        ? 'Recovered a probable restart shortly after processing completed in the background.'
+        : 'Recovered a probable restart shortly after processing completed in the foreground.',
+    events,
+  };
+}
+
 export function createDiagnosticsRecorder(
   runtime: RuntimeLike = globalThis,
   options: DiagnosticsRecorderOptions = {},
@@ -419,6 +556,10 @@ export function createDiagnosticsRecorder(
         : false;
     const processingActiveAtLastPersist =
       getContextProcessingActiveFlag(context) ?? persistedProcessingActive;
+    const recentProcessingCompletionAt =
+      Object.prototype.hasOwnProperty.call(context, 'recentProcessingCompletionAt')
+        ? normalizeNullableNumber(context.recentProcessingCompletionAt)
+        : normalizeNullableNumber(persistedSession?.recentProcessingCompletionAt);
     const { processingSnapshot: ignoredProcessingSnapshot, ...restContext } = context;
     void ignoredProcessingSnapshot;
     runtime.localStorage?.setItem(
@@ -429,6 +570,7 @@ export function createDiagnosticsRecorder(
         cleanExit: !active,
         updatedAt: now(),
         processingActiveAtLastPersist,
+        recentProcessingCompletionAt,
         ...restContext,
         processingSnapshot,
         queueId: processingSnapshot?.currentQueueId ?? null,
@@ -459,6 +601,7 @@ export function createDiagnosticsRecorder(
       writeActiveSession(true, {
         ...context,
         processingActiveAtLastPersist: true,
+        recentProcessingCompletionAt: null,
       });
     },
     updateProcessingSnapshot: (context = {}) => {
@@ -468,6 +611,7 @@ export function createDiagnosticsRecorder(
       writeActiveSession(false, {
         ...context,
         processingActiveAtLastPersist: false,
+        recentProcessingCompletionAt: now(),
       });
     },
     clearActiveSession: () => {
@@ -608,24 +752,38 @@ export function consumeRecoveredDiagnosticsReport(
   runtime: RuntimeLike = globalThis,
 ): DiagnosticsReport | null {
   const activeSession = getPersistedActiveSession(runtime);
-  if (!activeSession || activeSession.active !== true) {
+  if (!activeSession) {
     return null;
   }
 
   runtime.localStorage?.removeItem(DIAGNOSTICS_ACTIVE_SESSION_KEY);
-  if (activeSession.processingActiveAtLastPersist !== true) {
+  const recovery =
+    activeSession.active === true && hasRecoveredProcessingEvidence(activeSession)
+      ? classifyRecoveredSession(activeSession)
+      : activeSession.active !== true
+        ? classifyRecoveredPostCompletionSession(activeSession)
+        : null;
+  if (!recovery) {
     return null;
   }
   const recorder = createDiagnosticsRecorder(runtime, {
     persistKey: DIAGNOSTICS_REPORTS_KEY,
   });
+  for (const event of recovery.events) {
+    recorder.record({
+      category: 'lifecycle',
+      name: event.name,
+      severity: event.severity,
+      context: event.context,
+    });
+  }
   return buildMemoryDiagnosticsReport('recovered-after-relaunch', {
     runtime,
     recorder,
     incident: {
-      memoryIssueKind: 'background-kill-recovered',
-      confidence: 'medium',
-      message: 'Recovered an incomplete processing session after relaunch.',
+      memoryIssueKind: recovery.memoryIssueKind,
+      confidence: recovery.confidence,
+      message: recovery.message,
     },
     context:
       (sanitizeProcessingSnapshot(activeSession.processingSnapshot) as Record<string, unknown> | null) || {

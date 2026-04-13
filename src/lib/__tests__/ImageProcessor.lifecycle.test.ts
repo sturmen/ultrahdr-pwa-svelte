@@ -154,6 +154,46 @@ describe('ImageProcessor lifecycle durability', () => {
     processingGate.resolve();
   });
 
+  it('clears stale background evidence when the tab becomes visible again during processing', async () => {
+    const processingGate = createDeferred();
+    runtimeProcessMock.mockImplementationOnce(async () => {
+      await processingGate.promise;
+      return new Blob(['done'], { type: 'image/jpeg' });
+    });
+
+    render(ImageProcessor, {
+      props: {
+        files: [makeFile()],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => true,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => false,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    const persisted = JSON.parse(
+      window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) || 'null',
+    ) as Record<string, unknown> | null;
+    const snapshot = (persisted?.processingSnapshot || {}) as Record<string, unknown>;
+    expect(snapshot.documentHidden).toBe(false);
+    expect(snapshot.lastPageHideAt).toBeNull();
+
+    processingGate.resolve();
+  });
+
   it('flushes queue state to storage when pagehide fires', async () => {
     const processingGate = createDeferred();
     runtimeProcessMock.mockImplementationOnce(async () => {
@@ -208,6 +248,41 @@ describe('ImageProcessor lifecycle durability', () => {
 
     await Promise.resolve();
     expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
+  });
+
+  it('reopens the diagnostics popup after a foreground interrupted processing relaunch', async () => {
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-foreground',
+        active: true,
+        processingActiveAtLastPersist: false,
+        cleanExit: false,
+        updatedAt: 2000,
+        processingSnapshot: {
+          currentQueueId: 0,
+          queueIndex: 0,
+          totalFiles: 2,
+          currentStage: 'generate-gain-map',
+          currentPhase: 'stage-progress',
+          documentHidden: false,
+          lastPageHideAt: null,
+          recentPipelineBreadcrumbs: [],
+        },
+      }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('diagnostics-report-dialog')).toBeInTheDocument();
+      expect(screen.getByText(/foreground-kill-recovered/i)).toBeInTheDocument();
+    });
   });
 
   it('uses scheduler.postTask for non-urgent queue persistence when available', async () => {

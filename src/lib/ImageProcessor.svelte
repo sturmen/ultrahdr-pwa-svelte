@@ -2948,6 +2948,8 @@
       if (typeof document === "undefined") return;
       if (document.hidden) {
         lastPageHideAt = Date.now();
+      } else {
+        lastPageHideAt = null;
       }
       syncProcessingDiagnosticsSnapshot();
       recordDiagnostics("lifecycle", "visibility-changed", "info", {
@@ -3015,6 +3017,16 @@
         diagnosticsReport = recoveredDiagnosticsReport;
         diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
         diagnosticsReportOpen = true;
+        recordDiagnostics("lifecycle", "recovered-popup-opened", "warning", {
+          reportId: recoveredDiagnosticsReport.reportId,
+          memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
+        });
+      } else if (recoveredDiagnosticsReport) {
+        recordDiagnostics("lifecycle", "recovered-popup-suppressed", "info", {
+          reason: "under-test-mode",
+          reportId: recoveredDiagnosticsReport.reportId,
+          memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
+        });
       }
       try {
         const persistedQueue = await loadQueueState();

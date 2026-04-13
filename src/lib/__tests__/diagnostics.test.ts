@@ -127,7 +127,7 @@ describe('diagnostics', () => {
     );
   });
 
-  it('recovers a prior incomplete processing session as a shareable diagnostics report', () => {
+  it('classifies a recovered interrupted processing session as foreground when no background evidence exists', () => {
     window.localStorage.setItem(
       DIAGNOSTICS_REPORTS_KEY,
       JSON.stringify({
@@ -154,6 +154,13 @@ describe('diagnostics', () => {
         stage: 'generate-gain-map',
         queueId: 4,
         cleanExit: false,
+        processingSnapshot: {
+          currentQueueId: 4,
+          currentStage: 'generate-gain-map',
+          documentHidden: false,
+          lastPageHideAt: null,
+          recentPipelineBreadcrumbs: [],
+        },
       }),
     );
 
@@ -163,14 +170,150 @@ describe('diagnostics', () => {
       expect.objectContaining({
         trigger: 'recovered-after-relaunch',
         incident: expect.objectContaining({
-          memoryIssueKind: 'background-kill-recovered',
+          memoryIssueKind: 'foreground-kill-recovered',
         }),
         processing: expect.objectContaining({
           currentStage: 'generate-gain-map',
           currentQueueId: 4,
         }),
+        recentEvents: expect.arrayContaining([
+          expect.objectContaining({
+            category: 'lifecycle',
+            name: 'recovery-classified-foreground',
+          }),
+        ]),
       }),
     );
+  });
+
+  it('classifies a recovered interrupted processing session as background when hidden lifecycle evidence exists', () => {
+    window.localStorage.setItem(
+      DIAGNOSTICS_REPORTS_KEY,
+      JSON.stringify({
+        events: [],
+      }),
+    );
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-1',
+        active: true,
+        processingActiveAtLastPersist: true,
+        stage: 'generate-gain-map',
+        queueId: 4,
+        cleanExit: false,
+        updatedAt: 2000,
+        processingSnapshot: {
+          currentQueueId: 4,
+          currentStage: 'generate-gain-map',
+          documentHidden: true,
+          lastPageHideAt: 1990,
+          recentPipelineBreadcrumbs: [],
+        },
+      }),
+    );
+
+    const report = consumeRecoveredDiagnosticsReport(window);
+
+    expect(report).toEqual(
+      expect.objectContaining({
+        incident: expect.objectContaining({
+          memoryIssueKind: 'background-kill-recovered',
+        }),
+        recentEvents: expect.arrayContaining([
+          expect.objectContaining({
+            category: 'lifecycle',
+            name: 'recovery-classified-background',
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('recovers a probable foreground post-completion restart when relaunch happens shortly after completion without pagehide evidence', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    window.localStorage.setItem(
+      DIAGNOSTICS_REPORTS_KEY,
+      JSON.stringify({
+        events: [],
+      }),
+    );
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-post-complete',
+        active: false,
+        processingActiveAtLastPersist: false,
+        cleanExit: true,
+        updatedAt: 4500,
+        recentProcessingCompletionAt: 4500,
+        processingSnapshot: {
+          currentQueueId: 0,
+          queueIndex: 0,
+          totalFiles: 1,
+          currentStage: 'complete',
+          currentPhase: 'pipeline-complete',
+          documentHidden: false,
+          lastPageHideAt: null,
+          recentPipelineBreadcrumbs: [],
+        },
+      }),
+    );
+
+    const report = consumeRecoveredDiagnosticsReport(window);
+
+    expect(report).toEqual(
+      expect.objectContaining({
+        trigger: 'recovered-after-relaunch',
+        incident: expect.objectContaining({
+          memoryIssueKind: 'foreground-kill-recovered',
+          message: expect.stringMatching(/after processing completed/i),
+        }),
+        recentEvents: expect.arrayContaining([
+          expect.objectContaining({
+            category: 'lifecycle',
+            name: 'foreground-restart-without-pagehide',
+          }),
+          expect.objectContaining({
+            category: 'lifecycle',
+            name: 'post-completion-restart-suspected',
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('does not recover a stale post-completion restart marker', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20000);
+    window.localStorage.setItem(
+      DIAGNOSTICS_REPORTS_KEY,
+      JSON.stringify({
+        events: [],
+      }),
+    );
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-post-complete',
+        active: false,
+        processingActiveAtLastPersist: false,
+        cleanExit: true,
+        updatedAt: 5000,
+        recentProcessingCompletionAt: 5000,
+        processingSnapshot: {
+          currentQueueId: 0,
+          queueIndex: 0,
+          totalFiles: 1,
+          currentStage: 'complete',
+          currentPhase: 'pipeline-complete',
+          documentHidden: false,
+          lastPageHideAt: null,
+          recentPipelineBreadcrumbs: [],
+        },
+      }),
+    );
+
+    expect(consumeRecoveredDiagnosticsReport(window)).toBeNull();
   });
 
   it('does not recover a diagnostics report when the persisted session was idle', () => {

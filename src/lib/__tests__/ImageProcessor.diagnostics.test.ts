@@ -53,6 +53,7 @@ describe('ImageProcessor diagnostics', () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     __resetShareStoreForTests();
+    delete (window as typeof window & { __ULTRAHDR_UNDER_TEST__?: boolean }).__ULTRAHDR_UNDER_TEST__;
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: false,
       media: '(min-width: 1024px)',
@@ -82,6 +83,7 @@ describe('ImageProcessor diagnostics', () => {
   afterEach(async () => {
     await clearQueueState();
     await clearSessionQueuePayloads();
+    delete (window as typeof window & { __ULTRAHDR_UNDER_TEST__?: boolean }).__ULTRAHDR_UNDER_TEST__;
   });
 
   it('opens a manual debug report modal from settings and shares the report', async () => {
@@ -198,10 +200,10 @@ describe('ImageProcessor diagnostics', () => {
       const persisted = JSON.parse(
         window.localStorage.getItem(DIAGNOSTICS_ACTIVE_SESSION_KEY) || 'null',
       ) as Record<string, unknown> | null;
-      expect(persisted?.processingSnapshot).toEqual(
+        expect(persisted?.processingSnapshot).toEqual(
         expect.objectContaining({
           currentQueueId: 0,
-          queueIndex: 0,
+          queueIndex: null,
           totalFiles: 1,
           currentStage: 'generate-gain-map',
           currentPhase: 'stage-progress',
@@ -349,5 +351,57 @@ describe('ImageProcessor diagnostics', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
     });
+  });
+
+  it('reopens the diagnostics popup for a recent foreground post-completion restart and records popup breadcrumbs', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    window.localStorage.setItem(
+      DIAGNOSTICS_ACTIVE_SESSION_KEY,
+      JSON.stringify({
+        sessionId: 'session-post-complete',
+        active: false,
+        processingActiveAtLastPersist: false,
+        cleanExit: true,
+        updatedAt: 4500,
+        recentProcessingCompletionAt: 4500,
+        processingSnapshot: {
+          currentQueueId: 0,
+          queueIndex: 0,
+          totalFiles: 1,
+          currentStage: 'complete',
+          currentPhase: 'pipeline-complete',
+          documentHidden: false,
+          lastPageHideAt: null,
+          recentPipelineBreadcrumbs: [],
+        },
+      }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('diagnostics-report-dialog')).toBeInTheDocument();
+      expect(screen.getByText(/foreground-kill-recovered/i)).toBeInTheDocument();
+    });
+
+    const persisted = JSON.parse(
+      window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+    ) as { events?: Array<Record<string, unknown>> };
+    expect(persisted.events || []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'lifecycle',
+          name: 'recovered-popup-opened',
+          context: expect.objectContaining({
+            memoryIssueKind: 'foreground-kill-recovered',
+          }),
+        }),
+      ]),
+    );
   });
 });
