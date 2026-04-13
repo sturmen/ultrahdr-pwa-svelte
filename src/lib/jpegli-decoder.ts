@@ -122,7 +122,8 @@ function normalizeErrorMessage(error: unknown): string {
 }
 
 function classifyLoaderError(error: unknown): string {
-  const message = normalizeErrorMessage(error).toLowerCase();
+  const nestedCause = error instanceof Error ? error.cause : null;
+  const message = `${normalizeErrorMessage(error)} ${normalizeErrorMessage(nestedCause)}`.toLowerCase();
   if (message.includes('timed out')) {
     return 'factory-load-timeout';
   }
@@ -131,6 +132,9 @@ function classifyLoaderError(error: unknown): string {
   }
   if (message.includes('not found')) {
     return 'factory-not-found';
+  }
+  if (message.includes('factory')) {
+    return 'factory-load-failed';
   }
   if (message.includes('missing wasmbinary')) {
     return 'missing-wasm-binary';
@@ -146,17 +150,19 @@ function resolveFetchableAssetUrl(assetUrl: string): string {
   }
 }
 
-async function loadWasmBinaryWithOfflineFallback(
-  wasmBinaryPath: string,
-): Promise<{ wasmBinary: ArrayBuffer; cacheSource: 'network' | 'cache' }> {
-  const requestUrl = resolveFetchableAssetUrl(wasmBinaryPath);
+type OfflineAssetSource = 'network' | 'cache';
+
+async function loadAssetWithOfflineFallback(
+  assetPath: string,
+): Promise<{ response: Response; cacheSource: OfflineAssetSource }> {
+  const requestUrl = resolveFetchableAssetUrl(assetPath);
   try {
     const response = await fetch(requestUrl, { credentials: 'same-origin' });
     if (!response.ok) {
-      throw new Error(`Failed to fetch Jpegli WASM binary: ${response.status}`);
+      throw new Error(`Failed to fetch JPEGli asset: ${response.status}`);
     }
     return {
-      wasmBinary: await response.arrayBuffer(),
+      response,
       cacheSource: 'network',
     };
   } catch (fetchError) {
@@ -165,73 +171,56 @@ async function loadWasmBinaryWithOfflineFallback(
       throw fetchError;
     }
 
-    const cachedResponse = await cacheStorage.match(requestUrl) || await cacheStorage.match(wasmBinaryPath);
+    const cachedResponse = await cacheStorage.match(requestUrl) || await cacheStorage.match(assetPath);
     if (!cachedResponse) {
       throw fetchError;
     }
 
     return {
-      wasmBinary: await cachedResponse.arrayBuffer(),
+      response: cachedResponse,
       cacheSource: 'cache',
     };
   }
 }
 
-async function loadJpegliFactoryViaScriptTag(wasmJsPath: string): Promise<JpegliWasmFactory> {
+async function loadWasmBinaryWithOfflineFallback(
+  wasmBinaryPath: string,
+): Promise<{ wasmBinary: ArrayBuffer; cacheSource: OfflineAssetSource }> {
+  const { response, cacheSource } = await loadAssetWithOfflineFallback(wasmBinaryPath);
+  return {
+    wasmBinary: await response.arrayBuffer(),
+    cacheSource,
+  };
+}
+
+async function loadJpegliFactoryViaModuleImport(
+  wasmJsPath: string,
+): Promise<{ factory: JpegliWasmFactory; cacheSource: OfflineAssetSource }> {
   const existingFactory = getGlobalJpegliFactory();
   if (existingFactory) {
-    return existingFactory;
+    return {
+      factory: existingFactory,
+      cacheSource: 'network',
+    };
   }
 
-  if (typeof document === 'undefined') {
-    throw new Error('document is unavailable for jpegli script loading');
+  const { response, cacheSource } = await loadAssetWithOfflineFallback(wasmJsPath);
+  const sourceText = await response.text();
+  if (typeof sourceText !== 'string' || sourceText.trim().length === 0) {
+    throw new Error('JPEGli WASM wrapper script was empty');
   }
 
-  return new Promise<JpegliWasmFactory>((resolve, reject) => {
-    let settled = false;
-    const timeoutId = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      reject(new Error(`Timed out loading Jpegli WASM script from ${wasmJsPath}`));
-    }, 3_000);
-
-    const settle = (callback: () => void): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeoutId);
-      callback();
-    };
-
-    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${wasmJsPath}"]`);
-    if (existingScript) {
-      const scriptFactory = getGlobalJpegliFactory();
-      if (scriptFactory) {
-        settle(() => resolve(scriptFactory));
-        return;
-      }
-      existingScript.remove();
-    }
-
-    const script = document.createElement('script');
-    script.async = true;
-    script.src = wasmJsPath;
-    script.onload = () => {
-      const loadedFactory = getGlobalJpegliFactory();
-      if (loadedFactory) {
-        settle(() => resolve(loadedFactory));
-        return;
-      }
-      settle(() => reject(new Error('Jpegli WASM factory not found after script load')));
-    };
-    script.onerror = () => {
-      settle(() => reject(new Error(`Failed to load Jpegli WASM script from ${wasmJsPath}`)));
-    };
-    (document.head || document.body || document.documentElement).appendChild(script);
-  });
+  const moduleSource = `${sourceText}\nexport default createJpegliWasm;\n`;
+  const moduleUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(moduleSource)}`;
+  const importedModule = await import(/* @vite-ignore */ moduleUrl);
+  const factory = toJpegliFactory(importedModule?.default) ?? getGlobalJpegliFactory();
+  if (!factory) {
+    throw new Error('Jpegli WASM factory not found after module import');
+  }
+  return {
+    factory,
+    cacheSource,
+  };
 }
 
 function normalizeQualityRatio(quality: number): number {
@@ -482,10 +471,11 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
         cacheSource,
       });
 
-      const factory = getGlobalJpegliFactory() ?? await loadJpegliFactoryViaScriptTag(wasmJsPath);
+      const { factory, cacheSource: factoryCacheSource } = await loadJpegliFactoryViaModuleImport(wasmJsPath);
       recordJpegliDiagnostic('jpegli-factory-resolved', 'info', {
         trigger: 'module-load',
-        source: getGlobalJpegliFactory() ? 'global' : 'script-tag',
+        source: getGlobalJpegliFactory() ? 'global' : 'module-import',
+        cacheSource: factoryCacheSource,
       });
 
       jpegliWasmModule = await factory({
