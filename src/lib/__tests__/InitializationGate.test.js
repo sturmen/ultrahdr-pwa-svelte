@@ -31,6 +31,12 @@ function createSteps() {
       status: 'running',
       note: 'Running GMNet smoke test (webgpu)...',
     },
+    {
+      id: 'jpegli-bootstrap',
+      label: 'Bootstrap JPEGli runtime',
+      status: 'pending',
+      note: '',
+    },
   ];
 }
 
@@ -218,6 +224,38 @@ describe('InitializationGate', () => {
 
     expect(screen.getByTestId('runtime-init-offline-bundle-blocked')).toHaveTextContent(
       /connect to the internet/i,
+    );
+  });
+
+  it('renders dedicated jpegli bootstrap blocked guidance', () => {
+    render(InitializationGate, {
+      props: {
+        state: 'failed',
+        steps: createSteps().map((step) => ({
+          ...step,
+          status: step.id === 'jpegli-bootstrap' ? 'failed' : step.status,
+          note: step.id === 'jpegli-bootstrap'
+            ? 'JPEGli runtime failed to initialize.'
+            : step.note,
+        })),
+        failure: {
+          stepId: 'jpegli-bootstrap',
+          stepLabel: 'Bootstrap JPEGli runtime',
+          errorCode: 'RUNTIME_INIT_JPEGLI_BOOTSTRAP_FAILED',
+          userMessage: 'JPEGli runtime failed to initialize after bundle repair.',
+          diagnostics: {
+            bundleState: 'READY',
+            repairAttempted: true,
+            errorCategory: 'factory-load-timeout',
+          },
+        },
+      },
+    });
+
+    expect(screen.getByTestId('runtime-step-jpegli-bootstrap')).toHaveTextContent(/failed/i);
+    expect(screen.getByTestId('runtime-init-failure')).toHaveTextContent(/jpegli/i);
+    expect(screen.getByTestId('runtime-init-jpegli-bootstrap-blocked')).toHaveTextContent(
+      /repair the offline runtime bundle/i,
     );
   });
 });

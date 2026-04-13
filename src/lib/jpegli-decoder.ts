@@ -213,19 +213,7 @@ async function loadJpegliFactoryViaScriptTag(wasmJsPath: string): Promise<Jpegli
         settle(() => resolve(scriptFactory));
         return;
       }
-
-      existingScript.addEventListener('load', () => {
-        const loadedFactory = getGlobalJpegliFactory();
-        if (loadedFactory) {
-          settle(() => resolve(loadedFactory));
-          return;
-        }
-        settle(() => reject(new Error('Jpegli WASM factory not found after existing script load')));
-      }, { once: true });
-      existingScript.addEventListener('error', () => {
-        settle(() => reject(new Error(`Failed to load Jpegli WASM script from ${wasmJsPath}`)));
-      }, { once: true });
-      return;
+      existingScript.remove();
     }
 
     const script = document.createElement('script');
@@ -528,6 +516,30 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
   return jpegliWasmModulePromise;
 }
 
+function resetJpegliWasmModuleState(): void {
+  jpegliWasmModule = null;
+  jpegliWasmModulePromise = null;
+  jpegliWasmLoadState = 'idle';
+  jpegliWasmLoadError = null;
+}
+
+export function resetJpegliBootstrapState(): void {
+  resetJpegliWasmModuleState();
+}
+
+export async function bootstrapJpegliRuntime(
+  options: { resetBeforeLoad?: boolean } = {},
+): Promise<{ ready: true; module: JpegliWasmModule }> {
+  if (options.resetBeforeLoad === true) {
+    resetJpegliWasmModuleState();
+  }
+  const module = await ensureJpegliLoaded();
+  return {
+    ready: true,
+    module,
+  };
+}
+
 export async function encodeJpegliLegacyForTests(imageData: RgbaLike, quality = 95): Promise<Uint8Array> {
   const wasm = await ensureJpegliLoaded();
   return encodeJpegliWithLegacyApi(wasm, imageData, quality);
@@ -611,10 +623,7 @@ export async function decodeJpegli(inputBytes: Uint8Array | ArrayBuffer): Promis
 }
 
 export function __resetJpegliWasmModuleForTests(): void {
-  jpegliWasmModule = null;
-  jpegliWasmModulePromise = null;
-  jpegliWasmLoadState = 'idle';
-  jpegliWasmLoadError = null;
+  resetJpegliWasmModuleState();
 }
 import { decodeRasterBuffer } from './raster-image.ts';
 import { getSharedDiagnosticsRecorder } from './diagnostics.ts';

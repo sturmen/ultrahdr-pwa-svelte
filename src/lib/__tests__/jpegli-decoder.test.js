@@ -373,4 +373,53 @@ describe('jpegli-decoder chunked progress', () => {
       }),
     );
   });
+
+  it('allows startup bootstrap retry after resetting failed loader state', async () => {
+    vi.resetModules();
+    delete window.createJpegliWasm;
+    delete globalThis.createJpegliWasm;
+
+    const wasm = createMockChunkCapableWasm();
+    let shouldFailFactory = true;
+    const originalAppendChild = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      if (node instanceof HTMLScriptElement && node.src.includes('jpegli_wasm.js')) {
+        globalThis.createJpegliWasm = async (options) => {
+          if (!(options && options.wasmBinary instanceof ArrayBuffer)) {
+            throw new Error('missing wasmBinary');
+          }
+          if (shouldFailFactory) {
+            throw new Error('first bootstrap failed');
+          }
+          return wasm;
+        };
+        setTimeout(() => {
+          node.onload?.(new Event('load'));
+        }, 0);
+      }
+      return originalAppendChild(node);
+    });
+
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = String(input);
+      if (url.includes('jpegli_wasm.wasm')) {
+        return new Response(new Uint8Array([0, 97, 115, 109]).buffer, { status: 200 });
+      }
+      throw new Error(`Unexpected fetch for ${url}`);
+    }));
+
+    const {
+      bootstrapJpegliRuntime,
+      resetJpegliBootstrapState,
+    } = await import('../jpegli-decoder.js');
+
+    await expect(bootstrapJpegliRuntime()).rejects.toThrow(/failed to load/i);
+
+    shouldFailFactory = false;
+    resetJpegliBootstrapState();
+
+    await expect(bootstrapJpegliRuntime()).resolves.toEqual(
+      expect.objectContaining({ ready: true }),
+    );
+  });
 });

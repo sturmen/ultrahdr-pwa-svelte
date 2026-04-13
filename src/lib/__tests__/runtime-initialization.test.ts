@@ -4,6 +4,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { DIAGNOSTICS_REPORTS_KEY } from '../diagnostics.ts';
+const startupMocks = vi.hoisted(() => ({
+  bootstrapJpegliRuntime: vi.fn(async () => ({ ready: true })),
+  resetJpegliBootstrapState: vi.fn(),
+  repairBundle: vi.fn(async () => ({
+    ready: true,
+    blocked: false,
+    state: 'READY',
+    bundleVersion: 'bundle-v1',
+    validatedAtMs: Date.now(),
+    diagnostics: null,
+  })),
+}));
+
+vi.mock('../jpegli-decoder.js', () => ({
+  bootstrapJpegliRuntime: startupMocks.bootstrapJpegliRuntime,
+  resetJpegliBootstrapState: startupMocks.resetJpegliBootstrapState,
+}));
+
+vi.mock('../offline-runtime-bundle.js', async () => {
+  const actual = await vi.importActual('../offline-runtime-bundle.js');
+  return {
+    ...actual,
+    repairBundle: startupMocks.repairBundle,
+  };
+});
+
 import {
   RUNTIME_INIT_ERROR_CODES,
   RUNTIME_INIT_STEP_ORDER,
@@ -34,6 +61,7 @@ function createSmokeOutputRgba(width = 128, height = 128) {
 }
 
 function createRuntimeWithGpuAndWebGl() {
+  const storageData = new Map<string, string>();
   return {
     navigator: {
       gpu: {
@@ -45,12 +73,25 @@ function createRuntimeWithGpuAndWebGl() {
     },
     fetch: vi.fn(),
     crossOriginIsolated: true,
+    localStorage: {
+      getItem: vi.fn((key: string) => (storageData.has(key) ? storageData.get(key) || null : null)),
+      setItem: vi.fn((key: string, value: string) => {
+        storageData.set(String(key), String(value));
+      }),
+      removeItem: vi.fn((key: string) => {
+        storageData.delete(String(key));
+      }),
+      clear: vi.fn(() => {
+        storageData.clear();
+      }),
+    },
   };
 }
 
 describe('runtime initialization', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   it('does not invoke capability probing and emits no probe attempt payloads', async () => {
@@ -128,9 +169,154 @@ describe('runtime initialization', () => {
 
     expect(runningOrderUnique).toEqual(RUNTIME_INIT_STEP_ORDER);
     expect(passedOrder).toEqual(RUNTIME_INIT_STEP_ORDER);
+    expect(startupMocks.bootstrapJpegliRuntime).toHaveBeenCalledTimes(1);
     expect(result.resolvedExecutionProvider).toBe('webgpu');
     expect(result.gmnetCapability).toBeNull();
     expect(resolveGainMapCapability).not.toHaveBeenCalled();
+  });
+
+  it('repairs the offline bundle and retries jpegli bootstrap once when the first bootstrap fails online', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    runtime.navigator.onLine = true;
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || 'webgpu';
+      }),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      resolveGainMapCapability: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+    startupMocks.bootstrapJpegliRuntime
+      .mockRejectedValueOnce(new Error('initial bootstrap failed'))
+      .mockResolvedValueOnce({ ready: true, cacheSource: 'network' });
+
+    const progressEvents = [];
+    const result = await initializeRuntime({
+      runtime,
+      sessionFactory: () => session,
+      loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      onProgress: (event) => progressEvents.push(event),
+    });
+
+    expect(startupMocks.repairBundle).toHaveBeenCalledTimes(1);
+    expect(startupMocks.resetJpegliBootstrapState).toHaveBeenCalledTimes(1);
+    expect(startupMocks.bootstrapJpegliRuntime).toHaveBeenCalledTimes(2);
+    expect(result.resolvedExecutionProvider).toBe('webgpu');
+    expect(progressEvents.map((event) => event.stepId)).toContain('jpegli-bootstrap');
+    const jpegliPassed = progressEvents.find(
+      (event) => event.stepId === 'jpegli-bootstrap' && event.status === 'passed',
+    );
+    expect(jpegliPassed?.note).toMatch(/jpegli/i);
+
+    const persisted = JSON.parse(
+      runtime.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+    );
+    expect(persisted.events.map((event: { name: string }) => event.name)).toEqual(
+      expect.arrayContaining([
+        'jpegli-startup-bootstrap-started',
+        'jpegli-startup-bootstrap-failed',
+        'jpegli-startup-repair-requested',
+        'jpegli-startup-repair-succeeded',
+        'jpegli-startup-bootstrap-retried',
+        'jpegli-startup-bootstrap-recovered',
+      ]),
+    );
+  });
+
+  it('blocks startup when jpegli bootstrap still fails after repair', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    runtime.navigator.onLine = true;
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || 'webgpu';
+      }),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      resolveGainMapCapability: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+    startupMocks.bootstrapJpegliRuntime
+      .mockRejectedValueOnce(new Error('first bootstrap failed'))
+      .mockRejectedValueOnce(new Error('second bootstrap failed'));
+
+    await expect(
+      initializeRuntime({
+        runtime,
+        sessionFactory: () => session,
+        loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      }),
+    ).rejects.toMatchObject({
+      name: 'RuntimeInitializationError',
+      code: RUNTIME_INIT_ERROR_CODES.JPEGLI_BOOTSTRAP_FAILED,
+      stepId: 'jpegli-bootstrap',
+      diagnostics: expect.objectContaining({
+        repairAttempted: true,
+      }),
+    });
+    expect(startupMocks.repairBundle).toHaveBeenCalledTimes(1);
+    expect(startupMocks.bootstrapJpegliRuntime).toHaveBeenCalledTimes(2);
+
+    const persisted = JSON.parse(
+      runtime.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+    );
+    expect(persisted.events.map((event: { name: string }) => event.name)).toEqual(
+      expect.arrayContaining([
+        'jpegli-startup-bootstrap-started',
+        'jpegli-startup-bootstrap-failed',
+        'jpegli-startup-repair-requested',
+        'jpegli-startup-repair-succeeded',
+        'jpegli-startup-bootstrap-retried',
+        'jpegli-startup-bootstrap-blocked',
+      ]),
+    );
+  });
+
+  it('blocks offline startup immediately when jpegli bootstrap fails', async () => {
+    const runtime = createRuntimeWithGpuAndWebGl();
+    runtime.navigator.onLine = false;
+    const session = {
+      init: vi.fn(async (_variant, options = {}) => {
+        session.activeExecutionProvider = options.forceExecutionProviders?.[0] || 'webgpu';
+      }),
+      run: vi.fn(async () => createSmokeOutputRgba()),
+      resolveGainMapCapability: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      activeExecutionProvider: 'webgpu',
+    };
+    startupMocks.bootstrapJpegliRuntime.mockRejectedValueOnce(new Error('offline bootstrap failed'));
+
+    await expect(
+      initializeRuntime({
+        runtime,
+        sessionFactory: () => session,
+        loadSmokeImageData: vi.fn(async () => createSmokeImageData()),
+      }),
+    ).rejects.toMatchObject({
+      name: 'RuntimeInitializationError',
+      code: RUNTIME_INIT_ERROR_CODES.JPEGLI_BOOTSTRAP_FAILED,
+      stepId: 'jpegli-bootstrap',
+      diagnostics: expect.objectContaining({
+        offlineStartup: true,
+        repairAttempted: false,
+      }),
+    });
+    expect(startupMocks.repairBundle).not.toHaveBeenCalled();
+    expect(startupMocks.bootstrapJpegliRuntime).toHaveBeenCalledTimes(1);
+
+    const persisted = JSON.parse(
+      runtime.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+    );
+    expect(persisted.events.map((event: { name: string }) => event.name)).toEqual(
+      expect.arrayContaining([
+        'jpegli-startup-bootstrap-started',
+        'jpegli-startup-bootstrap-failed',
+        'jpegli-startup-bootstrap-blocked',
+      ]),
+    );
   });
 
   it('skips smoke inference when startup cache bypass includes the requested provider', async () => {

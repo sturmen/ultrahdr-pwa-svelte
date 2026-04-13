@@ -9,6 +9,7 @@ import {
 describe('runtime-contract', () => {
   it('exposes runtime init step labels for every step', () => {
     expect(RUNTIME_INIT_STEP_ORDER.length).toBeGreaterThan(0);
+    expect(RUNTIME_INIT_STEP_ORDER).toContain('jpegli-bootstrap');
     for (const stepId of RUNTIME_INIT_STEP_ORDER) {
       expect(typeof RUNTIME_INIT_STEP_LABELS[stepId]).toBe('string');
       expect(RUNTIME_INIT_STEP_LABELS[stepId].length).toBeGreaterThan(0);

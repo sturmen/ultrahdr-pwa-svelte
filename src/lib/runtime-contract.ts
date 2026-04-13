@@ -4,6 +4,7 @@ export const RUNTIME_INIT_STEP_ORDER = Object.freeze([
   'gmnet-session-init',
   'gmnet-provider-verify',
   'gmnet-smoke-run',
+  'jpegli-bootstrap',
   'startup-ready',
 ] as const);
 
@@ -15,6 +16,7 @@ export const RUNTIME_INIT_STEP_LABELS: Readonly<Record<RuntimeInitStepId, string
   'gmnet-session-init': 'Initialize GMNet session',
   'gmnet-provider-verify': 'Verify GMNet execution provider',
   'gmnet-smoke-run': 'Run GMNet smoke test',
+  'jpegli-bootstrap': 'Bootstrap JPEGli runtime',
   'startup-ready': 'Finalize startup readiness',
 });
 
@@ -26,6 +28,7 @@ export const RUNTIME_INIT_ERROR_CODES = Object.freeze({
   PROVIDER_FALLBACK_EXHAUSTED: 'RUNTIME_INIT_PROVIDER_FALLBACK_EXHAUSTED',
   SMOKE_ASSET_FAILED: 'RUNTIME_INIT_SMOKE_ASSET_FAILED',
   SMOKE_INFERENCE_FAILED: 'RUNTIME_INIT_SMOKE_INFERENCE_FAILED',
+  JPEGLI_BOOTSTRAP_FAILED: 'RUNTIME_INIT_JPEGLI_BOOTSTRAP_FAILED',
   OFFLINE_BUNDLE_NOT_READY: 'RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY',
   BUNDLE_VALIDATION_FAILED: 'RUNTIME_INIT_BUNDLE_VALIDATION_FAILED',
   BUNDLE_REPAIR_FAILED: 'RUNTIME_INIT_BUNDLE_REPAIR_FAILED',

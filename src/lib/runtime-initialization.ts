@@ -6,7 +6,13 @@ import {
   preloadGmnetRuntimeDependencies,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.ts';
+import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
+import {
+  bootstrapJpegliRuntime,
+  resetJpegliBootstrapState,
+} from './jpegli-decoder.js';
 import { loadImageData } from './image-utils.js';
+import { getBundleStatus, repairBundle } from './offline-runtime-bundle.js';
 import { isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
 import {
   RUNTIME_INIT_ERROR_CODES,
@@ -212,6 +218,50 @@ function emitStepProgress(onProgress, stepId, status, note, payload = {}) {
     timestamp: Date.now(),
     ...payload,
   });
+}
+
+function getSharedDiagnosticsRecorderSafe(runtime = globalThis) {
+  try {
+    return getSharedDiagnosticsRecorder(runtime);
+  } catch {
+    return null;
+  }
+}
+
+function recordRuntimeInitializationDiagnostic(
+  runtime,
+  name,
+  severity = 'info',
+  context = {},
+) {
+  getSharedDiagnosticsRecorderSafe(runtime)?.record({
+    category: severity === 'error' ? 'error' : 'runtime',
+    name,
+    severity,
+    context,
+  });
+}
+
+function normalizeDiagnosticsString(value, fallback = 'unknown') {
+  return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
+}
+
+function classifyJpegliBootstrapError(error) {
+  const message = normalizeDiagnosticsString(error?.message, '')
+    .toLowerCase();
+  if (message.includes('timed out')) {
+    return 'factory-load-timeout';
+  }
+  if (message.includes('failed to fetch') || message.includes('network') || message.includes('offline')) {
+    return 'asset-fetch-failed';
+  }
+  if (message.includes('not found')) {
+    return 'factory-not-found';
+  }
+  if (message.includes('wasm')) {
+    return 'wasm-init-failed';
+  }
+  return 'unknown';
 }
 
 function resolveStepTimeoutMs(timeoutMs, runtime = globalThis, defaultTimeoutMs = 0) {
@@ -836,6 +886,196 @@ export async function initializeRuntime({
       runtime,
     });
   }
+
+  await runStep({
+    stepId: 'jpegli-bootstrap',
+    runningNote: 'Bootstrapping JPEGli runtime...',
+    successNote: 'JPEGli runtime ready.',
+    onProgress,
+    runtime,
+    errorCode: RUNTIME_INIT_ERROR_CODES.JPEGLI_BOOTSTRAP_FAILED,
+    userMessage: 'JPEGli runtime failed to initialize.',
+    fn: async () => {
+      let attempt = 1;
+      let repairAttempted = false;
+      let repairReady = false;
+      let repairState = null;
+      let repairBundleVersion = null;
+      const online = runtime?.navigator?.onLine !== false;
+
+      recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-started', 'info', {
+        attempt,
+        online,
+        trigger: 'startup-init',
+      });
+
+      try {
+        await bootstrapJpegliRuntime();
+        return;
+      } catch (initialError) {
+        const errorCategory = classifyJpegliBootstrapError(initialError);
+        const bundleStatus = getBundleStatus(runtime);
+        repairState = normalizeDiagnosticsString(bundleStatus?.state, 'unknown');
+        repairBundleVersion = normalizeDiagnosticsString(bundleStatus?.bundleVersion, 'unknown');
+
+        recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-failed', 'error', {
+          attempt,
+          online,
+          bundleState: repairState,
+          bundleVersion: repairBundleVersion,
+          errorCategory,
+          repairAttempted,
+          repairReady,
+          trigger: 'startup-init',
+        });
+
+        if (!online) {
+          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-blocked', 'error', {
+            attempt,
+            online,
+            bundleState: repairState,
+            bundleVersion: repairBundleVersion,
+            errorCategory,
+            repairAttempted,
+            repairReady,
+            trigger: 'startup-init',
+          });
+          throw createInitializationError({
+            errorCode: RUNTIME_INIT_ERROR_CODES.JPEGLI_BOOTSTRAP_FAILED,
+            stepId: 'jpegli-bootstrap',
+            message: initialError?.message || 'JPEGli runtime failed to initialize.',
+            userMessage: 'JPEGli runtime failed to initialize.',
+            diagnostics: {
+              offlineStartup,
+              repairAttempted,
+              repairReady,
+              bundleState: repairState,
+              bundleVersion: repairBundleVersion,
+              errorCategory,
+            },
+            cause: initialError,
+            runtime,
+          });
+        }
+
+        repairAttempted = true;
+        recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-repair-requested', 'warning', {
+          attempt,
+          online,
+          bundleState: repairState,
+          bundleVersion: repairBundleVersion,
+          errorCategory,
+          repairAttempted,
+          repairReady,
+          trigger: 'startup-init',
+        });
+
+        let repairResult;
+        try {
+          repairResult = await repairBundle({ runtime });
+          repairReady = repairResult?.ready === true;
+          repairState = normalizeDiagnosticsString(repairResult?.state, repairState || 'unknown');
+          repairBundleVersion = normalizeDiagnosticsString(
+            repairResult?.bundleVersion,
+            repairBundleVersion || 'unknown',
+          );
+          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-repair-succeeded', 'info', {
+            attempt,
+            online,
+            bundleState: repairState,
+            bundleVersion: repairBundleVersion,
+            errorCategory,
+            repairAttempted,
+            repairReady,
+            trigger: 'startup-init',
+          });
+        } catch (repairError) {
+          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-blocked', 'error', {
+            attempt,
+            online,
+            bundleState: repairState,
+            bundleVersion: repairBundleVersion,
+            errorCategory,
+            repairAttempted,
+            repairReady,
+            trigger: 'startup-init',
+          });
+          throw createInitializationError({
+            errorCode: RUNTIME_INIT_ERROR_CODES.JPEGLI_BOOTSTRAP_FAILED,
+            stepId: 'jpegli-bootstrap',
+            message: repairError?.message || initialError?.message || 'JPEGli runtime failed to initialize.',
+            userMessage: 'JPEGli runtime failed to initialize after bundle repair.',
+            diagnostics: {
+              offlineStartup,
+              repairAttempted,
+              repairReady,
+              bundleState: repairState,
+              bundleVersion: repairBundleVersion,
+              errorCategory,
+            },
+            cause: repairError,
+            runtime,
+          });
+        }
+
+        resetJpegliBootstrapState();
+        attempt += 1;
+        recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-retried', 'warning', {
+          attempt,
+          online,
+          bundleState: repairState,
+          bundleVersion: repairBundleVersion,
+          errorCategory,
+          repairAttempted,
+          repairReady,
+          trigger: 'startup-init',
+        });
+
+        try {
+          await bootstrapJpegliRuntime();
+          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-recovered', 'info', {
+            attempt,
+            online,
+            bundleState: repairState,
+            bundleVersion: repairBundleVersion,
+            errorCategory,
+            repairAttempted,
+            repairReady,
+            trigger: 'startup-init',
+          });
+          return;
+        } catch (retryError) {
+          const retryErrorCategory = classifyJpegliBootstrapError(retryError);
+          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-blocked', 'error', {
+            attempt,
+            online,
+            bundleState: repairState,
+            bundleVersion: repairBundleVersion,
+            errorCategory: retryErrorCategory,
+            repairAttempted,
+            repairReady,
+            trigger: 'startup-init',
+          });
+          throw createInitializationError({
+            errorCode: RUNTIME_INIT_ERROR_CODES.JPEGLI_BOOTSTRAP_FAILED,
+            stepId: 'jpegli-bootstrap',
+            message: retryError?.message || initialError?.message || 'JPEGli runtime failed to initialize.',
+            userMessage: 'JPEGli runtime failed to initialize after bundle repair.',
+            diagnostics: {
+              offlineStartup,
+              repairAttempted,
+              repairReady,
+              bundleState: repairState,
+              bundleVersion: repairBundleVersion,
+              errorCategory: retryErrorCategory,
+            },
+            cause: retryError,
+            runtime,
+          });
+        }
+      }
+    },
+  });
 
   await runStep({
     stepId: 'startup-ready',

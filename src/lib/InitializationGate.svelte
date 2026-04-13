@@ -88,6 +88,8 @@
     : "";
   $: offlineBundleBlocked =
     failure?.errorCode === "RUNTIME_INIT_OFFLINE_BUNDLE_NOT_READY";
+  $: jpegliBootstrapBlocked =
+    failure?.errorCode === "RUNTIME_INIT_JPEGLI_BOOTSTRAP_FAILED";
 </script>
 
 <section
@@ -152,6 +154,15 @@
         >
           Connect to the internet to prepare required runtime assets, then retry
           initialization.
+        </p>
+      {/if}
+      {#if jpegliBootstrapBlocked}
+        <p
+          class="hint"
+          data-testid="runtime-init-jpegli-bootstrap-blocked"
+        >
+          Repair the offline runtime bundle online, then retry initialization so
+          the JPEGli runtime can be bootstrapped before processing starts.
         </p>
       {/if}
       <p class="hint">
