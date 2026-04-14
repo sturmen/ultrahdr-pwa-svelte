@@ -24,6 +24,8 @@
 - `src/lib/processing-*.ts`: route planning, progress, queueing, preferences, runtime reducer, worker protocol, and processing route types.
 - `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`: structured breadcrumb and diagnostics surface.
 - `src/sw.ts`: Workbox service worker, offline runtime bundle validation, repair, and cache management.
+- `fixtures/`: repo-owned test fixtures for unit, integration, and e2e coverage.
+- `media/`: README/demo assets only; do not add test fixtures here.
 - `tests/e2e/*.spec.ts`: browser and offline regression coverage.
 - `scripts/*.ts`: build metadata and runtime bundle manifest generation.
 

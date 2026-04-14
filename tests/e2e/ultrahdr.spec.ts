@@ -14,19 +14,19 @@ const __dirname = path.dirname(__filename);
 
 const SDR_IMAGE = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
 const SDR_IMAGE_2 = path.resolve(__dirname, '../../media/gain_map_demo_image.jpg');
-const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../media/exif_matrix.jpg');
-const GAIN_MAP_JPEG = path.resolve(__dirname, '../../media/test_hdr_jpeg_gainmap.jpg');
-const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
-const HDR_INTENT_HIF = path.resolve(__dirname, '../../media/test_hdr_no_gain_map.HIF');
+const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../fixtures/exif_matrix.jpg');
+const GAIN_MAP_JPEG = path.resolve(__dirname, '../../fixtures/test_hdr_jpeg_gainmap.jpg');
+const GAIN_MAP_HEIC = path.resolve(__dirname, '../../fixtures/test_hdr_heif_gainmap.HEIC');
+const HDR_INTENT_HIF = path.resolve(__dirname, '../../fixtures/test_hdr_no_gain_map.HIF');
 const UNROTATED_SDR_FIXTURES = [
-    path.resolve(__dirname, '../../media/test_sdr.jpg'),
-    path.resolve(__dirname, '../../media/test_sdr2.jpg'),
+    path.resolve(__dirname, '../../fixtures/test_sdr.jpg'),
+    path.resolve(__dirname, '../../fixtures/test_sdr2.jpg'),
 ];
 const EXIF_MATRIX_FIXTURES = [
-    path.resolve(__dirname, '../../media/exif_matrix.jpg'),
-    path.resolve(__dirname, '../../media/exif_matrix.png'),
-    path.resolve(__dirname, '../../media/exif_matrix.heif'),
-    path.resolve(__dirname, '../../media/exif_matrix.tiff')
+    path.resolve(__dirname, '../../fixtures/exif_matrix.jpg'),
+    path.resolve(__dirname, '../../fixtures/exif_matrix.png'),
+    path.resolve(__dirname, '../../fixtures/exif_matrix.heif'),
+    path.resolve(__dirname, '../../fixtures/exif_matrix.tiff')
 ];
 
 // Timeouts for processing diagnostics. Give very generous buffers for slow CI.
@@ -1245,7 +1245,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
         test('HEIC regression: default processing should preserve canonical EXIF payload', async ({ page }) => {
             await page.goto('/');
-            const heicFixture = path.resolve(__dirname, '../../media/exif_matrix.heic');
+            const heicFixture = path.resolve(__dirname, '../../fixtures/exif_matrix.heic');
             await uploadFiles(page, [heicFixture]);
             await waitForProcessing(page);
 

@@ -11,7 +11,7 @@ import {
 
 const PROJECT_ROOT = process.cwd();
 const ASSET_DIR = path.resolve(PROJECT_ROOT, 'public', 'assets');
-const FIXTURE_PATH = path.resolve(PROJECT_ROOT, 'media', 'test_sdr2.jpg');
+const FIXTURE_PATH = path.resolve(PROJECT_ROOT, 'fixtures', 'test_sdr2.jpg');
 const QUALITY = 93;
 const require = createRequire(import.meta.url);
 
@@ -55,7 +55,7 @@ describe('jpegli determinism integration', () => {
     __resetJpegliWasmModuleForTests();
   });
 
-  it('matches legacy bytestream for media/test_sdr2.jpg with true chunk progress', async () => {
+  it('matches legacy bytestream for fixtures/test_sdr2.jpg with true chunk progress', async () => {
     const imageData = await loadFixtureImageData();
     const progressEvents = [];
 
@@ -71,7 +71,7 @@ describe('jpegli determinism integration', () => {
     expect(Buffer.compare(Buffer.from(chunked), Buffer.from(legacy))).toBe(0);
   }, 180000);
 
-  it('is deterministic across repeated chunked runs for media/test_sdr2.jpg', async () => {
+  it('is deterministic across repeated chunked runs for fixtures/test_sdr2.jpg', async () => {
     const imageData = await loadFixtureImageData();
 
     const first = await encodeJpegli(imageData, QUALITY, { chunkRows: 64 });

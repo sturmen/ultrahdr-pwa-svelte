@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const OFFLINE_BUNDLE_STORAGE_KEY = 'ultrahdr:offline-bundle:v1';
 const APP_PATH = '/ultrahdr-pwa-svelte/';
-const SDR_IMAGE = path.resolve(__dirname, '../../media/test_sdr2.jpg');
+const SDR_IMAGE = path.resolve(__dirname, '../../fixtures/test_sdr2.jpg');
 const SDR_IMAGE_SMALL = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
 const PROCESSING_TIMEOUT = 120_000;
 const PROCESSING_TIMEOUT_FALLBACK_MS = 240_000;

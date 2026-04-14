@@ -7,7 +7,7 @@ async function runTest() {
     
     // Find a sample HIF/HEIC file
     // To be safe let's just create a dummy HEIF or use one if it exists
-    const testFilePath = '/Users/nicholastinsley/git/ultrahdr-pwa-svelte/media/test_hdr_no_gain_map.HIF';
+    const testFilePath = '/Users/nicholastinsley/git/ultrahdr-pwa-svelte/fixtures/test_hdr_no_gain_map.HIF';
     if (!fs.existsSync(testFilePath)) {
         console.log("No test HIF found, test skipped.");
         return;

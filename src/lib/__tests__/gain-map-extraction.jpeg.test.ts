@@ -7,7 +7,7 @@ import * as path from 'path';
 
 describe('Gain Map Extraction (Real Files) - UltraHDR JPEG', () => {
   it('identifies the UltraHDR JPEG fixture as containing MPF metadata', () => {
-    const filePath = path.resolve(process.cwd(), 'media', 'test_hdr_jpeg_gainmap.jpg');
+    const filePath = path.resolve(process.cwd(), 'fixtures', 'test_hdr_jpeg_gainmap.jpg');
     const buffer = fs.readFileSync(filePath);
     const marker = Buffer.from('MPF');
 

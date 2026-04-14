@@ -79,7 +79,7 @@ export function installLibheifFetchMock() {
 }
 
 export function loadTestFile(filename: string) {
-  const mediaPath = path.resolve(process.cwd(), 'media');
+  const mediaPath = path.resolve(process.cwd(), 'fixtures');
   const filePath = path.join(mediaPath, filename);
   const buffer = fs.readFileSync(filePath);
   const file = new File([buffer], filename, { type: 'image/heic' });
@@ -211,7 +211,7 @@ global.fetch = async (url) => {
 
 try {
   const mod = await server.ssrLoadModule('/src/lib/heic-processing.js');
-  const filePath = path.resolve(process.cwd(), 'media', filename);
+  const filePath = path.resolve(process.cwd(), 'fixtures', filename);
   const buffer = fs.readFileSync(filePath);
   const file = new File([buffer], filename, { type: 'image/heic' });
   const result = await mod.processHeic(file, { discardGainMap });

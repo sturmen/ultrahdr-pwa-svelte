@@ -6,9 +6,9 @@ import { ensureRuntimeGateReady, getRuntimeGateFailure, installStartupRuntimeOve
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SDR_IMAGE = path.resolve(__dirname, '../../media/test_sdr2.jpg');
+const SDR_IMAGE = path.resolve(__dirname, '../../fixtures/test_sdr2.jpg');
 const SDR_IMAGE_SMALL = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
-const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
+const GAIN_MAP_HEIC = path.resolve(__dirname, '../../fixtures/test_hdr_heif_gainmap.HEIC');
 const PROCESSING_TIMEOUT = 120_000;
 const PROCESSING_TIMEOUT_FALLBACK_MS = 240_000;
 const POLL_INTERVAL = 250;

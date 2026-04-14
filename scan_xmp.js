@@ -1,5 +1,5 @@
 import fs from 'fs';
-const bytes = new Uint8Array(fs.readFileSync('media/hasselblad.JPG'));
+const bytes = new Uint8Array(fs.readFileSync('fixtures/hasselblad.JPG'));
 let offset = 2;
 while (offset + 4 <= bytes.length) {
     if (bytes[offset] !== 0xff) { offset++; continue; }

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const fixturePath = path.resolve(__dirname, '../../../media/exif_matrix.tiff');
+const fixturePath = path.resolve(__dirname, '../../../fixtures/exif_matrix.tiff');
 
 describe('tiff-processing color regression', () => {
   it('does not decode exif_matrix.tiff as green-dominant', async () => {

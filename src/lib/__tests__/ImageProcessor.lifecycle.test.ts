@@ -323,7 +323,7 @@ describe('ImageProcessor lifecycle durability', () => {
       return originalCreateElement(tagName as string, options);
     });
 
-    const pngBytes = await readFile(path.resolve(process.cwd(), 'media/exif_matrix.png'));
+    const pngBytes = await readFile(path.resolve(process.cwd(), 'fixtures/exif_matrix.png'));
     render(ImageProcessor, {
       props: {
         files: [new File([pngBytes], 'photo.png', { type: 'image/png' })],

@@ -146,7 +146,7 @@ const exifPayloadOrientation6 = new Uint8Array([
   0x00, 0x00, 0x00, 0x00,
 ]);
 
-const validPngBytes = fs.readFileSync(path.resolve(process.cwd(), 'media/exif_matrix.png'));
+const validPngBytes = fs.readFileSync(path.resolve(process.cwd(), 'fixtures/exif_matrix.png'));
 
 function buildJpegWithExif(exifPayload: Uint8Array, imageData = new Uint8Array([0x11, 0x22, 0x33])) {
   const exifLength = exifPayload.length + 2;

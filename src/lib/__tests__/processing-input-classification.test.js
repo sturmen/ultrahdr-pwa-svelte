@@ -155,7 +155,7 @@ describe('probeInputProcessingPathFromHeaders', () => {
 
     await expect(
       probeInputProcessingPathFromHeaders(
-        loadMediaFile('media/test_hdr_no_gain_map.HIF', 'image/heif'),
+        loadMediaFile('fixtures/test_hdr_no_gain_map.HIF', 'image/heif'),
       ),
     ).resolves.toBe('hdr-intent');
   });
@@ -165,7 +165,7 @@ describe('probeInputProcessingPathFromHeaders', () => {
 
     await expect(
       probeInputProcessingPathFromHeaders(
-        loadMediaFile('media/test_hdr_heif_gainmap.HEIC', 'image/heic'),
+        loadMediaFile('fixtures/test_hdr_heif_gainmap.HEIC', 'image/heic'),
       ),
     ).resolves.toBe('preserved');
   });

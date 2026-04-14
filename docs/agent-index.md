@@ -20,6 +20,7 @@
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`
 - Share target behavior: `src/lib/share-target-launch.js`, `src/lib/share-store.ts`
 - Offline bundle and caching: `src/sw.ts`, `src/lib/offline-runtime-bundle.ts`, `src/lib/runtime-bundle-asset-map.ts`
+- Repo fixture inputs: `fixtures/` for test assets, `media/` for README/demo assets only
 
 ## Scan Discipline
 

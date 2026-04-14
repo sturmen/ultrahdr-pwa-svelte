@@ -103,7 +103,7 @@ vi.mock('../jpegli-decoder.js', () => ({
 }));
 
 function fixtureFileNamesByGlob(prefixRegex) {
-  const mediaPath = path.resolve(process.cwd(), 'media');
+  const mediaPath = path.resolve(process.cwd(), 'fixtures');
   return fs
     .readdirSync(mediaPath)
     .filter((name) => prefixRegex.test(name))
@@ -111,7 +111,7 @@ function fixtureFileNamesByGlob(prefixRegex) {
 }
 
 function loadJpegFixture(filename) {
-  const fixturePath = path.resolve(process.cwd(), 'media', filename);
+  const fixturePath = path.resolve(process.cwd(), 'fixtures', filename);
   const bytes = fs.readFileSync(fixturePath);
   return new File([bytes], filename, { type: 'image/jpeg' });
 }
@@ -198,7 +198,7 @@ describe('processImage gain map decision (fixture driven)', () => {
   });
 
   if (bfFixtures.length === 0) {
-    it.skip('skips BF fixture coverage when no media/BF*.JPG files are available', () => {});
+    it.skip('skips BF fixture coverage when no fixtures/BF*.JPG files are available', () => {});
   } else {
     it.each(bfFixtures)('uses preserve path for %s', async (fixtureName) => {
       const { processImage } = await import('../processing-core.js');

@@ -686,7 +686,7 @@ describe('input-exif extractors', () => {
   });
 
   it('extracts HEIF EXIF items from fixture and synthetic containers', () => {
-    const fixturePath = path.resolve(__dirname, '../../../media/test_hdr_heif_gainmap.HEIC');
+    const fixturePath = path.resolve(__dirname, '../../../fixtures/test_hdr_heif_gainmap.HEIC');
     const fixtureBytes = new Uint8Array(fs.readFileSync(fixturePath));
     const exifPayload = sampleExifPayload();
     const tiffPayload = exifPayload.subarray(6);
