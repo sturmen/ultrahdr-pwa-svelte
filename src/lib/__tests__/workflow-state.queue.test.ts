@@ -6,8 +6,11 @@ import {
   createWorkflowState,
   reduceWorkflowState,
   selectExportableQueueIds,
+  selectMayClaimNextQueueItem,
+  selectNextClaimableQueueItem,
   selectQueueCounts,
   selectQueueControlVisibility,
+  selectShouldSuppressQueueStart,
   selectWorkflowCards,
 } from '../workflow-state';
 
@@ -186,5 +189,78 @@ describe('workflow-state queue-centric selectors', () => {
         comparePreviewUrl: 'blob:output-preview',
       }),
     );
+  });
+
+  it('suppresses redundant queue start requests while a queue item is already claimed', () => {
+    let state = createWorkflowState();
+    state = reduceWorkflowState(state, {
+      type: 'FILES_ENQUEUED',
+      files: [createFile('one.jpg')],
+    });
+
+    expect(selectShouldSuppressQueueStart(state)).toBe(false);
+    expect(selectMayClaimNextQueueItem(state)).toBe(true);
+    expect(selectNextClaimableQueueItem(state)?.id).toBe(0);
+
+    state = reduceWorkflowState(state, { type: 'QUEUE_START_REQUESTED' });
+    state = reduceWorkflowState(state, { type: 'QUEUE_ITEM_CLAIMED', queueId: 0, launchToken: 'launch-1' });
+
+    expect(selectShouldSuppressQueueStart(state)).toBe(true);
+    expect(selectMayClaimNextQueueItem(state)).toBe(false);
+    expect(selectNextClaimableQueueItem(state)).toBeNull();
+
+    const duplicateClaimState = reduceWorkflowState(state, {
+      type: 'QUEUE_ITEM_CLAIMED',
+      queueId: 0,
+      launchToken: 'launch-2',
+    });
+    expect(duplicateClaimState).toEqual(state);
+  });
+
+  it('records restart intent during a running claim and only allows the next claim after settle', () => {
+    let state = createWorkflowState();
+    state = reduceWorkflowState(state, {
+      type: 'FILES_ENQUEUED',
+      files: [createFile('one.jpg'), createFile('two.jpg')],
+    });
+    state = reduceWorkflowState(state, { type: 'QUEUE_START_REQUESTED' });
+    state = reduceWorkflowState(state, { type: 'QUEUE_ITEM_CLAIMED', queueId: 0, launchToken: 'launch-1' });
+    state = reduceWorkflowState(state, { type: 'QUEUE_LAUNCH_CONFIRMED', queueId: 0, launchToken: 'launch-1' });
+    state = reduceWorkflowState(state, { type: 'QUEUE_RESTART_REQUESTED' });
+
+    expect(state.restartRequested).toBe(true);
+    expect(selectShouldSuppressQueueStart(state)).toBe(true);
+    expect(selectNextClaimableQueueItem(state)).toBeNull();
+
+    state = reduceWorkflowState(state, {
+      type: 'ITEM_COMPLETED',
+      queueId: 0,
+      result: {
+        persisted: true,
+        previewUrl: 'blob:one',
+        size: 4,
+      },
+    });
+    state = reduceWorkflowState(state, { type: 'QUEUE_ITEM_SETTLED', queueId: 0, launchToken: 'launch-1' });
+
+    expect(state.runnerState).toBe('idle');
+    expect(state.claimedQueueId).toBeNull();
+    expect(state.restartRequested).toBe(false);
+    expect(selectShouldSuppressQueueStart(state)).toBe(false);
+    expect(selectNextClaimableQueueItem(state)?.id).toBe(1);
+  });
+
+  it('records restart intent while queued work exists even if the runner has already returned to idle', () => {
+    let state = createWorkflowState();
+    state = reduceWorkflowState(state, {
+      type: 'FILES_ENQUEUED',
+      files: [createFile('one.jpg')],
+    });
+
+    state = reduceWorkflowState(state, { type: 'QUEUE_RESTART_REQUESTED' });
+
+    expect(state.runnerState).toBe('idle');
+    expect(state.claimedQueueId).toBeNull();
+    expect(state.restartRequested).toBe(true);
   });
 });

@@ -15,6 +15,7 @@
 
 - App startup and initialization UI: `src/App.svelte`, `src/lib/InitializationGate.svelte`
 - Main user flow and conversion UI: `src/lib/ImageProcessor.svelte`
+- Queue runner and reducer selectors: `src/lib/workflow-state.ts`
 - Runtime orchestration and fallback: `src/lib/processing.ts`, `src/lib/runtime-orchestrator.ts`
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`
 - Share target behavior: `src/lib/share-target-launch.js`, `src/lib/share-store.ts`

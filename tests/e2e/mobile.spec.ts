@@ -8,10 +8,12 @@ const __dirname = path.dirname(__filename);
 
 const SDR_IMAGE = path.resolve(__dirname, '../../media/test_sdr2.jpg');
 const SDR_IMAGE_SMALL = path.resolve(__dirname, '../../media/sdr_demo_image.jpg');
+const GAIN_MAP_HEIC = path.resolve(__dirname, '../../media/test_hdr_heif_gainmap.HEIC');
 const PROCESSING_TIMEOUT = 120_000;
 const PROCESSING_TIMEOUT_FALLBACK_MS = 240_000;
 const POLL_INTERVAL = 250;
 const MOBILE_TEST_TIMEOUT = PROCESSING_TIMEOUT + 30_000;
+const DIAGNOSTICS_REPORTS_KEY = '__ultrahdrDiagnosticsReports';
 
 type RuntimeGateExpectations = {
   expectedProvider?: string;
@@ -106,6 +108,64 @@ async function dismissWasmRecommendationIfVisible(page: Page): Promise<void> {
   }
 }
 
+type DiagnosticsEventSnapshot = {
+  name: string;
+  category: string;
+  severity: string;
+  context: Record<string, unknown>;
+};
+
+async function readDiagnosticsEvents(page: Page): Promise<DiagnosticsEventSnapshot[]> {
+  return page.evaluate((storageKey) => {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as { events?: DiagnosticsEventSnapshot[] };
+      return Array.isArray(parsed?.events) ? parsed.events : [];
+    } catch {
+      return [];
+    }
+  }, DIAGNOSTICS_REPORTS_KEY);
+}
+
+async function expectQueueLaunchBreadcrumbs(
+  page: Page,
+  expectedLaunchCount: number,
+  queueId = 0,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const events = await readDiagnosticsEvents(page);
+      return {
+        launchCount: events.filter(
+          (event) =>
+            event.name === 'queue-launch-confirmed'
+            && Number(event.context?.queueId) === queueId,
+        ).length,
+        blockedCount: events.filter(
+          (event) =>
+            event.name === 'duplicate-processing-launch-blocked'
+            && Number(event.context?.queueId) === queueId,
+        ).length,
+      };
+    })
+    .toEqual({
+      launchCount: expectedLaunchCount,
+      blockedCount: 0,
+    });
+}
+
+async function setHdrStrengthStops(page: Page, value: string): Promise<void> {
+  await page.locator('#boost').evaluate((input, nextValue) => {
+    const slider = input as HTMLInputElement;
+    slider.value = nextValue;
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
 test.describe('Mobile smoke tests', () => {
   test.describe.configure({ mode: 'serial', timeout: MOBILE_TEST_TIMEOUT });
   let processingTimeoutMs = PROCESSING_TIMEOUT;
@@ -191,6 +251,41 @@ test.describe('Mobile smoke tests', () => {
       return root.scrollWidth <= window.innerWidth;
     });
     expect(viewportFits).toBe(true);
+  });
+
+  test('reprocesses one mobile upload without duplicate queue launches', async ({ page }) => {
+    await page.goto('/');
+    await uploadSingleFile(page, uploadImagePath);
+    await waitForProcessingWithTimeout(page, 1, processingTimeoutMs);
+    await expectQueueLaunchBreadcrumbs(page, 1);
+
+    await page.getByTestId('tab-convert').click();
+    await setHdrStrengthStops(page, '4.0');
+
+    await expect(page.getByTestId('stale-reprocess-prompt')).toBeVisible();
+    await page.getByRole('button', { name: /^Reprocess$/i }).click();
+    await waitForProcessingWithTimeout(page, 1, processingTimeoutMs);
+    await expectQueueLaunchBreadcrumbs(page, 2);
+  });
+
+  test('reprocesses preserved HEIC input without duplicate queue launches', async ({ page }, testInfo) => {
+    test.skip(
+      !String(testInfo.project.name).toLowerCase().includes('webkit'),
+      'Preserved HEIC regression is covered on iOS WebKit mobile emulation.',
+    );
+
+    await page.goto('/');
+    await uploadSingleFile(page, GAIN_MAP_HEIC);
+    await waitForProcessingWithTimeout(page, 1, processingTimeoutMs);
+    await expectQueueLaunchBreadcrumbs(page, 1);
+
+    await page.getByTestId('tab-convert').click();
+    await setHdrStrengthStops(page, '4.0');
+
+    await expect(page.getByTestId('stale-reprocess-prompt')).toBeVisible();
+    await page.getByRole('button', { name: /^Reprocess$/i }).click();
+    await waitForProcessingWithTimeout(page, 1, processingTimeoutMs);
+    await expectQueueLaunchBreadcrumbs(page, 2);
   });
 
   test('gracefully degrades outbound share controls when canShare is unavailable', async ({ page }) => {

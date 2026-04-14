@@ -17,6 +17,7 @@
 
 - `src/App.svelte`: app shell, view routing, share-target launch handling, PWA update state, runtime initialization UI.
 - `src/lib/ImageProcessor.svelte`: main conversion UI and user-facing processing flow.
+- `src/lib/workflow-state.ts`: reducer-backed queue/domain state, including the single queue-runner claim/launch/settle authority consumed by `ImageProcessor.svelte`.
 - `src/lib/processing.ts`: runtime initialization pipeline, worker/main-thread fallback, inference heartbeat tracking, runtime failure persistence.
 - `src/lib/runtime-orchestrator.ts`: compact runtime state-machine orchestrator used for adapter-based initialization and processing.
 - `src/lib/runtime-*.ts`: initialization policy, cache policy, planner, reducer, state machine, capability detection, and runtime contract types.
@@ -33,6 +34,7 @@
 - Adapter orchestration flow: `src/lib/runtime-orchestrator.ts` coordinates initialization and processing through worker and main-thread adapters with explicit fallback behavior.
 - Offline bundle flow: `src/sw.ts` precaches app assets, validates the runtime bundle manifest, repairs corrupted caches, and answers bundle-management messages from the app.
 - Share target flow: `src/lib/share-target-launch.js` and `src/lib/share-store.ts` recover files launched through the installed PWA.
+- Queue runner flow: `src/lib/workflow-state.ts` owns queue start, claim, launch, settle, and restart intent; `ImageProcessor.svelte` is the thin imperative shell that dispatches those transitions and invokes `runtime.process(...)`.
 
 ## Commands
 

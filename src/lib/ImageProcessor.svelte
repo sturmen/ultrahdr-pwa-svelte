@@ -36,8 +36,14 @@
     storeQueueState,
   } from "./share-store.ts";
   import {
+    createWorkflowState,
+    mapLegacyWorkflowStateToMode,
     QUEUE_ITEM_STATES,
+    reduceWorkflowState,
+    selectMayClaimNextQueueItem,
+    selectNextClaimableQueueItem,
     selectExportableQueueIds,
+    selectShouldSuppressQueueStart,
     selectWorkflowCards,
     WORKFLOW_EVENTS,
     WORKFLOW_STATES,
@@ -134,7 +140,7 @@
   let activeAbortController = null;
   let processingRunId = 0;
   let queueLoopActive = false;
-  let queueRestartPending = false;
+  let queueRunnerState = createWorkflowState();
   let pauseRequested = false;
   let resumeRequestedFromLaunch = false;
   let cancelCurrentRequested = false;
@@ -158,6 +164,7 @@
   let viewerBounceTimeout = null;
   let viewerZoomScale = 1;
   let viewerPanX = 0;
+  const activeQueueLaunchLeases = new Map<number, string>();
   let viewerPanY = 0;
   let viewerDragActive = false;
   let viewerDragStartX = 0;
@@ -1892,6 +1899,47 @@
     schedulePersistQueueState();
   }
 
+  function buildQueueRunnerSnapshot() {
+    return {
+      ...queueRunnerState,
+      mode: mapLegacyWorkflowStateToMode(workflowState),
+      activeQueueId: currentQueueId,
+      queue,
+      nextQueueId,
+    };
+  }
+
+  function dispatchQueueRunner(action) {
+    queueRunnerState = reduceWorkflowState(buildQueueRunnerSnapshot(), action);
+    return queueRunnerState;
+  }
+
+  function createQueueLaunchToken(queueId) {
+    return `${queueId}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+  }
+
+  function acquireQueueLaunchLease(queueId, launchToken) {
+    const existingLaunchToken = activeQueueLaunchLeases.get(queueId) || null;
+    if (existingLaunchToken && existingLaunchToken !== launchToken) {
+      recordDiagnostics("pipeline", "duplicate-processing-launch-blocked", "warning", {
+        queueId,
+        launchToken,
+        existingLaunchToken,
+        reason: "lease-already-held",
+      });
+      return false;
+    }
+    activeQueueLaunchLeases.set(queueId, launchToken);
+    return true;
+  }
+
+  function releaseQueueLaunchLease(queueId, launchToken) {
+    const existingLaunchToken = activeQueueLaunchLeases.get(queueId) || null;
+    if (existingLaunchToken === launchToken) {
+      activeQueueLaunchLeases.delete(queueId);
+    }
+  }
+
   function updateQueueItem(queueId, changes) {
     queue = queue.map((item) =>
       item.id === queueId
@@ -2012,15 +2060,34 @@
   }
 
   function startQueue() {
-    const hasQueuedItems = queue.some(
-      (item) => item.status === QUEUE_ITEM_STATES.QUEUED,
-    );
-    if (!hasQueuedItems) return;
-
+    const queueRunnerSnapshot = buildQueueRunnerSnapshot();
+    recordDiagnostics("pipeline", "queue-start-requested", "info", {
+      queueLength: queue.length,
+      runnerState: queueRunnerSnapshot.runnerState,
+      currentQueueId,
+      reason: "start-queue",
+    });
     if (queueLoopActive) {
-      queueRestartPending = true;
+      dispatchQueueRunner({ type: "QUEUE_RESTART_REQUESTED" });
+      recordDiagnostics("pipeline", "queue-start-suppressed", "info", {
+        queueLength: queue.length,
+        runnerState: queueRunnerSnapshot.runnerState,
+        currentQueueId,
+        reason: "loop-active",
+      });
       return;
     }
+    if (selectShouldSuppressQueueStart(queueRunnerSnapshot)) {
+      dispatchQueueRunner({ type: "QUEUE_RESTART_REQUESTED" });
+      recordDiagnostics("pipeline", "queue-start-suppressed", "info", {
+        queueLength: queue.length,
+        runnerState: queueRunnerSnapshot.runnerState,
+        currentQueueId,
+        reason: "runner-not-idle",
+      });
+      return;
+    }
+    dispatchQueueRunner({ type: "QUEUE_START_REQUESTED" });
 
     if (workflowState === WORKFLOW_STATES.EMPTY) {
       setWorkflow(WORKFLOW_EVENTS.FILES_ADDED);
@@ -2037,7 +2104,9 @@
     if (workflowState === WORKFLOW_STATES.PROCESSING_PAUSED) return;
 
     processing = true;
-    void runQueue();
+    if (!queueLoopActive) {
+      void runQueue();
+    }
   }
 
   async function acquireWakeLockIfNeeded() {
@@ -2073,6 +2142,7 @@
     if (queueLoopActive) return;
     queueLoopActive = true;
     let queueLockAcquired = false;
+    let restartAfterLoop = false;
 
     try {
       queueLockAcquired = await acquireProcessingLock();
@@ -2095,9 +2165,8 @@
           break;
         }
 
-        const nextItem = queue.find(
-          (item) => item.status === QUEUE_ITEM_STATES.QUEUED,
-        );
+        const queueRunnerSnapshot = buildQueueRunnerSnapshot();
+        const nextItem = selectNextClaimableQueueItem(queueRunnerSnapshot);
         if (!nextItem) {
           processing = false;
           pauseRequested = false;
@@ -2131,6 +2200,27 @@
           await persistQueueStateSnapshot();
           break;
         }
+
+        const launchToken = createQueueLaunchToken(nextItem.id);
+        const claimedState = dispatchQueueRunner({
+          type: "QUEUE_ITEM_CLAIMED",
+          queueId: nextItem.id,
+          launchToken,
+        });
+        if (claimedState.claimedQueueId !== nextItem.id) {
+          recordDiagnostics("pipeline", "queue-start-suppressed", "info", {
+            queueId: nextItem.id,
+            queueLength: queue.length,
+            runnerState: claimedState.runnerState,
+            reason: "claim-rejected",
+          });
+          continue;
+        }
+        recordDiagnostics("pipeline", "queue-item-claimed", "info", {
+          queueId: nextItem.id,
+          queueLength: queue.length,
+          launchToken,
+        });
 
         currentQueueId = nextItem.id;
         cancelCurrentRequested = false;
@@ -2178,6 +2268,33 @@
             queueId: nextItem.id,
             queueIndex,
             totalFiles: queue.length,
+          });
+
+          if (!acquireQueueLaunchLease(nextItem.id, launchToken)) {
+            updateQueueItem(nextItem.id, {
+              status: QUEUE_ITEM_STATES.QUEUED,
+              progress: null,
+            });
+            dispatchQueueRunner({ type: "QUEUE_RESTART_REQUESTED" });
+            dispatchQueueRunner({
+              type: "QUEUE_ITEM_SETTLED",
+              queueId: nextItem.id,
+              launchToken,
+            });
+            currentQueueId = null;
+            continue;
+          }
+
+          dispatchQueueRunner({
+            type: "QUEUE_LAUNCH_CONFIRMED",
+            queueId: nextItem.id,
+            launchToken,
+          });
+          recordDiagnostics("pipeline", "queue-launch-confirmed", "info", {
+            queueId: nextItem.id,
+            queueIndex,
+            totalFiles: queue.length,
+            launchToken,
           });
 
           const blob = await runtime.process(
@@ -2281,6 +2398,18 @@
             });
           }
         } finally {
+          restartAfterLoop = restartAfterLoop || queueRunnerState.restartRequested;
+          releaseQueueLaunchLease(nextItem.id, launchToken);
+          dispatchQueueRunner({
+            type: "QUEUE_ITEM_SETTLED",
+            queueId: nextItem.id,
+            launchToken,
+          });
+          recordDiagnostics("pipeline", "queue-item-settled", "info", {
+            queueId: nextItem.id,
+            queueLength: queue.length,
+            launchToken,
+          });
           if (activeAbortController === controller) {
             activeAbortController = null;
           }
@@ -2299,8 +2428,11 @@
         await releaseProcessingLock();
       }
       queueLoopActive = false;
-      if (queueRestartPending) {
-        queueRestartPending = false;
+      if (restartAfterLoop || queueRunnerState.restartRequested) {
+        queueRunnerState = {
+          ...queueRunnerState,
+          restartRequested: false,
+        };
         if (queue.some((item) => item.status === QUEUE_ITEM_STATES.QUEUED)) {
           startQueue();
         }

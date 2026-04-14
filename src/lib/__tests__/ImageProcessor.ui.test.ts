@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte';
 import ImageProcessor from '../ImageProcessor.svelte';
 
-const runtimeProcessMock = vi.fn(async (_file, options = {}) => {
+async function defaultRuntimeProcessImplementation(_file, options = {}) {
   options.onProgress?.({
     phase: 'pipeline-complete',
     stage: 'encode',
@@ -14,7 +14,9 @@ const runtimeProcessMock = vi.fn(async (_file, options = {}) => {
     timestamp: Date.now(),
   });
   return new Blob(['mock-jpeg'], { type: 'image/jpeg' });
-});
+}
+
+const runtimeProcessMock = vi.fn(defaultRuntimeProcessImplementation);
 
 function createMatchMedia(matchesDesktop) {
   return vi.fn().mockImplementation((query) => ({
@@ -77,7 +79,8 @@ describe('ImageProcessor mobile-native UI behavior', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    runtimeProcessMock.mockClear();
+    runtimeProcessMock.mockReset();
+    runtimeProcessMock.mockImplementation(defaultRuntimeProcessImplementation);
     window.matchMedia = createMatchMedia(false);
     window.localStorage?.clear?.();
     delete window.__ULTRAHDR_PROCESSING_PREFERENCES;
@@ -1588,6 +1591,51 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     await waitFor(() => {
       expect(window.navigator.setAppBadge).toHaveBeenCalled();
       expect(window.navigator.clearAppBadge).toHaveBeenCalled();
+    });
+  });
+
+  it('does not relaunch the active queue item when another file is added mid-run', async () => {
+    const firstRun = createDeferred();
+    runtimeProcessMock
+      .mockImplementationOnce(async (_file, options = {}) => {
+        options.onProgress?.({
+          phase: 'stage-start',
+          stage: 'preprocess-file',
+          elapsedMs: 0,
+          timestamp: Date.now(),
+        });
+        return firstRun.promise;
+      })
+      .mockImplementationOnce(async (_file, options = {}) => {
+        options.onProgress?.({
+          phase: 'pipeline-complete',
+          stage: 'encode',
+          elapsedMs: 5,
+          stageDurationsMs: { encode: 5 },
+          timestamp: Date.now(),
+        });
+        return new Blob(['mock-jpeg-2'], { type: 'image/jpeg' });
+      });
+
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    const addFilesInput = document.getElementById('add-files') as HTMLInputElement | null;
+    expect(addFilesInput).not.toBeNull();
+
+    await fireEvent.change(addFilesInput, {
+      target: { files: [new File(['second'], 'queued-second.jpg', { type: 'image/jpeg' })] },
+    });
+
+    expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+
+    firstRun.resolve(new Blob(['mock-jpeg-1'], { type: 'image/jpeg' }));
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(2);
     });
   });
 });

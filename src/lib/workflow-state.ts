@@ -34,6 +34,7 @@ export type WorkflowMode = 'idle' | 'ready' | 'running' | 'pausing' | 'paused' |
 export type PendingIntent = null | 'pause' | 'cancel' | 'restart-backend';
 export type QueueItemStatus = (typeof QUEUE_ITEM_STATES)[keyof typeof QUEUE_ITEM_STATES];
 export type ProcessingPath = 'unknown' | 'generated' | 'preserved';
+export type QueueRunnerState = 'idle' | 'claiming' | 'running' | 'settling';
 
 export interface QueueItemProgress {
   stage: string;
@@ -66,12 +67,21 @@ export interface WorkflowState {
   mode: WorkflowMode;
   activeQueueId: number | null;
   pendingIntent: PendingIntent;
+  runnerState: QueueRunnerState;
+  claimedQueueId: number | null;
+  restartRequested: boolean;
+  launchToken: string | null;
   queue: QueueItemState[];
   nextQueueId: number;
 }
 
 export type WorkflowAction =
   | { type: 'FILES_ENQUEUED'; files: File[]; settingsVersion?: number }
+  | { type: 'QUEUE_START_REQUESTED' }
+  | { type: 'QUEUE_ITEM_CLAIMED'; queueId: number; launchToken: string }
+  | { type: 'QUEUE_LAUNCH_CONFIRMED'; queueId: number; launchToken: string }
+  | { type: 'QUEUE_ITEM_SETTLED'; queueId: number; launchToken?: string | null }
+  | { type: 'QUEUE_RESTART_REQUESTED' }
   | { type: 'ITEM_STARTED'; queueId: number }
   | { type: 'ITEM_PROGRESS'; queueId: number; event: { stage: string; label: string; percent: number } }
   | { type: 'ITEM_COMPLETED'; queueId: number; result: QueueItemResult; processingPath?: ProcessingPath; settingsVersion?: number }
@@ -147,11 +157,34 @@ function revokeQueueItemUrls(
   }
 }
 
+function hasQueuedItems(queue: QueueItemState[]): boolean {
+  return queue.some((item) => item.status === QUEUE_ITEM_STATES.QUEUED);
+}
+
+function resetQueueRunnerState(
+  state: WorkflowState,
+  overrides: Partial<Pick<WorkflowState, 'runnerState' | 'claimedQueueId' | 'restartRequested' | 'launchToken' | 'activeQueueId'>> = {},
+): WorkflowState {
+  return {
+    ...state,
+    runnerState: 'idle',
+    claimedQueueId: null,
+    restartRequested: false,
+    launchToken: null,
+    activeQueueId: null,
+    ...overrides,
+  };
+}
+
 export function createWorkflowState(): WorkflowState {
   return {
     mode: 'idle',
     activeQueueId: null,
     pendingIntent: null,
+    runnerState: 'idle',
+    claimedQueueId: null,
+    restartRequested: false,
+    launchToken: null,
     queue: [],
     nextQueueId: 0,
   };
@@ -177,11 +210,66 @@ export function reduceWorkflowState(
         nextQueueId: state.nextQueueId + action.files.length,
       };
     }
+    case 'QUEUE_START_REQUESTED':
+      if (!hasQueuedItems(state.queue) || state.runnerState !== 'idle' || state.claimedQueueId !== null) {
+        return state;
+      }
+      return {
+        ...state,
+        runnerState: 'claiming',
+      };
+    case 'QUEUE_ITEM_CLAIMED': {
+      const nextItem = selectNextClaimableQueueItem(state);
+      if (!nextItem || nextItem.id !== action.queueId) {
+        return state;
+      }
+      return {
+        ...state,
+        runnerState: 'claiming',
+        claimedQueueId: action.queueId,
+        activeQueueId: action.queueId,
+        launchToken: action.launchToken,
+      };
+    }
+    case 'QUEUE_LAUNCH_CONFIRMED':
+      if (
+        state.claimedQueueId !== action.queueId ||
+        state.launchToken !== action.launchToken
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        runnerState: 'running',
+      };
+    case 'QUEUE_ITEM_SETTLED':
+      if (
+        state.claimedQueueId !== action.queueId ||
+        (
+          typeof action.launchToken === 'string' &&
+          state.launchToken !== action.launchToken
+        )
+      ) {
+        return state;
+      }
+      return resetQueueRunnerState(state, {
+        restartRequested: state.restartRequested,
+      });
+    case 'QUEUE_RESTART_REQUESTED':
+      if (!hasQueuedItems(state.queue)) {
+        return state;
+      }
+      return {
+        ...state,
+        restartRequested: true,
+      };
     case 'ITEM_STARTED':
       return {
         ...state,
         mode: state.pendingIntent === 'pause' ? 'pausing' : 'running',
         activeQueueId: action.queueId,
+        runnerState: 'running',
+        claimedQueueId: action.queueId,
         queue: updateQueueItem(state.queue, action.queueId, (item) => ({
           ...item,
           status: QUEUE_ITEM_STATES.PROCESSING,
@@ -206,7 +294,9 @@ export function reduceWorkflowState(
       };
     case 'ITEM_COMPLETED':
       return {
-        ...state,
+        ...resetQueueRunnerState(state, {
+          activeQueueId: state.activeQueueId === action.queueId ? null : state.activeQueueId,
+        }),
         queue: updateQueueItem(state.queue, action.queueId, (item) => ({
           ...item,
           status: QUEUE_ITEM_STATES.COMPLETED,
@@ -217,31 +307,30 @@ export function reduceWorkflowState(
           error: null,
           progress: null,
         })),
-        activeQueueId: state.activeQueueId === action.queueId ? null : state.activeQueueId,
         pendingIntent: state.pendingIntent === 'cancel' ? null : state.pendingIntent,
       };
     case 'ITEM_FAILED':
       return {
-        ...state,
+        ...resetQueueRunnerState(state, {
+          activeQueueId: state.activeQueueId === action.queueId ? null : state.activeQueueId,
+        }),
         queue: updateQueueItem(state.queue, action.queueId, (item) => ({
           ...item,
           status: QUEUE_ITEM_STATES.FAILED,
           error: action.error,
           progress: null,
         })),
-        activeQueueId: state.activeQueueId === action.queueId ? null : state.activeQueueId,
         pendingIntent: null,
       };
     case 'ITEM_CANCELLED':
       return {
-        ...state,
+        ...resetQueueRunnerState(state),
         queue: updateQueueItem(state.queue, action.queueId, (item) => ({
           ...item,
           status: QUEUE_ITEM_STATES.CANCELLED,
           error: action.error ?? 'Cancelled by user',
           progress: null,
         })),
-        activeQueueId: state.activeQueueId === action.queueId ? null : state.activeQueueId,
         mode: 'paused',
         pendingIntent: null,
       };
@@ -274,9 +363,12 @@ export function reduceWorkflowState(
       }
       const nextQueue = state.queue.filter((item) => item.id !== action.queueId);
       return {
-        ...state,
+        ...(state.activeQueueId === action.queueId || state.claimedQueueId === action.queueId
+          ? resetQueueRunnerState(state, {
+            mode: nextQueue.length === 0 ? 'idle' : state.mode,
+          })
+          : state),
         queue: nextQueue,
-        activeQueueId: state.activeQueueId === action.queueId ? null : state.activeQueueId,
         mode: nextQueue.length === 0 ? 'idle' : state.mode,
       };
     }
@@ -294,11 +386,10 @@ export function reduceWorkflowState(
       };
     case 'QUEUE_DRAINED':
       return {
-        ...state,
+        ...resetQueueRunnerState(state),
         mode: state.queue.some((item) => item.status === QUEUE_ITEM_STATES.COMPLETED || item.status === QUEUE_ITEM_STATES.STALE)
           ? 'done'
           : 'error',
-        activeQueueId: null,
         pendingIntent: null,
       };
     case 'QUEUE_RESET':
@@ -336,6 +427,25 @@ export function selectQueueCounts(state: WorkflowState) {
     failed: state.queue.filter((item) => item.status === QUEUE_ITEM_STATES.FAILED).length,
     total: state.queue.length,
   };
+}
+
+export function selectMayClaimNextQueueItem(state: WorkflowState): boolean {
+  return (
+    (state.runnerState === 'idle' || state.runnerState === 'claiming') &&
+    state.claimedQueueId === null &&
+    hasQueuedItems(state.queue)
+  );
+}
+
+export function selectNextClaimableQueueItem(state: WorkflowState): QueueItemState | null {
+  if (!selectMayClaimNextQueueItem(state)) {
+    return null;
+  }
+  return state.queue.find((item) => item.status === QUEUE_ITEM_STATES.QUEUED) ?? null;
+}
+
+export function selectShouldSuppressQueueStart(state: WorkflowState): boolean {
+  return !hasQueuedItems(state.queue) || state.runnerState !== 'idle' || state.claimedQueueId !== null;
 }
 
 export function selectQueueControlVisibility(state: WorkflowState): 'pause' | 'resume' | 'hidden' {
@@ -415,6 +525,26 @@ export function mapModeToLegacyWorkflowState(mode: WorkflowMode): string {
       return WORKFLOW_STATES.ERROR_RECOVERABLE;
     default:
       return WORKFLOW_STATES.EMPTY;
+  }
+}
+
+export function mapLegacyWorkflowStateToMode(state: string): WorkflowMode {
+  switch (state) {
+    case WORKFLOW_STATES.QUEUE_READY:
+      return 'ready';
+    case WORKFLOW_STATES.PROCESSING_ACTIVE:
+      return 'running';
+    case WORKFLOW_STATES.PROCESSING_PAUSING:
+      return 'pausing';
+    case WORKFLOW_STATES.PROCESSING_PAUSED:
+      return 'paused';
+    case WORKFLOW_STATES.PROCESSING_DONE:
+      return 'done';
+    case WORKFLOW_STATES.ERROR_RECOVERABLE:
+      return 'error';
+    case WORKFLOW_STATES.EMPTY:
+    default:
+      return 'idle';
   }
 }
 

@@ -38,6 +38,13 @@ vi.mock('../capabilities.js', () => ({
 
 import ImageProcessor from '../ImageProcessor.svelte';
 
+function readPersistedDiagnosticsEvents(): Array<{ name?: string; context?: Record<string, unknown> }> {
+  const persisted = JSON.parse(
+    window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+  ) as { events?: Array<{ name?: string; context?: Record<string, unknown> }> };
+  return Array.isArray(persisted.events) ? persisted.events : [];
+}
+
 function createRuntime() {
   return {
     process: diagnosticsMocks.runtimeProcessMock,
@@ -321,6 +328,52 @@ describe('ImageProcessor diagnostics', () => {
     });
 
     releaseProcessing();
+  });
+
+  it('records queue-runner breadcrumbs for a normal processing launch and settle', async () => {
+    let releaseProcessing!: (value: Blob) => void;
+    diagnosticsMocks.runtimeProcessMock.mockImplementationOnce(
+      async (_file: File, options: Record<string, unknown> = {}) => {
+        const onProgress = options.onProgress as ((event: Record<string, unknown>) => void) | undefined;
+        onProgress?.({
+          phase: 'stage-start',
+          stage: 'preprocess-file',
+          elapsedMs: 0,
+          fileName: 'primary.jpg',
+        });
+        await new Promise<Blob>((resolve) => {
+          releaseProcessing = resolve;
+        });
+        return new Blob(['first-output'], { type: 'image/jpeg' });
+      },
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [new File(['primary'], 'primary.jpg', { type: 'image/jpeg' })],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(diagnosticsMocks.runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      const eventsAfterSuppression = readPersistedDiagnosticsEvents();
+      expect(eventsAfterSuppression.some((event) => event.name === 'queue-start-requested')).toBe(true);
+      expect(eventsAfterSuppression.some((event) => event.name === 'queue-item-claimed')).toBe(true);
+      expect(eventsAfterSuppression.some((event) => event.name === 'queue-launch-confirmed')).toBe(true);
+    });
+
+    releaseProcessing(new Blob(['first-output'], { type: 'image/jpeg' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-results')).toHaveTextContent('1');
+    });
+
+    const finalEvents = readPersistedDiagnosticsEvents();
+    expect(finalEvents.some((event) => event.name === 'queue-item-settled')).toBe(true);
   });
 
   it('suppresses the recovered diagnostics popup while the explicit under-test flag is enabled', async () => {
