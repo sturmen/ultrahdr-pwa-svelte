@@ -1,3 +1,17 @@
+import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
+import { decodeRasterBuffer } from './raster-image.ts';
+import {
+  buildRuntimeAssetDiagnosticsContext,
+  fetchRuntimeAssetBuffer,
+  fetchRuntimeAssetText,
+  getRuntimeAssetCacheName,
+  resolveVersionedRuntimeAssetPath,
+} from './runtime-assets.ts';
+import {
+  JPEGLI_WASM_BINARY_ASSET,
+  JPEGLI_WASM_SCRIPT_ASSET,
+} from './runtime-asset-definitions.ts';
+
 export type JpegliEncodeOptions = {
   onProgress?: (progress: number, metadata?: Record<string, unknown>) => void;
   chunkRows?: number;
@@ -47,26 +61,6 @@ let jpegliWasmLoadState: 'idle' | 'loading' | 'ready' | 'failed' = 'idle';
 let jpegliWasmLoadError: Error | null = null;
 
 const DEFAULT_CHUNK_ROWS = 64;
-
-function resolveWasmBaseUrl(): string {
-  let baseUrl = import.meta.env.BASE_URL || '/';
-  if (!baseUrl.endsWith('/')) {
-    baseUrl += '/';
-  }
-  return baseUrl;
-}
-
-const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 'string'
-  ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
-  : '';
-
-function appendVersionQuery(url: string): string {
-  if (!WASM_ASSET_VERSION) {
-    return url;
-  }
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}v=${encodeURIComponent(WASM_ASSET_VERSION)}`;
-}
 
 type RuntimeGlobal = typeof globalThis & {
   createJpegliWasm?: ((options: JpegliWasmFactoryOptions) => Promise<JpegliWasmModule>) | null;
@@ -142,60 +136,8 @@ function classifyLoaderError(error: unknown): string {
   return 'unknown';
 }
 
-function resolveFetchableAssetUrl(assetUrl: string): string {
-  try {
-    return new URL(assetUrl, globalThis.location?.href || 'https://ultrahdr.invalid/').toString();
-  } catch {
-    return assetUrl;
-  }
-}
-
-type OfflineAssetSource = 'network' | 'cache';
-
-async function loadAssetWithOfflineFallback(
-  assetPath: string,
-): Promise<{ response: Response; cacheSource: OfflineAssetSource }> {
-  const requestUrl = resolveFetchableAssetUrl(assetPath);
-  try {
-    const response = await fetch(requestUrl, { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch JPEGli asset: ${response.status}`);
-    }
-    return {
-      response,
-      cacheSource: 'network',
-    };
-  } catch (fetchError) {
-    const cacheStorage = globalThis.caches;
-    if (!cacheStorage || typeof cacheStorage.match !== 'function') {
-      throw fetchError;
-    }
-
-    const cachedResponse = await cacheStorage.match(requestUrl) || await cacheStorage.match(assetPath);
-    if (!cachedResponse) {
-      throw fetchError;
-    }
-
-    return {
-      response: cachedResponse,
-      cacheSource: 'cache',
-    };
-  }
-}
-
-async function loadWasmBinaryWithOfflineFallback(
-  wasmBinaryPath: string,
-): Promise<{ wasmBinary: ArrayBuffer; cacheSource: OfflineAssetSource }> {
-  const { response, cacheSource } = await loadAssetWithOfflineFallback(wasmBinaryPath);
-  return {
-    wasmBinary: await response.arrayBuffer(),
-    cacheSource,
-  };
-}
-
 async function loadJpegliFactoryViaModuleImport(
-  wasmJsPath: string,
-): Promise<{ factory: JpegliWasmFactory; cacheSource: OfflineAssetSource }> {
+): Promise<{ factory: JpegliWasmFactory; cacheSource: 'network' | 'cache' }> {
   const existingFactory = getGlobalJpegliFactory();
   if (existingFactory) {
     return {
@@ -204,8 +146,7 @@ async function loadJpegliFactoryViaModuleImport(
     };
   }
 
-  const { response, cacheSource } = await loadAssetWithOfflineFallback(wasmJsPath);
-  const sourceText = await response.text();
+  const { asset: sourceText, cacheSource } = await fetchRuntimeAssetText(JPEGLI_WASM_SCRIPT_ASSET);
   if (typeof sourceText !== 'string' || sourceText.trim().length === 0) {
     throw new Error('JPEGli WASM wrapper script was empty');
   }
@@ -453,39 +394,48 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
     throw jpegliWasmLoadError;
   }
 
-  const baseUrl = resolveWasmBaseUrl();
-  const wasmBinaryPath = appendVersionQuery(`${baseUrl}assets/jpegli_wasm.wasm`);
-  const wasmJsPath = appendVersionQuery(`${baseUrl}assets/jpegli_wasm.js`);
   jpegliWasmLoadState = 'loading';
   recordJpegliDiagnostic('jpegli-loader-started', 'info', {
     trigger: 'module-load',
     hasGlobalFactory: getGlobalJpegliFactory() !== null,
+    ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_SCRIPT_ASSET, {
+      cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_SCRIPT_ASSET),
+    }),
   });
 
   jpegliWasmModulePromise = (async () => {
     try {
-      const { wasmBinary, cacheSource } = await loadWasmBinaryWithOfflineFallback(wasmBinaryPath);
+      const { asset: wasmBinary, cacheSource } = await fetchRuntimeAssetBuffer(JPEGLI_WASM_BINARY_ASSET);
       recordJpegliDiagnostic('jpegli-wasm-binary-fetched', 'info', {
         trigger: 'module-load',
-        byteLength: wasmBinary.byteLength,
-        cacheSource,
+        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
+          cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_BINARY_ASSET),
+          byteLength: wasmBinary.byteLength,
+          cacheSource,
+        }),
       });
 
-      const { factory, cacheSource: factoryCacheSource } = await loadJpegliFactoryViaModuleImport(wasmJsPath);
+      const { factory, cacheSource: factoryCacheSource } = await loadJpegliFactoryViaModuleImport();
       recordJpegliDiagnostic('jpegli-factory-resolved', 'info', {
         trigger: 'module-load',
         source: getGlobalJpegliFactory() ? 'global' : 'module-import',
-        cacheSource: factoryCacheSource,
+        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_SCRIPT_ASSET, {
+          cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_SCRIPT_ASSET),
+          cacheSource: factoryCacheSource,
+        }),
       });
 
       jpegliWasmModule = await factory({
         wasmBinary,
-        locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
+        locateFile: (path: string) => resolveVersionedRuntimeAssetPath(`assets/${path}`, 'wasm'),
       });
       jpegliWasmLoadState = 'ready';
       jpegliWasmLoadError = null;
       recordJpegliDiagnostic('jpegli-loader-ready', 'info', {
         trigger: 'module-load',
+        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
+          cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_BINARY_ASSET),
+        }),
       });
       return jpegliWasmModule as JpegliWasmModule;
     } catch (error) {
@@ -496,8 +446,11 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
       jpegliWasmLoadError = normalizedError;
       recordJpegliDiagnostic('jpegli-loader-failed', 'error', {
         trigger: 'module-load',
-        errorCategory: classifyLoaderError(error),
         message: errorMessage.slice(0, 200),
+        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
+          cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_BINARY_ASSET),
+          errorCategory: classifyLoaderError(error),
+        }),
       });
       throw normalizedError;
     }
@@ -615,5 +568,3 @@ export async function decodeJpegli(inputBytes: Uint8Array | ArrayBuffer): Promis
 export function __resetJpegliWasmModuleForTests(): void {
   resetJpegliWasmModuleState();
 }
-import { decodeRasterBuffer } from './raster-image.ts';
-import { getSharedDiagnosticsRecorder } from './diagnostics.ts';

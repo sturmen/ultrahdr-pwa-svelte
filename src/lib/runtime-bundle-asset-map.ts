@@ -1,3 +1,5 @@
+import { findRuntimeAssetDescriptorByPath } from './runtime-asset-definitions.ts';
+
 const DEFAULT_APP_ASSET_VERSION = 'dev-unversioned-app';
 
 export const RUNTIME_CACHE_PREFIX = 'uhdr-runtime';
@@ -56,15 +58,14 @@ export function resolveRuntimeBundleCacheName(
     return null;
   }
 
-  if (/\/assets\/(ultrahdr_wasm|jpegli_wasm|jpegtran_wasm)\.(js|wasm)$/.test(pathname)) {
+  const runtimeAsset = findRuntimeAssetDescriptorByPath(pathname);
+  if (runtimeAsset?.cacheKey === 'wasmAssets') {
     return cacheNames?.wasmAssets || null;
   }
-
-  if (/\/assets\/libheif\.wasm$/.test(pathname)) {
+  if (runtimeAsset?.cacheKey === 'libheifAssets') {
     return cacheNames?.libheifAssets || null;
   }
-
-  if (/\/assets\/ort-wasm.*\.(mjs|wasm)$/.test(pathname)) {
+  if (runtimeAsset?.cacheKey === 'onnxWasmAssets') {
     return cacheNames?.onnxWasmAssets || null;
   }
 

@@ -46,7 +46,8 @@ describe('WASM Encoder JavaScript Bindings', () => {
     const available = await isAvailable();
     expect(available).toBe(true);
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/assets/ultrahdr_wasm.wasm?v=test-wasm-version')
+      expect.stringContaining('/assets/ultrahdr_wasm.wasm?v=test-wasm-version'),
+      expect.objectContaining({ credentials: 'same-origin' }),
     );
     expect(typeof moduleFactoryOptions?.locateFile).toBe('function');
     expect(moduleFactoryOptions.locateFile('ultrahdr_wasm.wasm')).toContain(

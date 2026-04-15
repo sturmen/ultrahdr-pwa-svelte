@@ -5,6 +5,7 @@ import { registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { storeSharedFiles } from './lib/share-store.js';
+import { findRuntimeAssetDescriptorByPath } from './lib/runtime-asset-definitions.js';
 import {
     AI_MODEL_CACHE_PREFIX,
     AI_MODEL_CACHE_MAX_ENTRIES,
@@ -278,14 +279,17 @@ function postMessageResponse(event: ExtendableMessageEvent, payload: unknown): v
 }
 
 function isUltraHdrWasmAssetUrl(url: URL): boolean {
-    return /\/assets\/(ultrahdr_wasm|jpegli_wasm|jpegtran_wasm)\.(js|wasm)$/.test(url.pathname);
+    return findRuntimeAssetDescriptorByPath(url.pathname)?.cacheKey === 'wasmAssets';
 }
 
 function isLibheifWasmAssetUrl(url: URL): boolean {
-    return /\/assets\/libheif\.wasm$/.test(url.pathname);
+    return findRuntimeAssetDescriptorByPath(url.pathname)?.cacheKey === 'libheifAssets';
 }
 
 function isAiModelUrl(url: URL): boolean {
+    if (findRuntimeAssetDescriptorByPath(url.pathname)?.cacheKey === 'onnxWasmAssets') {
+        return true;
+    }
     return /\/models\/.*\.onnx(\.data)?$/.test(url.pathname);
 }
 

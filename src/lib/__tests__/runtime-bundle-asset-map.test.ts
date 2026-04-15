@@ -5,6 +5,9 @@ import {
   buildRuntimeBundleCacheNames,
   resolveRuntimeBundleCacheName,
 } from '../runtime-bundle-asset-map.ts';
+import {
+  REQUIRED_RUNTIME_ASSET_DESCRIPTORS,
+} from '../runtime-asset-definitions.ts';
 import { DEFAULT_REQUIRED_ASSET_SPECS } from '../../../scripts/build-runtime-bundle-manifest.ts';
 
 describe('runtime bundle asset map', () => {
@@ -31,5 +34,22 @@ describe('runtime bundle asset map', () => {
     ).length;
 
     expect(AI_MODEL_CACHE_MAX_ENTRIES).toBeGreaterThanOrEqual(requiredAiModelEntries);
+  });
+
+  it('keeps manifest runtime asset entries aligned with the canonical runtime asset descriptors', () => {
+    const runtimeAssetSpecs = DEFAULT_REQUIRED_ASSET_SPECS.filter((asset) =>
+      REQUIRED_RUNTIME_ASSET_DESCRIPTORS.some((descriptor) => descriptor.id === asset.id)
+    );
+
+    expect(runtimeAssetSpecs).toEqual(
+      REQUIRED_RUNTIME_ASSET_DESCRIPTORS.map((descriptor) =>
+        expect.objectContaining({
+          id: descriptor.id,
+          sourcePath: descriptor.sourcePath,
+          url: descriptor.path,
+          cacheName: descriptor.bundleCacheName,
+        })
+      ),
+    );
   });
 });

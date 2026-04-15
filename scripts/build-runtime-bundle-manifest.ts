@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import packageJson from '../package.json' with { type: 'json' };
+import { REQUIRED_RUNTIME_ASSET_DESCRIPTORS } from '../src/lib/runtime-asset-definitions.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +28,19 @@ export type RequiredAssetSpec = {
   kind: AssetKind;
   versionScope?: VersionScope;
 };
+
+function toRequiredAssetSpec(
+  descriptor: (typeof REQUIRED_RUNTIME_ASSET_DESCRIPTORS)[number],
+): RequiredAssetSpec {
+  return {
+    id: descriptor.id,
+    sourcePath: descriptor.sourcePath,
+    url: descriptor.path,
+    cacheName: descriptor.bundleCacheName,
+    kind: descriptor.kind,
+    versionScope: descriptor.versionKind === 'none' ? undefined : descriptor.versionKind,
+  };
+}
 
 type BundleVersionOptions = {
   appVersion: string;
@@ -139,102 +153,7 @@ export const DEFAULT_REQUIRED_ASSET_SPECS: readonly RequiredAssetSpec[] = Object
     kind: 'smoke',
     versionScope: 'app',
   },
-  {
-    id: 'ultrahdr-wasm-js',
-    sourcePath: 'public/assets/ultrahdr_wasm.js',
-    url: 'assets/ultrahdr_wasm.js',
-    cacheName: 'uhdr-wasm-assets-runtime-bundle',
-    kind: 'runtime-script',
-    versionScope: 'wasm',
-  },
-  {
-    id: 'ultrahdr-wasm-bin',
-    sourcePath: 'public/assets/ultrahdr_wasm.wasm',
-    url: 'assets/ultrahdr_wasm.wasm',
-    cacheName: 'uhdr-wasm-assets-runtime-bundle',
-    kind: 'wasm',
-    versionScope: 'wasm',
-  },
-  {
-    id: 'jpegli-wasm-js',
-    sourcePath: 'public/assets/jpegli_wasm.js',
-    url: 'assets/jpegli_wasm.js',
-    cacheName: 'uhdr-wasm-assets-runtime-bundle',
-    kind: 'runtime-script',
-    versionScope: 'wasm',
-  },
-  {
-    id: 'jpegli-wasm-bin',
-    sourcePath: 'public/assets/jpegli_wasm.wasm',
-    url: 'assets/jpegli_wasm.wasm',
-    cacheName: 'uhdr-wasm-assets-runtime-bundle',
-    kind: 'wasm',
-    versionScope: 'wasm',
-  },
-  {
-    id: 'libheif-wasm-bin',
-    sourcePath: 'node_modules/libheif-js/libheif-wasm/libheif.wasm',
-    url: 'assets/libheif.wasm',
-    cacheName: 'uhdr-libheif-assets-runtime-bundle',
-    kind: 'wasm',
-    versionScope: 'app',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-mjs',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
-    url: 'assets/ort-wasm-simd-threaded.mjs',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'runtime-script',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-asyncify-mjs',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs',
-    url: 'assets/ort-wasm-simd-threaded.asyncify.mjs',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'runtime-script',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-jsep-mjs',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs',
-    url: 'assets/ort-wasm-simd-threaded.jsep.mjs',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'runtime-script',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-jspi-mjs',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.mjs',
-    url: 'assets/ort-wasm-simd-threaded.jspi.mjs',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'runtime-script',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-asyncify',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm',
-    url: 'assets/ort-wasm-simd-threaded.asyncify.wasm',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'wasm',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-jsep',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm',
-    url: 'assets/ort-wasm-simd-threaded.jsep.wasm',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'wasm',
-  },
-  {
-    id: 'ort-wasm-simd-threaded-jspi',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.wasm',
-    url: 'assets/ort-wasm-simd-threaded.jspi.wasm',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'wasm',
-  },
-  {
-    id: 'ort-wasm-simd-threaded',
-    sourcePath: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-    url: 'assets/ort-wasm-simd-threaded.wasm',
-    cacheName: 'uhdr-onnx-wasm-runtime-bundle',
-    kind: 'wasm',
-  },
+  ...REQUIRED_RUNTIME_ASSET_DESCRIPTORS.map(toRequiredAssetSpec),
 ]);
 
 function appendVersionQuery(url: string, version: string): string {

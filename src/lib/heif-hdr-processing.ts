@@ -1,6 +1,11 @@
 import libheifFactory from './libheif-browser.js';
 import { extractExifApp1PayloadFromInput } from './input-exif.js';
 import { extractExifOrientation } from './exif-utils.js';
+import {
+    fetchRuntimeAssetBuffer,
+    resolveRuntimeAssetUrl,
+} from './runtime-assets.ts';
+import { LIBHEIF_WASM_BINARY_ASSET } from './runtime-asset-definitions.ts';
 import type {
     FloatHdrIntentPayload,
     HdrIntentHeifResult,
@@ -81,17 +86,6 @@ type FloatDecodedHdrIntentImage = Pick<
 type DecodedHdrIntentImage = PackedDecodedHdrIntentImage | FloatDecodedHdrIntentImage;
 
 let libheif: LibHeifModule | null = null;
-const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
-    ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
-    : '';
-
-function appendVersionQuery(url: string): string {
-    if (!APP_ASSET_VERSION) {
-        return url;
-    }
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}v=${encodeURIComponent(APP_ASSET_VERSION)}`;
-}
 
 function findNclxColorInfo(bytes: Uint8Array): HdrNclxInfo | null {
     if (!(bytes instanceof Uint8Array) || bytes.length < 12) {
@@ -322,12 +316,8 @@ async function initLibHeif(): Promise<LibHeifModule> {
     if (libheif) {
         return libheif;
     }
-    const wasmUrl = appendVersionQuery((import.meta.env.BASE_URL || '/') + 'assets/libheif.wasm');
-    const response = await fetch(wasmUrl);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch libheif WASM: ${response.statusText}`);
-    }
-    const wasmBinary = await response.arrayBuffer();
+    const wasmUrl = resolveRuntimeAssetUrl(LIBHEIF_WASM_BINARY_ASSET);
+    const { asset: wasmBinary } = await fetchRuntimeAssetBuffer(LIBHEIF_WASM_BINARY_ASSET);
     libheif = await libheifFactory({
         wasmBinary,
         locateFile: (path) => (path.endsWith('.wasm') ? wasmUrl : path),

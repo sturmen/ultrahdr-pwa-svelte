@@ -4,6 +4,16 @@ import type {
   HdrIntentColorTransfer,
 } from './processing-types.js';
 import type { GainMapMetadata } from './gain-map-metadata.js';
+import {
+  fetchRuntimeAssetBuffer,
+  fetchRuntimeAssetText,
+  resolveRuntimeAssetUrl,
+  resolveVersionedRuntimeAssetPath,
+} from './runtime-assets.ts';
+import {
+  ULTRAHDR_WASM_BINARY_ASSET,
+  ULTRAHDR_WASM_SCRIPT_ASSET,
+} from './runtime-asset-definitions.ts';
 
 type HdrIntentFormat = 'rgba1010102' | 'rgbaf16' | 'p010';
 type ReusableBufferName =
@@ -127,20 +137,6 @@ let _wasmModule: WasmModule | null = null;
 let _wasmLoaded = false;
 let _wasmLoadError: unknown = null;
 
-const WASM_ASSET_VERSION =
-  typeof import.meta.env.VITE_WASM_ASSET_VERSION === 'string'
-    ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
-    : '';
-
-function appendVersionQuery(url: string): string {
-  if (!WASM_ASSET_VERSION) {
-    return url;
-  }
-
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}v=${encodeURIComponent(WASM_ASSET_VERSION)}`;
-}
-
 function getRuntimeGlobal(): RuntimeGlobal {
   return (typeof globalThis !== 'undefined' ? globalThis : {}) as RuntimeGlobal;
 }
@@ -152,36 +148,6 @@ function toWasmFactory(candidate: unknown): WasmFactory | null {
 function getGlobalWasmFactory(): WasmFactory | null {
   const runtimeGlobal = getRuntimeGlobal();
   return toWasmFactory(runtimeGlobal.UHDREncoderModule ?? runtimeGlobal.window?.UHDREncoderModule);
-}
-
-function resolveWasmBaseUrl(): string {
-  let baseUrl = import.meta.env.BASE_URL || '/';
-  if (!baseUrl.endsWith('/')) {
-    baseUrl += '/';
-  }
-  return baseUrl;
-}
-
-async function loadWasmBinaryWithOfflineFallback(wasmBinaryPath: string): Promise<ArrayBuffer> {
-  try {
-    const wasmResponse = await fetch(wasmBinaryPath);
-    if (!wasmResponse.ok) {
-      throw new Error(`Failed to fetch WASM binary: ${wasmResponse.status} ${wasmResponse.statusText}`);
-    }
-    return wasmResponse.arrayBuffer();
-  } catch (fetchError) {
-    const cacheStorage = globalThis.caches;
-    if (!cacheStorage || typeof cacheStorage.match !== 'function') {
-      throw fetchError;
-    }
-
-    const cachedResponse = await cacheStorage.match(wasmBinaryPath);
-    if (!cachedResponse) {
-      throw fetchError;
-    }
-
-    return cachedResponse.arrayBuffer();
-  }
 }
 
 async function loadWasmFactoryViaModuleImport(wasmJsPath: string): Promise<WasmFactory> {
@@ -203,12 +169,7 @@ async function loadWasmFactoryViaModuleImport(wasmJsPath: string): Promise<WasmF
 }
 
 async function loadWasmFactoryViaEval(wasmJsPath: string): Promise<WasmFactory> {
-  const response = await fetch(wasmJsPath, { credentials: 'same-origin' });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch WASM script from ${wasmJsPath}: ${response.status}`);
-  }
-
-  const source = await response.text();
+  const { asset: source } = await fetchRuntimeAssetText(ULTRAHDR_WASM_SCRIPT_ASSET);
   const evaluateFactory = new Function(
     `${source}\n` +
       'return (typeof UHDREncoderModule === "function" ? UHDREncoderModule : ' +
@@ -298,7 +259,7 @@ async function loadWasmFactory(): Promise<WasmFactory> {
     return preloadedFactory;
   }
 
-  const wasmJsPath = appendVersionQuery(`${resolveWasmBaseUrl()}assets/ultrahdr_wasm.js`);
+  const wasmJsPath = resolveRuntimeAssetUrl(ULTRAHDR_WASM_SCRIPT_ASSET);
   console.log('[WASM] Loading from:', wasmJsPath);
 
   if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
@@ -330,10 +291,10 @@ async function loadWasmModule(): Promise<void> {
 
   try {
     const UHDREncoderModule = await loadWasmFactory();
-    const wasmBinaryPath = appendVersionQuery(`${resolveWasmBaseUrl()}assets/ultrahdr_wasm.wasm`);
+    const wasmBinaryPath = resolveRuntimeAssetUrl(ULTRAHDR_WASM_BINARY_ASSET);
     console.log('[WASM] WASM binary path:', wasmBinaryPath);
     console.log('[WASM] Pre-fetching WASM binary...');
-    const wasmBinary = await loadWasmBinaryWithOfflineFallback(wasmBinaryPath);
+    const { asset: wasmBinary } = await fetchRuntimeAssetBuffer(ULTRAHDR_WASM_BINARY_ASSET);
     console.log('[WASM] WASM binary fetched:', wasmBinary.byteLength, 'bytes');
 
     _wasmModule = await UHDREncoderModule({
@@ -348,7 +309,6 @@ async function loadWasmModule(): Promise<void> {
 
     _wasmLoaded = true;
     console.log('[WASM] libultrahdr module initialized');
-    console.log('[WASM] Asset version token:', WASM_ASSET_VERSION || '(none)');
     console.log('[WASM] Module keys:', Object.keys(_wasmModule));
     console.log('[WASM] Module.HEAPU8 type:', typeof _wasmModule.HEAPU8);
     console.log('[WASM] Module.buffer type:', typeof _wasmModule.buffer);

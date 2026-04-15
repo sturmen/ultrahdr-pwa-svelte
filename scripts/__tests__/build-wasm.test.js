@@ -106,10 +106,11 @@ describe('ultrahdr wasm dimension guard', () => {
     );
   });
 
-  it('includes jpegtran wasm assets in the service worker cache matcher', () => {
+  it('classifies runtime wasm assets through the shared descriptor matcher in the service worker', () => {
     const swPath = path.resolve(process.cwd(), 'src/sw.ts');
     const swContent = fs.readFileSync(swPath, 'utf8');
-    expect(swContent).toMatch(/jpegtran_wasm/);
+    expect(swContent).toMatch(/findRuntimeAssetDescriptorByPath/);
+    expect(swContent).toMatch(/cacheKey === 'wasmAssets'/);
     expect(swContent).toMatch(/isUltraHdrWasmAssetUrl/);
   });
 

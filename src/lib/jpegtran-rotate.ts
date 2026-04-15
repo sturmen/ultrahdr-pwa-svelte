@@ -1,3 +1,12 @@
+import {
+  fetchRuntimeAssetText,
+  resolveRuntimeAssetUrl,
+  resolveVersionedRuntimeAssetPath,
+} from './runtime-assets.ts';
+import {
+  JPEGTRAN_WASM_SCRIPT_ASSET,
+} from './runtime-asset-definitions.ts';
+
 let jpegtranWasmModule: {
   _jpegtran_wasm_create(): number;
   _jpegtran_wasm_destroy(state: number): void;
@@ -17,10 +26,6 @@ let jpegtranWasmModule: {
   HEAPU8: Uint8Array;
 } | null = null;
 
-const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 'string'
-  ? import.meta.env.VITE_WASM_ASSET_VERSION.trim()
-  : '';
-
 const TRANSFORM_CODE_BY_NAME: Record<string, number> = Object.freeze({
   flipH: 1,
   flipV: 2,
@@ -32,22 +37,6 @@ const TRANSFORM_CODE_BY_NAME: Record<string, number> = Object.freeze({
 });
 
 const JPEGTRAN_ERROR_IMPERFECT = 2;
-
-function resolveWasmBaseUrl(): string {
-  let baseUrl = import.meta.env.BASE_URL || '/';
-  if (!baseUrl.endsWith('/')) {
-    baseUrl += '/';
-  }
-  return baseUrl;
-}
-
-function appendVersionQuery(url: string): string {
-  if (!WASM_ASSET_VERSION) {
-    return url;
-  }
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}v=${encodeURIComponent(WASM_ASSET_VERSION)}`;
-}
 
 function toUint8Array(inputBytes: Uint8Array | ArrayBuffer): Uint8Array {
   if (inputBytes instanceof Uint8Array) {
@@ -89,7 +78,6 @@ export async function ensureJpegtranLoaded() {
     return jpegtranWasmModule;
   }
 
-  const baseUrl = resolveWasmBaseUrl();
   const runtime = globalThis as typeof globalThis & {
     createJpegtranWasm?: (options: Record<string, unknown>) => Promise<typeof jpegtranWasmModule>;
     window?: { createJpegtranWasm?: (options: Record<string, unknown>) => Promise<typeof jpegtranWasmModule> };
@@ -97,32 +85,31 @@ export async function ensureJpegtranLoaded() {
   const globalFactory = runtime.createJpegtranWasm || runtime.window?.createJpegtranWasm;
   if (typeof globalFactory === 'function') {
     jpegtranWasmModule = await globalFactory({
-      locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
+      locateFile: (path: string) => resolveVersionedRuntimeAssetPath(`assets/${path}`, 'wasm'),
     });
     return jpegtranWasmModule;
   }
 
-  const wasmJsPath = appendVersionQuery(`${baseUrl}assets/jpegtran_wasm.js`);
+  const wasmJsPath = resolveRuntimeAssetUrl(JPEGTRAN_WASM_SCRIPT_ASSET);
   try {
     const importedModule = await import(/* @vite-ignore */ wasmJsPath);
     const createWasm = importedModule?.default || importedModule?.createJpegtranWasm;
     if (typeof createWasm === 'function') {
       jpegtranWasmModule = await createWasm({
-        locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
+        locateFile: (path: string) => resolveVersionedRuntimeAssetPath(`assets/${path}`, 'wasm'),
       });
       return jpegtranWasmModule;
     }
     throw new Error('createJpegtranWasm not found in imported module');
   } catch {
-    const response = await fetch(wasmJsPath);
-    const source = typeof response.text === 'function' ? await response.text() : '';
+    const { asset: source } = await fetchRuntimeAssetText(JPEGTRAN_WASM_SCRIPT_ASSET);
     const evaluateFactory = new Function(
       `${source}\nreturn (typeof createJpegtranWasm === "function" ? createJpegtranWasm : (typeof globalThis !== "undefined" ? globalThis.createJpegtranWasm : null));`,
     );
     const createWasm = evaluateFactory();
     if (typeof createWasm === 'function') {
       jpegtranWasmModule = await createWasm({
-        locateFile: (path: string) => appendVersionQuery(`${baseUrl}assets/${path}`),
+        locateFile: (path: string) => resolveVersionedRuntimeAssetPath(`assets/${path}`, 'wasm'),
       });
       return jpegtranWasmModule;
     }
