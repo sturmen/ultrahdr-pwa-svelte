@@ -9,6 +9,10 @@ import {
   registerLaunchQueueConsumer,
 } from '../share-target-launch.js';
 
+const appTestMocks = vi.hoisted(() => ({
+  warmRuntimeForUpdatedAssetVersion: vi.fn(async () => {}),
+}));
+
 const runtimeInitializeMock = vi.fn(
   async () => ({ ready: true, resolvedExecutionProvider: 'webgpu' }),
 );
@@ -61,6 +65,10 @@ vi.mock('../processing.js', () => ({
     'gmnet-smoke-run': 'Run GMNet smoke test',
     'startup-ready': 'Finalize startup readiness',
   },
+}));
+
+vi.mock('../runtime-post-update-warmup.ts', () => ({
+  warmRuntimeForUpdatedAssetVersion: appTestMocks.warmRuntimeForUpdatedAssetVersion,
 }));
 
 type Deferred<T> = {
@@ -124,6 +132,7 @@ describe('App shell and startup gate', () => {
       ready: true,
       resolvedExecutionProvider: 'webgpu',
     });
+    appTestMocks.warmRuntimeForUpdatedAssetVersion.mockResolvedValue(undefined);
     window.history.replaceState({}, '', '/');
   });
 
@@ -151,6 +160,26 @@ describe('App shell and startup gate', () => {
       expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
     });
     expect(screen.getByTestId('runtime-init-provider')).toHaveTextContent(/webgl/i);
+  });
+
+  it('waits for first-launch runtime warmup before rendering the converter UI', async () => {
+    const warmupGate = deferred<void>();
+    appTestMocks.warmRuntimeForUpdatedAssetVersion.mockReturnValueOnce(warmupGate.promise);
+
+    render(App);
+
+    expect(screen.getByTestId('runtime-init-loading')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(runtimeInitializeMock).toHaveBeenCalledTimes(1);
+      expect(appTestMocks.warmRuntimeForUpdatedAssetVersion).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId('tab-convert')).not.toBeInTheDocument();
+
+    warmupGate.resolve();
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-convert')).toBeInTheDocument();
+    });
   });
 
   it('renders a minimal header and keeps trust messaging on the About page', async () => {

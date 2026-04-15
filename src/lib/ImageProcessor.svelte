@@ -248,6 +248,12 @@
   const VIEWER_DESKTOP_CHROME_IDLE_MS = 1600;
   let zipRuntimePromise: Promise<typeof import("jszip").default> | null = null;
   const deferredPreviewFailureKeys = new Set();
+  const queueArtifactRetentionPolicy =
+    capabilities.isIOS && processingProfile.memoryTier === "low"
+      ? "low-memory-ios"
+      : "default";
+  const shouldAggressivelyReleaseQueueArtifacts =
+    queueArtifactRetentionPolicy === "low-memory-ios";
 
   function isUnderTestDiagnosticsMode(): boolean {
     const runtime = globalThis as typeof globalThis & {
@@ -913,6 +919,9 @@
       gmnetCheckpointResumed: latestPipelineEvent?.gmnetCheckpointResumed ?? null,
       documentHidden: typeof document === "undefined" ? null : document.hidden,
       lastPageHideAt,
+      hadPendingAppUpdate: Boolean(
+        pwaUpdateState?.pendingUntilIdle || pwaUpdateState?.updateAvailable,
+      ),
       storageQuotaBytes: null,
       storageUsageBytes: null,
       storageRemainingBytes: null,
@@ -2045,6 +2054,24 @@
       artifactBytes: blob.size,
       trigger: "processing-complete",
     });
+    if (shouldAggressivelyReleaseQueueArtifacts) {
+      recordStorageDiagnostics(globalThis, {
+        type: "queue-artifact-spilled-to-storage",
+        queueId: queueItem.id,
+        artifactKind: "output",
+        artifactBytes: blob.size,
+        retentionPolicy: queueArtifactRetentionPolicy,
+        trigger: "processing-complete",
+      });
+      recordStorageDiagnostics(globalThis, {
+        type: "queue-artifact-memory-release",
+        queueId: queueItem.id,
+        artifactKind: "output",
+        artifactBytes: blob.size,
+        retentionPolicy: queueArtifactRetentionPolicy,
+        trigger: "processing-complete",
+      });
+    }
     let previewBlob;
     try {
       previewBlob = await createPreviewBlobFromImageBlob(blob);

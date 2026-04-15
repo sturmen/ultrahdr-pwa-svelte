@@ -37,6 +37,7 @@ vi.mock('../capabilities.js', () => ({
 }));
 
 import ImageProcessor from '../ImageProcessor.svelte';
+import { getCapabilities, getProcessingProfile } from '../capabilities.js';
 
 function readPersistedDiagnosticsEvents(): Array<{ name?: string; context?: Record<string, unknown> }> {
   const persisted = JSON.parse(
@@ -58,9 +59,29 @@ function createRuntime() {
 describe('ImageProcessor diagnostics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    diagnosticsMocks.runtimeProcessMock.mockReset();
+    diagnosticsMocks.runtimeProcessMock.mockResolvedValue(
+      new Blob(['output'], { type: 'image/jpeg' }),
+    );
     window.localStorage.clear();
     __resetShareStoreForTests();
+    delete (window as typeof window & { __ultrahdrDiagnosticsRecorder?: unknown })
+      .__ultrahdrDiagnosticsRecorder;
     delete (window as typeof window & { __ULTRAHDR_UNDER_TEST__?: boolean }).__ULTRAHDR_UNDER_TEST__;
+    vi.mocked(getCapabilities).mockReturnValue({
+      userAgent: 'test-agent',
+      deviceMemory: 8,
+      isIOS: false,
+      isAndroid: false,
+      isSafari: false,
+      isStandalone: false,
+      supportsShare: true,
+      supportsFileShare: false,
+      supportsShareTarget: true,
+      supportsWakeLock: false,
+      supportsOffscreenWorker: true,
+    });
+    vi.mocked(getProcessingProfile).mockReturnValue({ memoryTier: 'mid' });
     window.matchMedia = vi.fn().mockImplementation(() => ({
       matches: false,
       media: '(min-width: 1024px)',
@@ -170,6 +191,56 @@ describe('ImageProcessor diagnostics', () => {
 
     expect(screen.getByText(/possible memory issue/i)).toBeInTheDocument();
     expect(screen.getByText(/allocation-failure/i)).toBeInTheDocument();
+  });
+
+  it('records iPhone storage spill and memory release breadcrumbs after processing completes', async () => {
+    vi.mocked(getCapabilities).mockReturnValue({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+      deviceMemory: null,
+      isIOS: true,
+      isAndroid: false,
+      isSafari: true,
+      isStandalone: true,
+      supportsShare: true,
+      supportsFileShare: false,
+      supportsShareTarget: true,
+      supportsWakeLock: false,
+      supportsOffscreenWorker: true,
+    });
+    vi.mocked(getProcessingProfile).mockReturnValue({ memoryTier: 'low' });
+    diagnosticsMocks.runtimeProcessMock.mockResolvedValue(
+      new Blob(['output'], { type: 'image/jpeg' }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: [new File(['input'], 'memory-sensitive.heic', { type: 'image/heic' })],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      const events = readPersistedDiagnosticsEvents();
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'queue-artifact-spilled-to-storage',
+            context: expect.objectContaining({
+              queueId: 0,
+              retentionPolicy: 'low-memory-ios',
+            }),
+          }),
+          expect.objectContaining({
+            name: 'queue-artifact-memory-release',
+            context: expect.objectContaining({
+              queueId: 0,
+              artifactKind: 'output',
+              retentionPolicy: 'low-memory-ios',
+            }),
+          }),
+        ]),
+      );
+    });
   });
 
   it('persists a sanitized recovery snapshot while stage progress is in flight', async () => {

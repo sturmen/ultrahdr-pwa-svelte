@@ -21,6 +21,7 @@
 - `src/lib/processing.ts`: runtime initialization pipeline, worker/main-thread fallback, inference heartbeat tracking, runtime failure persistence.
 - `src/lib/runtime-orchestrator.ts`: compact runtime state-machine orchestrator used for adapter-based initialization and processing.
 - `src/lib/runtime-*.ts`: initialization policy, cache policy, planner, reducer, state machine, capability detection, and runtime contract types.
+- `src/lib/runtime-post-update-warmup.ts`: first-launch-after-asset-version-change runtime warmup for JPEGli/libultrahdr to reduce cold-start processing pressure on iPhone/Safari.
 - `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`: shared offline-first runtime asset descriptors, versioned URL resolution, fetch/cache fallback, and loader diagnostics context for WASM/module assets.
 - `src/lib/diagnostics-events.ts`: typed diagnostics breadcrumb helpers and domain event-name source of truth used by UI, runtime init, pipeline telemetry, and runtime asset loaders.
 - `src/lib/processing-*.ts`: route planning, progress, queueing, preferences, runtime reducer, worker protocol, and processing route types.
@@ -38,8 +39,10 @@
 - Adapter orchestration flow: `src/lib/runtime-orchestrator.ts` coordinates initialization and processing through worker and main-thread adapters with explicit fallback behavior.
 - Offline bundle flow: `src/sw.ts` precaches app assets, validates the runtime bundle manifest, repairs corrupted caches, and answers bundle-management messages from the app.
 - Runtime asset loading flow: `src/lib/runtime-assets.ts` and `src/lib/runtime-asset-definitions.ts` provide the canonical runtime asset inventory used by wasm/module loaders, the manifest builder, cache-name resolution, and service-worker bundle classification.
+- Asset-version runtime warmup flow: `src/lib/runtime-post-update-warmup.ts` detects the first launch of a new app asset version, warms JPEGli and libultrahdr before the editor becomes interactive, persists the warmed asset version marker, and records typed startup breadcrumbs for warmup start/success/failure.
 - Diagnostics emission flow: `src/lib/diagnostics-events.ts` is the canonical breadcrumb factory layer; feature modules should use its typed domain helpers instead of calling `DiagnosticsRecorder.record(...)` directly.
 - Share target flow: `src/lib/share-target-launch.js` and `src/lib/share-store.ts` recover files launched through the installed PWA.
+- Low-memory iPhone retention flow: `src/lib/share-store.ts` treats persisted queue artifacts as the source of truth on low-memory iOS, avoids duplicate in-memory blob mirrors only after successful persistence, keeps the RAM fallback when an IndexedDB write fails, and serializes queued inputs into blob-backed records so iPhone relaunch recovery can reconstruct `File` objects reliably; `src/lib/ImageProcessor.svelte` rehydrates outputs on demand.
 - Queue runner flow: `src/lib/workflow-state.ts` owns queue start, claim, launch, settle, and restart intent; `ImageProcessor.svelte` is the thin imperative shell that dispatches those transitions and invokes `runtime.process(...)`.
 
 ## Commands

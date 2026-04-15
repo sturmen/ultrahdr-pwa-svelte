@@ -102,6 +102,7 @@ vi.mock('../capabilities.js', () => ({
 }));
 
 import ImageProcessor from '../ImageProcessor.svelte';
+import { getCapabilities, getProcessingProfile } from '../capabilities.js';
 
 function createDeferred() {
   let resolve: (value?: Blob | PromiseLike<Blob>) => void;
@@ -132,6 +133,20 @@ function makeFiles(count = 1) {
 describe('ImageProcessor storage-backed queue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getCapabilities).mockReturnValue({
+      userAgent: 'test-agent',
+      deviceMemory: 8,
+      isIOS: false,
+      isAndroid: false,
+      isSafari: false,
+      isStandalone: false,
+      supportsShare: false,
+      supportsFileShare: false,
+      supportsShareTarget: true,
+      supportsWakeLock: false,
+      supportsOffscreenWorker: true,
+    });
+    vi.mocked(getProcessingProfile).mockReturnValue({ memoryTier: 'mid' });
     loadQueueStateMock.mockReset();
     loadQueueStateMock.mockResolvedValue(null);
     normalizePersistedQueueStateMock.mockReset();
@@ -405,6 +420,58 @@ describe('ImageProcessor storage-backed queue', () => {
     });
 
     expect(storeQueueOutputPreviewBlobMock).toHaveBeenCalledWith(0, expect.any(Blob));
+  });
+
+  it('keeps completed iPhone inputs persisted so later reuse paths still work while export stays storage-backed', async () => {
+    vi.mocked(getCapabilities).mockReturnValue({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1',
+      deviceMemory: null,
+      isIOS: true,
+      isAndroid: false,
+      isSafari: true,
+      isStandalone: true,
+      supportsShare: false,
+      supportsFileShare: false,
+      supportsShareTarget: true,
+      supportsWakeLock: false,
+      supportsOffscreenWorker: true,
+    });
+    vi.mocked(getProcessingProfile).mockReturnValue({ memoryTier: 'low' });
+    getQueueInputFileMock.mockResolvedValue(
+      new File(['stored-0'], 'photo-0.jpg', { type: 'image/jpeg' }),
+    );
+    getQueueOutputBlobMock.mockResolvedValue(
+      new Blob(['stored-output'], { type: 'image/jpeg' }),
+    );
+    runtimeProcessMock.mockResolvedValue(
+      new Blob(['runtime-output'], { type: 'image/jpeg' }),
+    );
+
+    render(ImageProcessor, {
+      props: {
+        files: makeFiles(1),
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(storeQueueOutputBlobMock).toHaveBeenCalledWith(0, expect.any(Blob));
+    });
+
+    expect(deleteQueuePayloadsMock).not.toHaveBeenCalledWith(
+      0,
+      expect.objectContaining({
+        deleteInput: true,
+      }),
+    );
+
+    await fireEvent.click(screen.getByTestId('tab-results'));
+    await fireEvent.click(screen.getByRole('button', { name: /^export \(1\)$/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /^download$/i }));
+
+    await waitFor(() => {
+      expect(getQueueOutputBlobMock).toHaveBeenCalledWith(0);
+    });
   });
 
   it('restores completed items from preview storage without hydrating the full output artifact', async () => {

@@ -272,6 +272,15 @@ describe('diagnostics', () => {
         recentEvents: expect.arrayContaining([
           expect.objectContaining({
             category: 'lifecycle',
+            name: 'post-completion-relaunch-classified',
+            context: expect.objectContaining({
+              documentHidden: false,
+              lastPageHideAt: null,
+              hadPendingAppUpdate: false,
+            }),
+          }),
+          expect.objectContaining({
+            category: 'lifecycle',
             name: 'foreground-restart-without-pagehide',
           }),
           expect.objectContaining({

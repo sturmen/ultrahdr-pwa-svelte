@@ -94,12 +94,16 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     queueRestoredFromPersistedPreviews: 'queue-restored-from-persisted-previews',
     outputPreviewPersisted: 'output-preview-persisted',
     outputArtifactPersisted: 'output-artifact-persisted',
+    queueArtifactSpilledToStorage: 'queue-artifact-spilled-to-storage',
+    queueArtifactMemoryRelease: 'queue-artifact-memory-release',
+    queueInputMemoryRelease: 'queue-input-memory-release',
   },
   lifecycle: {
     visibilityChanged: 'visibility-changed',
     pagehide: 'pagehide',
     recoveredPopupOpened: 'recovered-popup-opened',
     recoveredPopupSuppressed: 'recovered-popup-suppressed',
+    postCompletionRelaunchClassified: 'post-completion-relaunch-classified',
   },
   runtimeInit: {
     jpegliStartupBootstrapStarted: 'jpegli-startup-bootstrap-started',
@@ -109,6 +113,9 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     jpegliStartupRepairSucceeded: 'jpegli-startup-repair-succeeded',
     jpegliStartupBootstrapRetried: 'jpegli-startup-bootstrap-retried',
     jpegliStartupBootstrapRecovered: 'jpegli-startup-bootstrap-recovered',
+    assetVersionRuntimeWarmupStarted: 'asset-version-runtime-warmup-started',
+    assetVersionRuntimeWarmupCompleted: 'asset-version-runtime-warmup-completed',
+    assetVersionRuntimeWarmupFailed: 'asset-version-runtime-warmup-failed',
   },
   runtimeAsset: {
     jpegliLoaderStarted: 'jpegli-loader-started',
@@ -263,6 +270,22 @@ export type StorageDiagnosticsEvent =
       queueId: number | null;
       artifactBytes: number | null;
       trigger: string | null;
+    }
+  | {
+      type: 'queue-artifact-spilled-to-storage' | 'queue-artifact-memory-release';
+      queueId: number | null;
+      artifactKind: string | null;
+      artifactBytes: number | null;
+      retentionPolicy: string | null;
+      trigger: string | null;
+    }
+  | {
+      type: 'queue-input-memory-release';
+      queueId: number | null;
+      artifactKind: string | null;
+      artifactBytes: number | null;
+      retentionPolicy: string | null;
+      trigger: string | null;
     };
 
 export type LifecycleDiagnosticsEvent =
@@ -285,6 +308,14 @@ export type LifecycleDiagnosticsEvent =
       reason: string | null;
       reportId: string | null;
       memoryIssueKind: string | null;
+    }
+  | {
+      type: 'post-completion-relaunch-classified';
+      currentQueueId: number | null;
+      currentStage: string | null;
+      documentHidden: boolean | null;
+      lastPageHideAt: number | null;
+      hadPendingAppUpdate: boolean | null;
     };
 
 type RuntimeInitBaseEvent = {
@@ -301,6 +332,13 @@ type RuntimeInitExtendedEvent = RuntimeInitBaseEvent & {
   repairReady?: boolean | null;
 };
 
+type AssetVersionRuntimeWarmupEvent = RuntimeInitBaseEvent & {
+  assetVersion: string | null;
+  previousAssetVersion: string | null;
+  errorCategory?: string | null;
+  message?: string | null;
+};
+
 export type RuntimeInitDiagnosticsEvent =
   | ({
       type: 'jpegli-startup-bootstrap-started';
@@ -313,7 +351,13 @@ export type RuntimeInitDiagnosticsEvent =
         | 'jpegli-startup-repair-succeeded'
         | 'jpegli-startup-bootstrap-retried'
         | 'jpegli-startup-bootstrap-recovered';
-    } & RuntimeInitExtendedEvent);
+    } & RuntimeInitExtendedEvent)
+  | ({
+      type: 'asset-version-runtime-warmup-started' | 'asset-version-runtime-warmup-completed';
+    } & AssetVersionRuntimeWarmupEvent)
+  | ({
+      type: 'asset-version-runtime-warmup-failed';
+    } & AssetVersionRuntimeWarmupEvent);
 
 type RuntimeAssetBaseEvent = {
   trigger: string | null;
@@ -691,6 +735,45 @@ function buildStorageDiagnosticsInput(event: StorageDiagnosticsEvent): Diagnosti
           trigger: event.trigger,
         }),
       };
+    case 'queue-artifact-spilled-to-storage':
+      return {
+        category: 'storage',
+        name: DIAGNOSTICS_EVENT_NAMES.storage.queueArtifactSpilledToStorage,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          queueId: event.queueId,
+          artifactKind: event.artifactKind,
+          artifactBytes: event.artifactBytes,
+          retentionPolicy: event.retentionPolicy,
+          trigger: event.trigger,
+        }),
+      };
+    case 'queue-artifact-memory-release':
+      return {
+        category: 'storage',
+        name: DIAGNOSTICS_EVENT_NAMES.storage.queueArtifactMemoryRelease,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          queueId: event.queueId,
+          artifactKind: event.artifactKind,
+          artifactBytes: event.artifactBytes,
+          retentionPolicy: event.retentionPolicy,
+          trigger: event.trigger,
+        }),
+      };
+    case 'queue-input-memory-release':
+      return {
+        category: 'storage',
+        name: DIAGNOSTICS_EVENT_NAMES.storage.queueInputMemoryRelease,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          queueId: event.queueId,
+          artifactKind: event.artifactKind,
+          artifactBytes: event.artifactBytes,
+          retentionPolicy: event.retentionPolicy,
+          trigger: event.trigger,
+        }),
+      };
   }
 }
 
@@ -732,6 +815,19 @@ function buildLifecycleDiagnosticsInput(event: LifecycleDiagnosticsEvent): Diagn
           reason: event.reason,
           reportId: event.reportId,
           memoryIssueKind: event.memoryIssueKind,
+        }),
+      };
+    case 'post-completion-relaunch-classified':
+      return {
+        category: 'lifecycle',
+        name: DIAGNOSTICS_EVENT_NAMES.lifecycle.postCompletionRelaunchClassified,
+        severity: 'warning',
+        context: mergeNormalizedContext({}, {
+          currentQueueId: event.currentQueueId,
+          currentStage: event.currentStage,
+          documentHidden: event.documentHidden,
+          lastPageHideAt: event.lastPageHideAt,
+          hadPendingAppUpdate: event.hadPendingAppUpdate,
         }),
       };
   }
@@ -827,6 +923,38 @@ function buildRuntimeInitDiagnosticsInput(event: RuntimeInitDiagnosticsEvent): D
           errorCategory: event.errorCategory,
           repairAttempted: event.repairAttempted,
           repairReady: event.repairReady,
+        }),
+      };
+    case 'asset-version-runtime-warmup-started':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeInit.assetVersionRuntimeWarmupStarted,
+        severity: 'info',
+        context: mergeNormalizedContext(baseContext, {
+          assetVersion: event.assetVersion,
+          previousAssetVersion: event.previousAssetVersion,
+        }),
+      };
+    case 'asset-version-runtime-warmup-completed':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeInit.assetVersionRuntimeWarmupCompleted,
+        severity: 'info',
+        context: mergeNormalizedContext(baseContext, {
+          assetVersion: event.assetVersion,
+          previousAssetVersion: event.previousAssetVersion,
+        }),
+      };
+    case 'asset-version-runtime-warmup-failed':
+      return {
+        category: 'error',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeInit.assetVersionRuntimeWarmupFailed,
+        severity: 'error',
+        context: mergeNormalizedContext(baseContext, {
+          assetVersion: event.assetVersion,
+          previousAssetVersion: event.previousAssetVersion,
+          errorCategory: event.errorCategory,
+          message: truncateString(event.message),
         }),
       };
   }

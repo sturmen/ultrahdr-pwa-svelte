@@ -60,6 +60,10 @@ vi.mock('../../lib/processing.js', () => ({
   },
 }));
 
+vi.mock('../../lib/runtime-post-update-warmup.ts', () => ({
+  warmRuntimeForUpdatedAssetVersion: vi.fn(async () => false),
+}));
+
 describe('App lazy imports', () => {
   beforeEach(() => {
     vi.clearAllMocks();

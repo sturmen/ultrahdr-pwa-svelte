@@ -98,6 +98,7 @@ export interface DiagnosticsProcessingSnapshot {
   gmnetCheckpointResumed: boolean | null;
   documentHidden: boolean | null;
   lastPageHideAt: number | null;
+  hadPendingAppUpdate: boolean | null;
   storageQuotaBytes: number | null;
   storageUsageBytes: number | null;
   storageRemainingBytes: number | null;
@@ -304,6 +305,7 @@ function sanitizeProcessingSnapshot(value: unknown): DiagnosticsProcessingSnapsh
     gmnetCheckpointResumed: normalizeNullableBoolean(snapshot.gmnetCheckpointResumed),
     documentHidden: normalizeNullableBoolean(snapshot.documentHidden),
     lastPageHideAt: normalizeNullableNumber(snapshot.lastPageHideAt),
+    hadPendingAppUpdate: normalizeNullableBoolean(snapshot.hadPendingAppUpdate),
     storageQuotaBytes: normalizeNullableNumber(snapshot.storageQuotaBytes),
     storageUsageBytes: normalizeNullableNumber(snapshot.storageUsageBytes),
     storageRemainingBytes: normalizeNullableNumber(snapshot.storageRemainingBytes),
@@ -442,6 +444,7 @@ function classifyRecoveredSession(
     processingActiveAtLastPersist: activeSession.processingActiveAtLastPersist === true,
     documentHidden,
     lastPageHideAt,
+    hadPendingAppUpdate: snapshot?.hadPendingAppUpdate ?? null,
     updatedAt,
     currentQueueId: snapshot?.currentQueueId ?? normalizeNullableNumber(activeSession.queueId),
     currentStage: snapshot?.currentStage ?? normalizeNullableString(activeSession.stage),
@@ -497,6 +500,9 @@ function classifyRecoveredPostCompletionSession(
     completionAgeMs,
     currentQueueId: snapshot?.currentQueueId ?? normalizeNullableNumber(activeSession.queueId),
     currentStage: snapshot?.currentStage ?? normalizeNullableString(activeSession.stage),
+    documentHidden: snapshot?.documentHidden ?? null,
+    lastPageHideAt: snapshot?.lastPageHideAt ?? null,
+    hadPendingAppUpdate: snapshot?.hadPendingAppUpdate ?? false,
   };
   const events = [...base.events];
   events.push({
@@ -505,6 +511,11 @@ function classifyRecoveredPostCompletionSession(
     context: completionContext,
   });
   if (base.memoryIssueKind === 'foreground-kill-recovered') {
+    events.push({
+      name: 'post-completion-relaunch-classified',
+      severity: 'warning',
+      context: completionContext,
+    });
     events.push({
       name: 'foreground-restart-without-pagehide',
       severity: 'warning',

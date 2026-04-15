@@ -22,6 +22,8 @@
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`
 - Typed diagnostics helpers and event-name contract: `src/lib/diagnostics-events.ts`
 - Share target behavior: `src/lib/share-target-launch.js`, `src/lib/share-store.ts`
+- Low-memory iPhone artifact retention: `src/lib/share-store.ts`, `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
+- First-launch-after-update runtime warmup: `src/lib/runtime-post-update-warmup.ts`, `src/App.svelte`, `src/lib/diagnostics-events.ts`
 - Offline bundle and caching: `src/sw.ts`, `src/lib/offline-runtime-bundle.ts`, `src/lib/runtime-bundle-asset-map.ts`
 - Shared runtime asset inventory and fetch plumbing: `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`
 - Repo fixture inputs: `fixtures/` for test assets, `media/` for README/demo assets only

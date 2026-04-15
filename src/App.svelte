@@ -14,6 +14,7 @@
     createDefaultPwaUpdateState,
     createPwaUpdateCoordinator,
   } from "./lib/pwa-updater.js";
+  import { warmRuntimeForUpdatedAssetVersion } from "./lib/runtime-post-update-warmup.ts";
   import { getSharedDiagnosticsRecorder } from "./lib/diagnostics.ts";
 
   const version = import.meta.env.VITE_APP_VERSION || "dev";
@@ -338,6 +339,17 @@
     shareLaunchChecked = false;
     const initialized = await runRuntimeInitialization({ forceRetry });
     if (!initialized || appDisposed) {
+      return;
+    }
+    try {
+      await warmRuntimeForUpdatedAssetVersion({
+        assetVersion: import.meta.env.VITE_APP_ASSET_VERSION || null,
+        runtime: globalThis,
+      });
+    } catch (warmupError) {
+      console.warn("[App] Runtime warmup after asset-version change failed:", warmupError);
+    }
+    if (appDisposed) {
       return;
     }
     await initializeLaunchContext();

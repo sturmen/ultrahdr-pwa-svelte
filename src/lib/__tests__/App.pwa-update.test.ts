@@ -34,6 +34,10 @@ vi.mock("../processing.js", () => ({
   RUNTIME_INIT_STEP_LABELS: { "startup-ready": "Finalize startup readiness" },
 }));
 
+vi.mock("../runtime-post-update-warmup.ts", () => ({
+  warmRuntimeForUpdatedAssetVersion: vi.fn(async () => false),
+}));
+
 vi.mock("../pwa-updater.js", () => {
   const createDefaultPwaUpdateState = () => ({
     supported: true,

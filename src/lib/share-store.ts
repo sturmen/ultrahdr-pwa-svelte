@@ -4,6 +4,7 @@ import {
   shouldCheckpoint,
   type StorageBudget,
 } from './storage-diagnostics.ts';
+import { getCapabilities, getProcessingProfile } from './capabilities.js';
 
 const DB_NAME = 'ultrahdr-share-store';
 const DB_VERSION = 4;
@@ -24,6 +25,15 @@ interface ShareStoreMemory {
   queueInputPreviews: Map<number, Blob>;
   queueOutputPreviews: Map<number, Blob>;
 }
+
+interface PersistedQueueInputRecord {
+  blob: Blob;
+  name: string;
+  type: string;
+  lastModified: number;
+}
+
+type QueueArtifactRetentionPolicy = 'default' | 'low-memory-ios';
 
 interface QueuePayloadDeleteOptions {
   deleteInput?: boolean;
@@ -82,6 +92,9 @@ export interface StorageWriteDecision {
 }
 
 let openDbPromise: Promise<IDBDatabase> | null = null;
+let canUseIndexedDbOverrideForTests: boolean | null = null;
+let queueArtifactRetentionPolicyOverrideForTests: QueueArtifactRetentionPolicy | null = null;
+const TEST_PERSISTED_STORE_KEY = '__ultrahdrShareStorePersisted';
 const VALID_WORKFLOW_STATES = new Set<PersistedWorkflowState>([
   'EMPTY',
   'QUEUE_READY',
@@ -122,11 +135,115 @@ function getMemoryStore(): ShareStoreMemory {
   return runtime[MEMORY_STORE_KEY] as ShareStoreMemory;
 }
 
-function canUseIndexedDb(): boolean {
+type PersistedStoreShape = {
+  sharedFiles: Blob[];
+  queueState: unknown;
+  queueInputs: Map<number, File>;
+  queueOutputs: Map<number, Blob>;
+  queueInputPreviews: Map<number, Blob>;
+  queueOutputPreviews: Map<number, Blob>;
+};
+
+function getTestPersistedStore(): PersistedStoreShape {
+  const runtime = globalThis as typeof globalThis & {
+    [TEST_PERSISTED_STORE_KEY]?: PersistedStoreShape;
+  };
+  if (!runtime[TEST_PERSISTED_STORE_KEY]) {
+    runtime[TEST_PERSISTED_STORE_KEY] = {
+      sharedFiles: [],
+      queueState: null,
+      queueInputs: new Map<number, File>(),
+      queueOutputs: new Map<number, Blob>(),
+      queueInputPreviews: new Map<number, Blob>(),
+      queueOutputPreviews: new Map<number, Blob>(),
+    };
+  }
+  return runtime[TEST_PERSISTED_STORE_KEY] as PersistedStoreShape;
+}
+
+function clearTestPersistedStore(): void {
+  const runtime = globalThis as typeof globalThis & {
+    [TEST_PERSISTED_STORE_KEY]?: PersistedStoreShape;
+  };
+  delete runtime[TEST_PERSISTED_STORE_KEY];
+}
+
+function hasNativeIndexedDbSupport(): boolean {
   if (/jsdom/i.test(globalThis?.navigator?.userAgent || '')) {
     return false;
   }
   return typeof indexedDB !== 'undefined' && typeof indexedDB.open === 'function';
+}
+
+function canUseIndexedDb(): boolean {
+  if (typeof canUseIndexedDbOverrideForTests === 'boolean') {
+    return canUseIndexedDbOverrideForTests;
+  }
+  return hasNativeIndexedDbSupport();
+}
+
+function shouldUseTestPersistedStore(): boolean {
+  return canUseIndexedDbOverrideForTests === true && !hasNativeIndexedDbSupport();
+}
+
+function resolveQueueArtifactRetentionPolicy(
+  runtime: typeof globalThis = globalThis,
+): QueueArtifactRetentionPolicy {
+  if (queueArtifactRetentionPolicyOverrideForTests) {
+    return queueArtifactRetentionPolicyOverrideForTests;
+  }
+  const capabilities = getCapabilities({
+    navigator: runtime.navigator,
+    window: runtime,
+  });
+  const processingProfile = getProcessingProfile(capabilities);
+
+  if (capabilities.isIOS && processingProfile.memoryTier === 'low') {
+    return 'low-memory-ios';
+  }
+
+  return 'default';
+}
+
+function shouldMirrorPersistedQueuePayloadsInMemory(
+  runtime: typeof globalThis = globalThis,
+): boolean {
+  return resolveQueueArtifactRetentionPolicy(runtime) === 'default';
+}
+
+function serializeQueueInputFile(file: File): PersistedQueueInputRecord {
+  return {
+    blob: file,
+    name: typeof file.name === 'string' ? file.name : 'input',
+    type: typeof file.type === 'string' ? file.type : '',
+    lastModified:
+      Number.isFinite(Number(file.lastModified)) ? Number(file.lastModified) : Date.now(),
+  };
+}
+
+function deserializeQueueInputFile(value: unknown): File | null {
+  if (value instanceof File) {
+    return value;
+  }
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Partial<PersistedQueueInputRecord>;
+  if (!(record.blob instanceof Blob)) {
+    return null;
+  }
+
+  const name = typeof record.name === 'string' && record.name.length > 0 ? record.name : 'input';
+  const type = typeof record.type === 'string' ? record.type : record.blob.type || '';
+  const lastModified = Number.isFinite(Number(record.lastModified))
+    ? Number(record.lastModified)
+    : Date.now();
+
+  return new File([record.blob], name, {
+    type,
+    lastModified,
+  });
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -331,6 +448,45 @@ type FinalizableStore = IDBObjectStore & { __finalize?: <T>(value: T) => void };
 
 async function putBlobRecord(storeName: string, queueId: number, value: Blob): Promise<void> {
   const memory = getMemoryStore();
+  if (!canUseIndexedDb()) {
+    if (storeName === QUEUE_OUTPUT_STORE) {
+      memory.queueOutputs.set(queueId, value);
+    } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+      memory.queueInputPreviews.set(queueId, value);
+    } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+      memory.queueOutputPreviews.set(queueId, value);
+    }
+    return;
+  }
+  if (shouldUseTestPersistedStore()) {
+    const persisted = getTestPersistedStore();
+    if (storeName === QUEUE_OUTPUT_STORE) {
+      persisted.queueOutputs.set(queueId, value);
+    } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+      persisted.queueInputPreviews.set(queueId, value);
+    } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+      persisted.queueOutputPreviews.set(queueId, value);
+    }
+
+    if (shouldMirrorPersistedQueuePayloadsInMemory()) {
+      if (storeName === QUEUE_OUTPUT_STORE) {
+        memory.queueOutputs.set(queueId, value);
+      } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+        memory.queueInputPreviews.set(queueId, value);
+      } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+        memory.queueOutputPreviews.set(queueId, value);
+      }
+    } else if (storeName === QUEUE_OUTPUT_STORE) {
+      memory.queueOutputs.delete(queueId);
+    } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+      memory.queueInputPreviews.delete(queueId);
+    } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+      memory.queueOutputPreviews.delete(queueId);
+    }
+    return;
+  }
+
+  let persistedWriteSucceeded = true;
   await withObjectStore<void>(
     storeName,
     'readwrite',
@@ -339,6 +495,7 @@ async function putBlobRecord(storeName: string, queueId: number, value: Blob): P
       (rawStore as FinalizableStore).__finalize?.(undefined);
     },
     () => {
+      persistedWriteSucceeded = false;
       if (storeName === QUEUE_OUTPUT_STORE) {
         memory.queueOutputs.set(queueId, value);
       } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
@@ -348,17 +505,38 @@ async function putBlobRecord(storeName: string, queueId: number, value: Blob): P
       }
     },
   );
-  if (storeName === QUEUE_OUTPUT_STORE) {
-    memory.queueOutputs.set(queueId, value);
+  if (!persistedWriteSucceeded || shouldMirrorPersistedQueuePayloadsInMemory()) {
+    if (storeName === QUEUE_OUTPUT_STORE) {
+      memory.queueOutputs.set(queueId, value);
+    } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+      memory.queueInputPreviews.set(queueId, value);
+    } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+      memory.queueOutputPreviews.set(queueId, value);
+    }
+  } else if (storeName === QUEUE_OUTPUT_STORE) {
+    memory.queueOutputs.delete(queueId);
   } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
-    memory.queueInputPreviews.set(queueId, value);
+    memory.queueInputPreviews.delete(queueId);
   } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
-    memory.queueOutputPreviews.set(queueId, value);
+    memory.queueOutputPreviews.delete(queueId);
   }
 }
 
 async function getBlobRecord(storeName: string, queueId: number): Promise<Blob | null> {
   const memory = getMemoryStore();
+  if (shouldUseTestPersistedStore()) {
+    const persisted = getTestPersistedStore();
+    if (storeName === QUEUE_OUTPUT_STORE) {
+      return persisted.queueOutputs.get(queueId) ?? null;
+    }
+    if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+      return persisted.queueInputPreviews.get(queueId) ?? null;
+    }
+    if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+      return persisted.queueOutputPreviews.get(queueId) ?? null;
+    }
+    return null;
+  }
   return withObjectStore<Blob | null>(
     storeName,
     'readonly',
@@ -388,29 +566,54 @@ async function getBlobRecord(storeName: string, queueId: number): Promise<Blob |
 
 async function putFileRecord(queueId: number, file: File): Promise<void> {
   const memory = getMemoryStore();
+  const serialized = serializeQueueInputFile(file);
+  if (!canUseIndexedDb()) {
+    memory.queueInputs.set(queueId, file);
+    return;
+  }
+  if (shouldUseTestPersistedStore()) {
+    getTestPersistedStore().queueInputs.set(queueId, deserializeQueueInputFile(serialized) ?? file);
+    if (shouldMirrorPersistedQueuePayloadsInMemory()) {
+      memory.queueInputs.set(queueId, file);
+    } else {
+      memory.queueInputs.delete(queueId);
+    }
+    return;
+  }
+  let persistedWriteSucceeded = true;
   await withObjectStore<void>(
     QUEUE_INPUT_STORE,
     'readwrite',
     (rawStore) => {
-      rawStore.put(file, queueId);
+      rawStore.put(serialized, queueId);
       (rawStore as FinalizableStore).__finalize?.(undefined);
     },
     () => {
+      persistedWriteSucceeded = false;
       memory.queueInputs.set(queueId, file);
     },
   );
-  memory.queueInputs.set(queueId, file);
+  if (!persistedWriteSucceeded || shouldMirrorPersistedQueuePayloadsInMemory()) {
+    memory.queueInputs.set(queueId, file);
+  } else {
+    memory.queueInputs.delete(queueId);
+  }
 }
 
 async function getFileRecord(queueId: number): Promise<File | null> {
   const memory = getMemoryStore();
+  if (shouldUseTestPersistedStore()) {
+    return getTestPersistedStore().queueInputs.get(queueId) ?? null;
+  }
   return withObjectStore<File | null>(
     QUEUE_INPUT_STORE,
     'readonly',
     (rawStore) => {
       const request = rawStore.get(queueId);
       request.onsuccess = () => {
-        (rawStore as FinalizableStore).__finalize?.((request.result as File | undefined) ?? null);
+        (rawStore as FinalizableStore).__finalize?.(
+          deserializeQueueInputFile(request.result) ?? null,
+        );
       };
       request.onerror = () => {
         (rawStore as FinalizableStore).__finalize?.(null);
@@ -422,6 +625,22 @@ async function getFileRecord(queueId: number): Promise<File | null> {
 
 async function clearStore(storeName: string): Promise<void> {
   const memory = getMemoryStore();
+  if (shouldUseTestPersistedStore()) {
+    const persisted = getTestPersistedStore();
+    if (storeName === QUEUE_INPUT_STORE) {
+      persisted.queueInputs.clear();
+    } else if (storeName === QUEUE_OUTPUT_STORE) {
+      persisted.queueOutputs.clear();
+    } else if (storeName === QUEUE_INPUT_PREVIEW_STORE) {
+      persisted.queueInputPreviews.clear();
+    } else if (storeName === QUEUE_OUTPUT_PREVIEW_STORE) {
+      persisted.queueOutputPreviews.clear();
+    } else if (storeName === SHARED_FILES_STORE) {
+      persisted.sharedFiles = [];
+    } else if (storeName === QUEUE_STATE_STORE) {
+      persisted.queueState = null;
+    }
+  }
   await withObjectStore<void>(
     storeName,
     'readwrite',
@@ -464,6 +683,15 @@ async function deleteQueuePayloadRecords(
   }
 
   if (canUseIndexedDb()) {
+    if (shouldUseTestPersistedStore()) {
+      const persisted = getTestPersistedStore();
+      if (deleteInput) persisted.queueInputs.delete(queueId);
+      if (deleteOutput) persisted.queueOutputs.delete(queueId);
+      if (deletePreview) {
+        persisted.queueInputPreviews.delete(queueId);
+        persisted.queueOutputPreviews.delete(queueId);
+      }
+    }
     try {
       const db = await openDb();
       if (db && stores.length > 0) {
@@ -571,6 +799,10 @@ export async function clearSharedFiles(): Promise<void> {
 
 export async function storeQueueState(queueState: unknown): Promise<void> {
   getMemoryStore().queueState = queueState;
+  if (shouldUseTestPersistedStore()) {
+    getTestPersistedStore().queueState = queueState;
+    return;
+  }
   await withObjectStore<void>(
     QUEUE_STATE_STORE,
     'readwrite',
@@ -583,6 +815,9 @@ export async function storeQueueState(queueState: unknown): Promise<void> {
 }
 
 export async function loadQueueState<T = unknown>(): Promise<T | null> {
+  if (shouldUseTestPersistedStore()) {
+    return (getTestPersistedStore().queueState as T | null) ?? null;
+  }
   return withObjectStore<T | null>(
     QUEUE_STATE_STORE,
     'readonly',
@@ -601,6 +836,10 @@ export async function loadQueueState<T = unknown>(): Promise<T | null> {
 
 export async function clearQueueState(): Promise<void> {
   getMemoryStore().queueState = null;
+  if (shouldUseTestPersistedStore()) {
+    getTestPersistedStore().queueState = null;
+    return;
+  }
   await withObjectStore<void>(
     QUEUE_STATE_STORE,
     'readwrite',
@@ -683,5 +922,34 @@ export function __resetShareStoreForTests(): void {
     [MEMORY_STORE_KEY]?: ShareStoreMemory;
   };
   delete runtime[MEMORY_STORE_KEY];
+  clearTestPersistedStore();
+  canUseIndexedDbOverrideForTests = null;
+  queueArtifactRetentionPolicyOverrideForTests = null;
   resetCachedDb();
+}
+
+export function __setCanUseIndexedDbForTests(value: boolean | null): void {
+  canUseIndexedDbOverrideForTests = value;
+  clearTestPersistedStore();
+}
+
+export function __getShareStoreMemorySnapshotForTests(): ShareStoreMemory {
+  return getMemoryStore();
+}
+
+export function __setQueueArtifactRetentionPolicyForTests(
+  value: QueueArtifactRetentionPolicy | null,
+): void {
+  queueArtifactRetentionPolicyOverrideForTests = value;
+}
+
+export function __setPersistedQueueInputRecordForTests(
+  queueId: number,
+  record: PersistedQueueInputRecord,
+): void {
+  const persisted = getTestPersistedStore();
+  const file = deserializeQueueInputFile(record);
+  if (file) {
+    persisted.queueInputs.set(queueId, file);
+  }
 }
