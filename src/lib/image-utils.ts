@@ -1,4 +1,5 @@
 import type { GainMapMetadata } from './gain-map-metadata.js';
+import { extractExifOrientation, extractExifPayloadFromJpeg } from './exif-utils.js';
 import { decodeJpegli, encodeJpegli } from './jpegli-decoder.js';
 import { decodeRasterBuffer, resizeRasterImage, rotateRasterImage } from './raster-image.ts';
 
@@ -36,9 +37,13 @@ export async function loadImageData(
 
     if (blob.type === 'image/jpeg') {
         const decoded = await decodeJpegli(bytes);
-        const width = decoded.width;
-        const height = decoded.height;
-        const imageData = new ImageData(decoded.data, width, height);
+        const imageData = await orientDecodedJpegImageData(
+            new ImageData(decoded.data, decoded.width, decoded.height),
+            bytes,
+            config,
+        );
+        const width = imageData.width;
+        const height = imageData.height;
         return { imageData, width, height };
     }
 
@@ -115,9 +120,12 @@ export async function jpegBytesToImageData(
     jpegBytes: Uint8Array,
     config: { imageOrientation?: string } & Record<string, unknown> = {},
 ): Promise<ImageData> {
-    void config;
     const decoded = await decodeJpegli(jpegBytes);
-    return new ImageData(decoded.data, decoded.width, decoded.height);
+    return orientDecodedJpegImageData(
+        new ImageData(decoded.data, decoded.width, decoded.height),
+        jpegBytes,
+        config,
+    );
 }
 
 export async function imageDataToJpegBlob(imageData: ImageDataLike, quality = 0.95): Promise<Blob> {
@@ -168,6 +176,38 @@ function normalizeImageData(imageData: ImageDataLike): ImageData {
         imageData.height,
         colorSpace ? { colorSpace } : undefined
     );
+}
+
+function exifOrientationToRotationDegrees(orientation: number): number {
+    switch (orientation) {
+    case 3:
+        return 180;
+    case 6:
+        return 90;
+    case 8:
+        return 270;
+    default:
+        return 0;
+    }
+}
+
+async function orientDecodedJpegImageData(
+    imageData: ImageData,
+    jpegBytes: Uint8Array,
+    config: { imageOrientation?: string } & Record<string, unknown>,
+): Promise<ImageData> {
+    if (config.imageOrientation === 'none') {
+        return imageData;
+    }
+
+    const exifPayload = extractExifPayloadFromJpeg(jpegBytes);
+    const orientation = exifPayload instanceof Uint8Array ? extractExifOrientation(exifPayload) : 1;
+    const rotationDegrees = exifOrientationToRotationDegrees(orientation);
+    if (rotationDegrees === 0) {
+        return imageData;
+    }
+
+    return rotateRasterImage(imageData, rotationDegrees);
 }
 
 export function isMonochromeGainMapImageData(imageData: ImageDataLike | null | undefined): boolean {

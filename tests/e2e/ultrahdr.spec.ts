@@ -449,6 +449,25 @@ function readExifOrientation(filePath) {
     return orientation;
 }
 
+function readImageDimensions(filePath) {
+    const output = execFileSync(
+        'exiftool',
+        ['-n', '-s3', '-ImageWidth', '-ImageHeight', filePath],
+        { stdio: 'pipe' }
+    ).toString('utf8').trim().split(/\r?\n/);
+    if (output.length < 2) {
+        throw new Error(`Unable to parse image dimensions for ${filePath}: "${output.join('\\n')}"`);
+    }
+
+    const width = Number.parseInt(output[0], 10);
+    const height = Number.parseInt(output[1], 10);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+        throw new Error(`Unable to parse image dimensions for ${filePath}: "${output.join('\\n')}"`);
+    }
+
+    return { width, height };
+}
+
 function readCanonicalSourceExifPayload(filePath) {
     const sourceBytes = new Uint8Array(fs.readFileSync(filePath));
     return extractExifApp1PayloadFromInput(sourceBytes, path.basename(filePath), '');
@@ -1278,12 +1297,23 @@ test.describe('UltraHDR PWA E2E Tests', () => {
 
                 const result = await downloadFirstResult(page);
                 const outputPath = writeTempJpeg(result, tempDir, 'output-orientation-normalized.jpg');
+                const outputGainMapPath = extractUltraHdrGainMapJpeg(outputPath, tempDir);
 
                 expect(readExifOrientation(outputPath)).toBe(1);
 
                 const sourceTags = normalizeExifForComparison(readExifTags(orientedInput));
                 const outputTags = normalizeExifForComparison(readExifTags(outputPath));
                 expect(outputTags).toEqual(sourceTags);
+
+                const inputDimensions = readImageDimensions(orientedInput);
+                const outputDimensions = readImageDimensions(outputPath);
+                const outputGainMapDimensions = readImageDimensions(outputGainMapPath);
+
+                expect(outputDimensions).toEqual({
+                    width: inputDimensions.height,
+                    height: inputDimensions.width,
+                });
+                expect(outputGainMapDimensions).toEqual(outputDimensions);
             } finally {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }
