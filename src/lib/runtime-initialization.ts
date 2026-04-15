@@ -6,7 +6,7 @@ import {
   preloadGmnetRuntimeDependencies,
   REQUIRED_GMNET_EXECUTION_PROVIDER,
 } from './gmnet-session.ts';
-import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
+import { recordRuntimeInitDiagnostics } from './diagnostics-events.ts';
 import {
   bootstrapJpegliRuntime,
   resetJpegliBootstrapState,
@@ -217,28 +217,6 @@ function emitStepProgress(onProgress, stepId, status, note, payload = {}) {
     note,
     timestamp: Date.now(),
     ...payload,
-  });
-}
-
-function getSharedDiagnosticsRecorderSafe(runtime = globalThis) {
-  try {
-    return getSharedDiagnosticsRecorder(runtime);
-  } catch {
-    return null;
-  }
-}
-
-function recordRuntimeInitializationDiagnostic(
-  runtime,
-  name,
-  severity = 'info',
-  context = {},
-) {
-  getSharedDiagnosticsRecorderSafe(runtime)?.record({
-    category: severity === 'error' ? 'error' : 'runtime',
-    name,
-    severity,
-    context,
   });
 }
 
@@ -903,7 +881,8 @@ export async function initializeRuntime({
       let repairBundleVersion = null;
       const online = runtime?.navigator?.onLine !== false;
 
-      recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-started', 'info', {
+      recordRuntimeInitDiagnostics(runtime, {
+        type: 'jpegli-startup-bootstrap-started',
         attempt,
         online,
         trigger: 'startup-init',
@@ -918,7 +897,8 @@ export async function initializeRuntime({
         repairState = normalizeDiagnosticsString(bundleStatus?.state, 'unknown');
         repairBundleVersion = normalizeDiagnosticsString(bundleStatus?.bundleVersion, 'unknown');
 
-        recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-failed', 'error', {
+        recordRuntimeInitDiagnostics(runtime, {
+          type: 'jpegli-startup-bootstrap-failed',
           attempt,
           online,
           bundleState: repairState,
@@ -930,7 +910,8 @@ export async function initializeRuntime({
         });
 
         if (!online) {
-          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-blocked', 'error', {
+          recordRuntimeInitDiagnostics(runtime, {
+            type: 'jpegli-startup-bootstrap-blocked',
             attempt,
             online,
             bundleState: repairState,
@@ -959,7 +940,8 @@ export async function initializeRuntime({
         }
 
         repairAttempted = true;
-        recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-repair-requested', 'warning', {
+        recordRuntimeInitDiagnostics(runtime, {
+          type: 'jpegli-startup-repair-requested',
           attempt,
           online,
           bundleState: repairState,
@@ -979,7 +961,8 @@ export async function initializeRuntime({
             repairResult?.bundleVersion,
             repairBundleVersion || 'unknown',
           );
-          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-repair-succeeded', 'info', {
+          recordRuntimeInitDiagnostics(runtime, {
+            type: 'jpegli-startup-repair-succeeded',
             attempt,
             online,
             bundleState: repairState,
@@ -990,7 +973,8 @@ export async function initializeRuntime({
             trigger: 'startup-init',
           });
         } catch (repairError) {
-          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-blocked', 'error', {
+          recordRuntimeInitDiagnostics(runtime, {
+            type: 'jpegli-startup-bootstrap-blocked',
             attempt,
             online,
             bundleState: repairState,
@@ -1020,7 +1004,8 @@ export async function initializeRuntime({
 
         resetJpegliBootstrapState();
         attempt += 1;
-        recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-retried', 'warning', {
+        recordRuntimeInitDiagnostics(runtime, {
+          type: 'jpegli-startup-bootstrap-retried',
           attempt,
           online,
           bundleState: repairState,
@@ -1033,7 +1018,8 @@ export async function initializeRuntime({
 
         try {
           await bootstrapJpegliRuntime();
-          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-recovered', 'info', {
+          recordRuntimeInitDiagnostics(runtime, {
+            type: 'jpegli-startup-bootstrap-recovered',
             attempt,
             online,
             bundleState: repairState,
@@ -1046,7 +1032,8 @@ export async function initializeRuntime({
           return;
         } catch (retryError) {
           const retryErrorCategory = classifyJpegliBootstrapError(retryError);
-          recordRuntimeInitializationDiagnostic(runtime, 'jpegli-startup-bootstrap-blocked', 'error', {
+          recordRuntimeInitDiagnostics(runtime, {
+            type: 'jpegli-startup-bootstrap-blocked',
             attempt,
             online,
             bundleState: repairState,

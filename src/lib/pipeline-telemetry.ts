@@ -1,4 +1,4 @@
-import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
+import { recordPipelineDiagnostics } from './diagnostics-events.ts';
 
 export const PIPELINE_PROGRESS_EVENT = 'ultrahdr:processing-progress';
 export const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
@@ -99,30 +99,36 @@ function publishProgress(detail: PipelineTelemetryEvent): void {
   target[PIPELINE_HISTORY_KEY] = history;
 
   try {
-    const diagnosticsRecorder = getSharedDiagnosticsRecorder(target);
-    diagnosticsRecorder.record({
-      category: 'pipeline',
-      name: detail.phase || 'pipeline-event',
+    recordPipelineDiagnostics(target, {
+      type: 'pipeline-breadcrumb',
+      phase: detail.phase || 'pipeline-event',
       severity:
         detail.phase === 'stage-error' || detail.phase === 'pipeline-error'
           ? 'error'
           : 'info',
-      context: {
-        pipelineId: detail.pipelineId || null,
-        stage: detail.stage || null,
-        stageProgress: detail.stageProgress ?? null,
-        note: detail.note || null,
-        fileIndex: detail.fileIndex ?? null,
-        totalFiles: detail.totalFiles ?? null,
-        elapsedMs: detail.elapsedMs ?? null,
-        processingPath: detail.processingPath || null,
-        gmnetExecutionProvider: detail.gmnetExecutionProvider || null,
-        gmnetMemoryMode: detail.gmnetMemoryMode || null,
-        gmnetCheckpointTilesCompleted: detail.gmnetCheckpointTilesCompleted ?? null,
-        gmnetCheckpointTilesTotal: detail.gmnetCheckpointTilesTotal ?? null,
-        gmnetCheckpointResumed: detail.gmnetCheckpointResumed ?? null,
-        substage: detail.substage || null,
-      },
+      pipelineId: typeof detail.pipelineId === 'string' ? detail.pipelineId : null,
+      stage: typeof detail.stage === 'string' ? detail.stage : null,
+      substage: typeof detail.substage === 'string' ? detail.substage : null,
+      note: typeof detail.note === 'string' ? detail.note : null,
+      stageProgress: Number.isFinite(Number(detail.stageProgress)) ? Number(detail.stageProgress) : null,
+      fileIndex: Number.isFinite(Number(detail.fileIndex)) ? Number(detail.fileIndex) : null,
+      totalFiles: Number.isFinite(Number(detail.totalFiles)) ? Number(detail.totalFiles) : null,
+      elapsedMs: Number.isFinite(Number(detail.elapsedMs)) ? Number(detail.elapsedMs) : null,
+      processingPath: typeof detail.processingPath === 'string' ? detail.processingPath : null,
+      gmnetExecutionProvider:
+        typeof detail.gmnetExecutionProvider === 'string' ? detail.gmnetExecutionProvider : null,
+      gmnetMemoryMode: typeof detail.gmnetMemoryMode === 'string' ? detail.gmnetMemoryMode : null,
+      gmnetCheckpointTilesCompleted:
+        Number.isFinite(Number(detail.gmnetCheckpointTilesCompleted))
+          ? Number(detail.gmnetCheckpointTilesCompleted)
+          : null,
+      gmnetCheckpointTilesTotal:
+        Number.isFinite(Number(detail.gmnetCheckpointTilesTotal))
+          ? Number(detail.gmnetCheckpointTilesTotal)
+          : null,
+      gmnetCheckpointResumed:
+        typeof detail.gmnetCheckpointResumed === 'boolean' ? detail.gmnetCheckpointResumed : null,
+      error: detail.error || null,
     });
   } catch {
     // Diagnostics must not interfere with pipeline progress delivery.

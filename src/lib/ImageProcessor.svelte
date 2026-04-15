@@ -97,6 +97,14 @@
     serializeDiagnosticsReport,
     shareDiagnosticsReport,
   } from "./diagnostics.ts";
+  import {
+    recordLifecycleDiagnostics,
+    recordPipelineDiagnostics,
+    recordQueueDiagnostics,
+    recordRuntimeDiagnostics,
+    recordStorageDiagnostics,
+    recordUserDiagnostics,
+  } from "./diagnostics-events.ts";
   import type { OfflineReadinessState } from "./offline-readiness.ts";
 
   export let files = [];
@@ -709,15 +717,6 @@
     }
   }
 
-  function recordDiagnostics(category, name, severity = "info", context = {}) {
-    diagnosticsRecorder.record({
-      category,
-      name,
-      severity,
-      context,
-    });
-  }
-
   function buildPipelineDiagnosticsBreadcrumb(
     event,
   ): DiagnosticsPipelineBreadcrumbSummary {
@@ -775,57 +774,59 @@
 
     lastRecordedPipelineBreadcrumbKey = key;
     recentPipelineBreadcrumbs = [...recentPipelineBreadcrumbs, summary].slice(-5);
-    recordDiagnostics(
-      "pipeline",
-      summary.phase,
-      summary.phase === "pipeline-error" || summary.phase === "stage-error"
-        ? "error"
-        : "info",
-      {
-        pipelineId:
-          typeof event?.pipelineId === "string" ? event.pipelineId : null,
-        stage: summary.stage,
-        substage: summary.substage,
-        note: summary.note,
-        stageProgress: summary.stageProgress,
-        fileIndex: Number.isFinite(Number(event?.fileIndex))
-          ? Number(event.fileIndex)
-          : null,
-        totalFiles: Number.isFinite(Number(event?.totalFiles))
-          ? Number(event.totalFiles)
-          : null,
-        elapsedMs: Number.isFinite(Number(event?.elapsedMs))
-          ? Number(event.elapsedMs)
-          : null,
-        processingPath: event?.processingPath || null,
-        gmnetExecutionProvider: event?.gmnetExecutionProvider || null,
-        gmnetMemoryMode: event?.gmnetMemoryMode || null,
-        gmnetCheckpointTilesCompleted: event?.gmnetCheckpointTilesCompleted ?? null,
-        gmnetCheckpointTilesTotal: event?.gmnetCheckpointTilesTotal ?? null,
-        gmnetCheckpointResumed: event?.gmnetCheckpointResumed ?? null,
-        error:
-          event?.error && typeof event.error === "object" ? event.error : null,
-      },
-    );
+    recordPipelineDiagnostics(globalThis, {
+      type: "pipeline-breadcrumb",
+      phase: summary.phase,
+      severity:
+        summary.phase === "pipeline-error" || summary.phase === "stage-error"
+          ? "error"
+          : "info",
+      pipelineId:
+        typeof event?.pipelineId === "string" ? event.pipelineId : null,
+      stage: summary.stage,
+      substage: summary.substage,
+      note: summary.note,
+      stageProgress: summary.stageProgress,
+      fileIndex: Number.isFinite(Number(event?.fileIndex))
+        ? Number(event.fileIndex)
+        : null,
+      totalFiles: Number.isFinite(Number(event?.totalFiles))
+        ? Number(event.totalFiles)
+        : null,
+      elapsedMs: Number.isFinite(Number(event?.elapsedMs))
+        ? Number(event.elapsedMs)
+        : null,
+      processingPath: event?.processingPath || null,
+      gmnetExecutionProvider: event?.gmnetExecutionProvider || null,
+      gmnetMemoryMode: event?.gmnetMemoryMode || null,
+      gmnetCheckpointTilesCompleted: event?.gmnetCheckpointTilesCompleted ?? null,
+      gmnetCheckpointTilesTotal: event?.gmnetCheckpointTilesTotal ?? null,
+      gmnetCheckpointResumed: event?.gmnetCheckpointResumed ?? null,
+      error:
+        event?.error && typeof event.error === "object" ? event.error : null,
+    });
   }
 
   async function loadZipRuntime(
     operation: string,
   ): Promise<typeof import("jszip").default> {
     if (!zipRuntimePromise) {
-      recordDiagnostics("runtime", "zip-runtime-load-started", "info", {
+      recordRuntimeDiagnostics(globalThis, {
+        type: "zip-runtime-load-started",
         operation,
       });
       zipRuntimePromise = import("jszip")
         .then((module) => {
-          recordDiagnostics("runtime", "zip-runtime-load-completed", "info", {
+          recordRuntimeDiagnostics(globalThis, {
+            type: "zip-runtime-load-completed",
             operation,
           });
           return module.default;
         })
         .catch((error: unknown) => {
           zipRuntimePromise = null;
-          recordDiagnostics("error", "zip-runtime-load-failed", "error", {
+          recordRuntimeDiagnostics(globalThis, {
+            type: "zip-runtime-load-failed",
             operation,
             message: error instanceof Error ? error.message : String(error),
           });
@@ -1011,7 +1012,8 @@
     });
     diagnosticsReportText = serializeDiagnosticsReport(diagnosticsReport);
     diagnosticsReportOpen = true;
-    recordDiagnostics("user", "diagnostics-report-opened", "info", {
+    recordUserDiagnostics(globalThis, {
+      type: "diagnostics-report-opened",
       trigger,
       reportId: diagnosticsReport?.reportId || null,
     });
@@ -1026,7 +1028,8 @@
       return;
     }
     await shareDiagnosticsReport(diagnosticsReport, globalThis);
-    recordDiagnostics("user", "diagnostics-report-shared", "info", {
+    recordUserDiagnostics(globalThis, {
+      type: "diagnostics-report-shared",
       reportId: diagnosticsReport.reportId,
     });
   }
@@ -1036,7 +1039,8 @@
       return;
     }
     await copyDiagnosticsReport(diagnosticsReport, globalThis);
-    recordDiagnostics("user", "diagnostics-report-copied", "info", {
+    recordUserDiagnostics(globalThis, {
+      type: "diagnostics-report-copied",
       reportId: diagnosticsReport.reportId,
     });
   }
@@ -1258,7 +1262,8 @@
   function releaseViewerOutputUrl() {
     if (viewerOutputFullUrl) {
       URL.revokeObjectURL(viewerOutputFullUrl);
-      recordDiagnostics("storage", "full-output-viewer-url-released", "info", {
+      recordStorageDiagnostics(globalThis, {
+        type: "full-output-viewer-url-released",
         queueId: currentViewerCard?.queueId ?? null,
         trigger: "viewer-close",
       });
@@ -1274,7 +1279,8 @@
       return;
     }
     viewerOutputFullUrl = URL.createObjectURL(outputBlob);
-    recordDiagnostics("storage", "full-output-hydrated-on-demand", "info", {
+    recordStorageDiagnostics(globalThis, {
+      type: "full-output-hydrated-on-demand",
       queueId,
       artifactBytes: outputBlob.size,
       trigger: "viewer-open",
@@ -1606,7 +1612,8 @@
           deferredPreviewFailureKeys.add(failureKey);
           console.warn("[UI] Failed to finish deferred input preview:", previewError);
         }
-        recordDiagnostics("runtime", "deferred-input-preview-failed", "warning", {
+        recordRuntimeDiagnostics(globalThis, {
+          type: "deferred-input-preview-failed",
           queueId,
           trigger: "deferred-input-preview",
           errorCategory,
@@ -1774,7 +1781,8 @@
         item.status === QUEUE_ITEM_STATES.STALE
       ) {
         if (outputPreviewUrl) {
-          recordDiagnostics("storage", "queue-restored-from-persisted-previews", "info", {
+          recordStorageDiagnostics(globalThis, {
+            type: "queue-restored-from-persisted-previews",
             queueId: item.id,
             previewBytes: storedOutputPreview?.size ?? null,
             trigger: "restore",
@@ -1921,7 +1929,8 @@
   function acquireQueueLaunchLease(queueId, launchToken) {
     const existingLaunchToken = activeQueueLaunchLeases.get(queueId) || null;
     if (existingLaunchToken && existingLaunchToken !== launchToken) {
-      recordDiagnostics("pipeline", "duplicate-processing-launch-blocked", "warning", {
+      recordQueueDiagnostics(globalThis, {
+        type: "duplicate-processing-launch-blocked",
         queueId,
         launchToken,
         existingLaunchToken,
@@ -2008,7 +2017,8 @@
           : item.result,
       };
     });
-    recordDiagnostics("storage", "output-preview-persisted", "info", {
+    recordStorageDiagnostics(globalThis, {
+      type: "output-preview-persisted",
       queueId,
       previewBytes: previewBlob.size,
       trigger: "processing-complete",
@@ -2029,7 +2039,8 @@
     }
 
     await storeQueueOutputBlob(queueItem.id, blob);
-    recordDiagnostics("storage", "output-artifact-persisted", "info", {
+    recordStorageDiagnostics(globalThis, {
+      type: "output-artifact-persisted",
       queueId: queueItem.id,
       artifactBytes: blob.size,
       trigger: "processing-complete",
@@ -2061,7 +2072,8 @@
 
   function startQueue() {
     const queueRunnerSnapshot = buildQueueRunnerSnapshot();
-    recordDiagnostics("pipeline", "queue-start-requested", "info", {
+    recordQueueDiagnostics(globalThis, {
+      type: "start-requested",
       queueLength: queue.length,
       runnerState: queueRunnerSnapshot.runnerState,
       currentQueueId,
@@ -2069,7 +2081,8 @@
     });
     if (queueLoopActive) {
       dispatchQueueRunner({ type: "QUEUE_RESTART_REQUESTED" });
-      recordDiagnostics("pipeline", "queue-start-suppressed", "info", {
+      recordQueueDiagnostics(globalThis, {
+        type: "start-suppressed",
         queueLength: queue.length,
         runnerState: queueRunnerSnapshot.runnerState,
         currentQueueId,
@@ -2079,7 +2092,8 @@
     }
     if (selectShouldSuppressQueueStart(queueRunnerSnapshot)) {
       dispatchQueueRunner({ type: "QUEUE_RESTART_REQUESTED" });
-      recordDiagnostics("pipeline", "queue-start-suppressed", "info", {
+      recordQueueDiagnostics(globalThis, {
+        type: "start-suppressed",
         queueLength: queue.length,
         runnerState: queueRunnerSnapshot.runnerState,
         currentQueueId,
@@ -2208,7 +2222,8 @@
           launchToken,
         });
         if (claimedState.claimedQueueId !== nextItem.id) {
-          recordDiagnostics("pipeline", "queue-start-suppressed", "info", {
+          recordQueueDiagnostics(globalThis, {
+            type: "start-suppressed",
             queueId: nextItem.id,
             queueLength: queue.length,
             runnerState: claimedState.runnerState,
@@ -2216,10 +2231,12 @@
           });
           continue;
         }
-        recordDiagnostics("pipeline", "queue-item-claimed", "info", {
+        recordQueueDiagnostics(globalThis, {
+          type: "item-claimed",
           queueId: nextItem.id,
           queueLength: queue.length,
           launchToken,
+          runnerState: claimedState.runnerState,
         });
 
         currentQueueId = nextItem.id;
@@ -2264,10 +2281,11 @@
               rotation: activeRotation,
             }),
           });
-          recordDiagnostics("pipeline", "queue-item-processing-started", "info", {
+          recordQueueDiagnostics(globalThis, {
+            type: "item-processing-started",
             queueId: nextItem.id,
-            queueIndex,
-            totalFiles: queue.length,
+            queueLength: queue.length,
+            launchToken,
           });
 
           if (!acquireQueueLaunchLease(nextItem.id, launchToken)) {
@@ -2290,11 +2308,12 @@
             queueId: nextItem.id,
             launchToken,
           });
-          recordDiagnostics("pipeline", "queue-launch-confirmed", "info", {
+          recordQueueDiagnostics(globalThis, {
+            type: "launch-confirmed",
             queueId: nextItem.id,
-            queueIndex,
-            totalFiles: queue.length,
             launchToken,
+            currentQueueId,
+            processingPath: processingPathByQueueId.get(nextItem.id) || null,
           });
 
           const blob = await runtime.process(
@@ -2345,9 +2364,13 @@
               rotation: activeRotation,
             }),
           });
-          recordDiagnostics("pipeline", "queue-item-processing-complete", "info", {
+          recordQueueDiagnostics(globalThis, {
+            type: "item-processing-complete",
             queueId: nextItem.id,
+            outputBytes: blob.size,
             processingPath: itemProcessingPath,
+            appliedSettingsVersion: activeSettingsVersion,
+            appliedRotation: activeRotation,
           });
         } catch (e) {
           if (e?.name === "AbortError") {
@@ -2376,17 +2399,13 @@
           console.error("[UI] Error processing queue item:", e);
           error = e.message || "Processing failed";
           const incident = classifyMemoryIssue(e);
-          recordDiagnostics(
-            incident.memoryIssueKind === "unknown" ? "error" : "memory",
-            "queue-item-processing-failed",
-            "error",
-            {
-              queueId: nextItem.id,
-              message: error,
-              memoryIssueKind: incident.memoryIssueKind,
-              confidence: incident.confidence,
-            },
-          );
+          recordQueueDiagnostics(globalThis, {
+            type: "item-processing-failed",
+            queueId: nextItem.id,
+            message: error,
+            memoryIssueKind: incident.memoryIssueKind,
+            confidence: incident.confidence,
+          });
           updateQueueItem(nextItem.id, {
             status: QUEUE_ITEM_STATES.FAILED,
             error: error,
@@ -2405,7 +2424,8 @@
             queueId: nextItem.id,
             launchToken,
           });
-          recordDiagnostics("pipeline", "queue-item-settled", "info", {
+          recordQueueDiagnostics(globalThis, {
+            type: "item-settled",
             queueId: nextItem.id,
             queueLength: queue.length,
             launchToken,
@@ -2545,7 +2565,10 @@
     settingsVersion += 1;
     markCompletedOutputsStale();
     persistCurrentProcessingPreferences();
-    recordDiagnostics("user", "settings-changed", "info", snapshotProcessingPreferences());
+    recordUserDiagnostics(globalThis, {
+      type: "settings-changed",
+      context: snapshotProcessingPreferences(),
+    });
   }
 
   function applyBackendPreferenceChange(nextPreference) {
@@ -2606,7 +2629,10 @@
     if (!processing) return;
     pauseRequested = true;
     setWorkflow(WORKFLOW_EVENTS.PAUSE_REQUESTED);
-    recordDiagnostics("user", "processing-paused", "info", buildCurrentDiagnosticsContext());
+    recordUserDiagnostics(globalThis, {
+      type: "processing-paused",
+      context: buildCurrentDiagnosticsContext(),
+    });
   }
 
   function resumeQueue() {
@@ -2615,7 +2641,10 @@
     setWorkflow(WORKFLOW_EVENTS.RESUME_REQUESTED);
     processing = true;
     startQueue();
-    recordDiagnostics("user", "processing-resumed", "info", buildCurrentDiagnosticsContext());
+    recordUserDiagnostics(globalThis, {
+      type: "processing-resumed",
+      context: buildCurrentDiagnosticsContext(),
+    });
   }
 
   function cancelCurrent() {
@@ -2623,7 +2652,11 @@
     cancelCurrentRequested = true;
     abortActiveProcessing();
     closeSheet();
-    recordDiagnostics("user", "processing-cancelled", "warning", buildCurrentDiagnosticsContext());
+    recordUserDiagnostics(globalThis, {
+      type: "processing-cancelled",
+      severity: "warning",
+      context: buildCurrentDiagnosticsContext(),
+    });
   }
 
   function selectedStaleQueueIds() {
@@ -2718,7 +2751,8 @@
 
     queue = [...queue, ...addedItems];
     files = [];
-    recordDiagnostics("user", "files-added", "info", {
+    recordUserDiagnostics(globalThis, {
+      type: "files-added",
       fileCount: addedItems.length,
       queueLength: queue.length,
     });
@@ -2811,7 +2845,8 @@
   }
 
   async function handleAddFiles(event) {
-    recordDiagnostics("user", "file-picker-opened", "info", {
+    recordUserDiagnostics(globalThis, {
+      type: "file-picker-opened",
       fileCount: event?.target?.files?.length || 0,
     });
     await gateAndEnqueueFiles(event?.target?.files);
@@ -2821,7 +2856,8 @@
   }
 
   async function handleDropZoneFiles(event) {
-    recordDiagnostics("user", "files-dropped", "info", {
+    recordUserDiagnostics(globalThis, {
+      type: "files-dropped",
       fileCount: Array.isArray(event?.detail) ? event.detail.length : 0,
     });
     await gateAndEnqueueFiles(event?.detail);
@@ -3084,7 +3120,8 @@
         lastPageHideAt = null;
       }
       syncProcessingDiagnosticsSnapshot();
-      recordDiagnostics("lifecycle", "visibility-changed", "info", {
+      recordLifecycleDiagnostics(globalThis, {
+        type: "visibility-changed",
         hidden: document.hidden,
         workflowState,
       });
@@ -3110,7 +3147,10 @@
     const handlePageHide = () => {
       lastPageHideAt = Date.now();
       syncProcessingDiagnosticsSnapshot();
-      recordDiagnostics("lifecycle", "pagehide", "warning", buildCurrentDiagnosticsContext());
+      recordLifecycleDiagnostics(globalThis, {
+        type: "pagehide",
+        context: buildCurrentDiagnosticsContext(),
+      });
       void persistQueueStateSnapshot();
     };
 
@@ -3141,7 +3181,8 @@
     }
 
     void (async () => {
-      recordDiagnostics("user", "app-opened", "info", {
+      recordUserDiagnostics(globalThis, {
+        type: "app-opened",
         launchSource,
       });
       const recoveredDiagnosticsReport = consumeRecoveredDiagnosticsReport(globalThis);
@@ -3149,12 +3190,14 @@
         diagnosticsReport = recoveredDiagnosticsReport;
         diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
         diagnosticsReportOpen = true;
-        recordDiagnostics("lifecycle", "recovered-popup-opened", "warning", {
+        recordLifecycleDiagnostics(globalThis, {
+          type: "recovered-popup-opened",
           reportId: recoveredDiagnosticsReport.reportId,
           memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
         });
       } else if (recoveredDiagnosticsReport) {
-        recordDiagnostics("lifecycle", "recovered-popup-suppressed", "info", {
+        recordLifecycleDiagnostics(globalThis, {
+          type: "recovered-popup-suppressed",
           reason: "under-test-mode",
           reportId: recoveredDiagnosticsReport.reportId,
           memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,

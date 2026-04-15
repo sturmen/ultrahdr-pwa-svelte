@@ -7,6 +7,7 @@
 | processing pipeline bug | `src/lib/processing.ts`, `src/lib/processing-route-plan.ts`, `src/lib/processing-core.ts` | `npm test`, then the nearest targeted integration or e2e command |
 | offline/runtime issue | `src/lib/processing.ts`, `src/lib/runtime-init-policy.ts`, `src/lib/runtime-cache-policy.ts` | `npm test`, `npm run test:e2e -- --grep offline` if the change is browser-observable |
 | runtime asset loading / wasm bootstrap | `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`, `src/lib/runtime-bundle-asset-map.ts`, loader-specific `src/lib/*wasm*.ts` | `npm test`, targeted loader tests, `npm run build` |
+| diagnostics breadcrumb contract | `src/lib/diagnostics-events.ts`, `src/lib/diagnostics.ts`, emitter-specific modules like `ImageProcessor.svelte` and `runtime-initialization.ts` | `npm test`, `npm run typecheck`, `npm run build` |
 | PWA/service worker | `src/sw.ts`, `src/lib/offline-runtime-bundle.ts`, `src/lib/share-store.ts` | `npm test`, `npm run test:e2e` |
 | GMNet/model/runtime | `src/lib/gmnet-session.ts`, `src/lib/gain-map-generator.ts`, `src/lib/runtime-capability-policy.ts` | `npm test`, `npm run test:integration:heic-real` or `npm run test:e2e:chromium` when runtime behavior changes |
 | Playwright regression | `tests/e2e/ultrahdr.spec.ts`, `tests/e2e/offline.spec.ts`, `tests/e2e/mobile.spec.ts` | the smallest matching Playwright command, then full `npm run test:e2e` |
@@ -19,6 +20,7 @@
 - Queue runner and reducer selectors: `src/lib/workflow-state.ts`
 - Runtime orchestration and fallback: `src/lib/processing.ts`, `src/lib/runtime-orchestrator.ts`
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`
+- Typed diagnostics helpers and event-name contract: `src/lib/diagnostics-events.ts`
 - Share target behavior: `src/lib/share-target-launch.js`, `src/lib/share-store.ts`
 - Offline bundle and caching: `src/sw.ts`, `src/lib/offline-runtime-bundle.ts`, `src/lib/runtime-bundle-asset-map.ts`
 - Shared runtime asset inventory and fetch plumbing: `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`

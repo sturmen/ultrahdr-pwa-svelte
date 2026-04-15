@@ -22,6 +22,7 @@
 - `src/lib/runtime-orchestrator.ts`: compact runtime state-machine orchestrator used for adapter-based initialization and processing.
 - `src/lib/runtime-*.ts`: initialization policy, cache policy, planner, reducer, state machine, capability detection, and runtime contract types.
 - `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`: shared offline-first runtime asset descriptors, versioned URL resolution, fetch/cache fallback, and loader diagnostics context for WASM/module assets.
+- `src/lib/diagnostics-events.ts`: typed diagnostics breadcrumb helpers and domain event-name source of truth used by UI, runtime init, pipeline telemetry, and runtime asset loaders.
 - `src/lib/processing-*.ts`: route planning, progress, queueing, preferences, runtime reducer, worker protocol, and processing route types.
 - `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`: structured breadcrumb and diagnostics surface.
 - `src/sw.ts`: Workbox service worker, offline runtime bundle validation, repair, and cache management.
@@ -37,6 +38,7 @@
 - Adapter orchestration flow: `src/lib/runtime-orchestrator.ts` coordinates initialization and processing through worker and main-thread adapters with explicit fallback behavior.
 - Offline bundle flow: `src/sw.ts` precaches app assets, validates the runtime bundle manifest, repairs corrupted caches, and answers bundle-management messages from the app.
 - Runtime asset loading flow: `src/lib/runtime-assets.ts` and `src/lib/runtime-asset-definitions.ts` provide the canonical runtime asset inventory used by wasm/module loaders, the manifest builder, cache-name resolution, and service-worker bundle classification.
+- Diagnostics emission flow: `src/lib/diagnostics-events.ts` is the canonical breadcrumb factory layer; feature modules should use its typed domain helpers instead of calling `DiagnosticsRecorder.record(...)` directly.
 - Share target flow: `src/lib/share-target-launch.js` and `src/lib/share-store.ts` recover files launched through the installed PWA.
 - Queue runner flow: `src/lib/workflow-state.ts` owns queue start, claim, launch, settle, and restart intent; `ImageProcessor.svelte` is the thin imperative shell that dispatches those transitions and invokes `runtime.process(...)`.
 

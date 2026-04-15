@@ -1,4 +1,4 @@
-import { getSharedDiagnosticsRecorder } from './diagnostics.ts';
+import { recordRuntimeAssetDiagnostics } from './diagnostics-events.ts';
 import { decodeRasterBuffer } from './raster-image.ts';
 import {
   buildRuntimeAssetDiagnosticsContext,
@@ -82,27 +82,6 @@ function toJpegliFactory(candidate: unknown): JpegliWasmFactory | null {
 function getGlobalJpegliFactory(): JpegliWasmFactory | null {
   const runtimeGlobal = getRuntimeGlobal();
   return toJpegliFactory(runtimeGlobal.createJpegliWasm ?? runtimeGlobal.window?.createJpegliWasm);
-}
-
-function getSharedDiagnosticsRecorderSafe() {
-  try {
-    return getSharedDiagnosticsRecorder(globalThis);
-  } catch {
-    return null;
-  }
-}
-
-function recordJpegliDiagnostic(
-  name: string,
-  severity: 'info' | 'warning' | 'error' = 'info',
-  context: Record<string, unknown> = {},
-): void {
-  getSharedDiagnosticsRecorderSafe()?.record({
-    category: name === 'jpegli-loader-failed' ? 'error' : 'runtime',
-    name,
-    severity,
-    context,
-  });
 }
 
 function normalizeErrorMessage(error: unknown): string {
@@ -395,33 +374,57 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
   }
 
   jpegliWasmLoadState = 'loading';
-  recordJpegliDiagnostic('jpegli-loader-started', 'info', {
+  recordRuntimeAssetDiagnostics(globalThis, {
+    type: 'jpegli-loader-started',
     trigger: 'module-load',
     hasGlobalFactory: getGlobalJpegliFactory() !== null,
-    ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_SCRIPT_ASSET, {
+    ...(buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_SCRIPT_ASSET, {
       cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_SCRIPT_ASSET),
+    }) as {
+      assetId: string | null;
+      versionKind: 'app' | 'wasm' | 'none' | null;
+      cacheName: string | null;
+      cacheSource: string | null;
+      byteLength: number | null;
+      errorCategory: string | null;
     }),
   });
 
   jpegliWasmModulePromise = (async () => {
     try {
       const { asset: wasmBinary, cacheSource } = await fetchRuntimeAssetBuffer(JPEGLI_WASM_BINARY_ASSET);
-      recordJpegliDiagnostic('jpegli-wasm-binary-fetched', 'info', {
+      recordRuntimeAssetDiagnostics(globalThis, {
+        type: 'jpegli-wasm-binary-fetched',
         trigger: 'module-load',
-        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
+        ...(buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
           cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_BINARY_ASSET),
           byteLength: wasmBinary.byteLength,
           cacheSource,
+        }) as {
+          assetId: string | null;
+          versionKind: 'app' | 'wasm' | 'none' | null;
+          cacheName: string | null;
+          cacheSource: string | null;
+          byteLength: number | null;
+          errorCategory: string | null;
         }),
       });
 
       const { factory, cacheSource: factoryCacheSource } = await loadJpegliFactoryViaModuleImport();
-      recordJpegliDiagnostic('jpegli-factory-resolved', 'info', {
+      recordRuntimeAssetDiagnostics(globalThis, {
+        type: 'jpegli-factory-resolved',
         trigger: 'module-load',
         source: getGlobalJpegliFactory() ? 'global' : 'module-import',
-        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_SCRIPT_ASSET, {
+        ...(buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_SCRIPT_ASSET, {
           cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_SCRIPT_ASSET),
           cacheSource: factoryCacheSource,
+        }) as {
+          assetId: string | null;
+          versionKind: 'app' | 'wasm' | 'none' | null;
+          cacheName: string | null;
+          cacheSource: string | null;
+          byteLength: number | null;
+          errorCategory: string | null;
         }),
       });
 
@@ -431,10 +434,18 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
       });
       jpegliWasmLoadState = 'ready';
       jpegliWasmLoadError = null;
-      recordJpegliDiagnostic('jpegli-loader-ready', 'info', {
+      recordRuntimeAssetDiagnostics(globalThis, {
+        type: 'jpegli-loader-ready',
         trigger: 'module-load',
-        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
+        ...(buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
           cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_BINARY_ASSET),
+        }) as {
+          assetId: string | null;
+          versionKind: 'app' | 'wasm' | 'none' | null;
+          cacheName: string | null;
+          cacheSource: string | null;
+          byteLength: number | null;
+          errorCategory: string | null;
         }),
       });
       return jpegliWasmModule as JpegliWasmModule;
@@ -444,12 +455,20 @@ export async function ensureJpegliLoaded(): Promise<JpegliWasmModule> {
       normalizedError.cause = error;
       jpegliWasmLoadState = 'failed';
       jpegliWasmLoadError = normalizedError;
-      recordJpegliDiagnostic('jpegli-loader-failed', 'error', {
+      recordRuntimeAssetDiagnostics(globalThis, {
+        type: 'jpegli-loader-failed',
         trigger: 'module-load',
-        message: errorMessage.slice(0, 200),
-        ...buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
+        message: errorMessage,
+        ...(buildRuntimeAssetDiagnosticsContext(JPEGLI_WASM_BINARY_ASSET, {
           cacheName: getRuntimeAssetCacheName(JPEGLI_WASM_BINARY_ASSET),
           errorCategory: classifyLoaderError(error),
+        }) as {
+          assetId: string | null;
+          versionKind: 'app' | 'wasm' | 'none' | null;
+          cacheName: string | null;
+          cacheSource: string | null;
+          byteLength: number | null;
+          errorCategory: string | null;
         }),
       });
       throw normalizedError;
