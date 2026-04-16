@@ -173,7 +173,7 @@ describe('ImageProcessor diagnostics', () => {
     expect(reportText).toContain('"mismatchedAssetCount": 1');
   });
 
-  it('opens the diagnostics modal automatically when processing fails with a memory allocation error', async () => {
+  it('suppresses the diagnostics modal automatically when processing fails with a memory allocation error', async () => {
     diagnosticsMocks.runtimeProcessMock.mockRejectedValue(
       new Error('Failed to allocate memory for JPEG input'),
     );
@@ -186,11 +186,11 @@ describe('ImageProcessor diagnostics', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('diagnostics-report-dialog')).toBeInTheDocument();
+      const finalEvents = readPersistedDiagnosticsEvents();
+      expect(finalEvents.some((event) => event.name === 'queue-item-settled')).toBe(true);
     });
 
-    expect(screen.getByText(/possible memory issue/i)).toBeInTheDocument();
-    expect(screen.getByText(/allocation-failure/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
   });
 
   it('records iPhone storage spill and memory release breadcrumbs after processing completes', async () => {
@@ -477,7 +477,7 @@ describe('ImageProcessor diagnostics', () => {
     });
   });
 
-  it('reopens the diagnostics popup for a recent foreground post-completion restart and records popup breadcrumbs', async () => {
+  it('suppresses the diagnostics popup for a recent foreground post-completion restart and records popup breadcrumbs', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(5000);
     window.localStorage.setItem(
       DIAGNOSTICS_ACTIVE_SESSION_KEY,
@@ -509,8 +509,7 @@ describe('ImageProcessor diagnostics', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('diagnostics-report-dialog')).toBeInTheDocument();
-      expect(screen.getByText(/foreground-kill-recovered/i)).toBeInTheDocument();
+      expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
     });
 
     const persisted = JSON.parse(
@@ -520,7 +519,7 @@ describe('ImageProcessor diagnostics', () => {
       expect.arrayContaining([
         expect.objectContaining({
           category: 'lifecycle',
-          name: 'recovered-popup-opened',
+          name: 'recovered-popup-suppressed',
           context: expect.objectContaining({
             memoryIssueKind: 'foreground-kill-recovered',
           }),

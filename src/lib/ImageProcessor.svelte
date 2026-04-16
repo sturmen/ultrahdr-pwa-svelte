@@ -2438,11 +2438,6 @@
             error: error,
           });
           setWorkflow(WORKFLOW_EVENTS.FILE_FAILED);
-          if (incident.memoryIssueKind !== "unknown") {
-            openDiagnosticsReport("auto", incident, {
-              failedQueueId: nextItem.id,
-            });
-          }
         } finally {
           restartAfterLoop = restartAfterLoop || queueRunnerState.restartRequested;
           releaseQueueLaunchLease(nextItem.id, launchToken);
@@ -3213,19 +3208,12 @@
         launchSource,
       });
       const recoveredDiagnosticsReport = consumeRecoveredDiagnosticsReport(globalThis);
-      if (recoveredDiagnosticsReport && !isUnderTestDiagnosticsMode()) {
+      if (recoveredDiagnosticsReport) {
         diagnosticsReport = recoveredDiagnosticsReport;
         diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
-        diagnosticsReportOpen = true;
-        recordLifecycleDiagnostics(globalThis, {
-          type: "recovered-popup-opened",
-          reportId: recoveredDiagnosticsReport.reportId,
-          memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
-        });
-      } else if (recoveredDiagnosticsReport) {
         recordLifecycleDiagnostics(globalThis, {
           type: "recovered-popup-suppressed",
-          reason: "under-test-mode",
+          reason: isUnderTestDiagnosticsMode() ? "under-test-mode" : "auto-popup-disabled",
           reportId: recoveredDiagnosticsReport.reportId,
           memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
         });
