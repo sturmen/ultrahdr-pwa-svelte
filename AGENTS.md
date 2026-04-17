@@ -101,8 +101,96 @@ Diagnostics Breadcrumb Requirement
 	•	Breadcrumb payloads must be bounded, privacy-conscious, offline-shareable, and safe for autonomous AI-agent debugging.
 	•	High-frequency progress markers may be throttled or coalesced, but critical transitions, fallbacks, and failures must never be omitted.
 
+Real MobileSafari Testing
+	•	When debugging Safari/iPhone behavior, prefer REAL MobileSafari automation over Playwright device emulation. Playwright WebKit and mobile emulation are not substitutes for MobileSafari memory, PWA, or Web Inspector behavior.
+	•	The preferred automation stack for simulator-based Safari work is Appium + XCUITest + MobileSafari Web Inspector/WebDriver. Use this before inventing one-off browser harnesses.
+	•	Prefer a real USB-connected iPhone for issues involving touch, viewport, PWA install/open flows, HDR image rendering, orientation, keyboard, scrolling, backgrounding, and OS memory pressure. Use the simulator only when a simulator repro is sufficient.
+	•	Do not modify Safari/macOS security settings automatically. If Remote Automation, Web Inspector, simulator pairing, or local network access are not already enabled, instruct the user what to enable and wait for confirmation.
 
-When working on iOS Safari bugs, use the `ios-safari-webdriver` skill.
-Prefer a real USB-connected iPhone for issues involving touch, viewport, PWA install/open flows, HDR image rendering, orientation, keyboard, and scrolling.
-Do not modify Safari/macOS security settings automatically.
-Run the narrowest failing test first, then the broader iOS Safari suite.
+Real MobileSafari Requirements
+	•	macOS with Xcode and iOS Simulator installed.
+	•	Safari installed on macOS.
+	•	`npx` available.
+	•	Appium available via `npx appium`.
+	•	Appium XCUITest driver installed:
+		`npx appium driver install xcuitest`
+	•	A booted iPhone simulator, or a real iPhone connected over USB.
+	•	For simulator Safari automation:
+		Enable Safari Remote Automation / Web Inspector as required by the current Safari + Simulator setup.
+	•	For real-device Safari automation:
+		Enable Web Inspector on the iPhone and Develop-menu device inspection on the Mac.
+
+Local App Setup For Real MobileSafari
+	•	Use the local preview server, not `vite dev`, unless the task explicitly needs dev-server HMR behavior:
+		`npm run preview -- --host 0.0.0.0`
+	•	Default local preview URL:
+		`http://localhost:4173/ultrahdr-pwa-svelte/`
+	•	When the simulator or phone needs to reach the Mac over the LAN instead of localhost, use the preview server’s network URL.
+	•	For automation/debug flows, prefer opening the app in under-test mode:
+		`http://localhost:4173/ultrahdr-pwa-svelte/?under-test=1`
+
+Real MobileSafari WebDriver Workflow
+	1.	Start the local preview server.
+	2.	Boot the target simulator and open Safari to the target preview URL, or connect the real iPhone and navigate Safari there.
+	3.	Start Appium:
+		`npx appium --base-path /wd/hub`
+	4.	Create a MobileSafari session with Appium/XCUITest using `browserName=Safari`.
+	5.	Confirm the attached page URL is the local preview URL before trusting any results. MobileSafari may reattach to an older tab if Safari was already open.
+	6.	Use WebDriver JS execution against the live page for diagnostics, state inspection, and test hooks.
+
+Example Simulator Session Parameters
+	•	`platformName`: `iOS`
+	•	`appium:automationName`: `XCUITest`
+	•	`browserName`: `Safari`
+	•	`appium:deviceName`: simulator name, for example `iPhone 17`
+	•	`appium:udid`: simulator UDID from `xcrun simctl list devices`
+	•	`appium:noReset`: `true`
+	•	`appium:newCommandTimeout`: `300`
+	•	Optional:
+		`appium:showSafariConsoleLog`: `true`
+		`appium:showXcodeLog`: `false`
+
+Simulator Helper Commands
+	•	List simulators:
+		`xcrun simctl list devices | rg 'iPhone|Booted'`
+	•	Open URL in the booted simulator Safari:
+		`xcrun simctl openurl <SIM_UDID> 'http://localhost:4173/ultrahdr-pwa-svelte/?under-test=1'`
+	•	Terminate MobileSafari if the active tab is wrong:
+		`xcrun simctl terminate <SIM_UDID> com.apple.mobilesafari`
+
+Automation-Safe File Injection
+	•	Do not rely on MobileSafari’s native file picker for automation. It is fragile and not a stable contract for autonomous agents.
+	•	Use the under-test automation seam exposed by the product code:
+		`window.__ULTRAHDR_AUTOMATION__.enqueueFiles(files, options)`
+	•	This API is available only when under-test mode is enabled via `?under-test=1` or `window.__ULTRAHDR_UNDER_TEST__ = true`.
+	•	Preferred usage from WebDriver `executeScript`:
+		1.	Create or fetch a `Blob`
+		2.	Wrap it in a real `File`
+		3.	Call `window.__ULTRAHDR_AUTOMATION__.enqueueFiles([file], { acknowledgeMobileInferenceWarning?: true })`
+	•	This path routes through the real queue and gating logic instead of bypassing product behavior.
+	•	Use `acknowledgeMobileInferenceWarning: true` when the automation flow must proceed through the mobile memory-warning gate deterministically.
+
+Real MobileSafari Debugging Rules
+	•	Use the real MobileSafari session to inspect:
+		localStorage
+		diagnostics breadcrumbs
+		queue state
+		runtime/init state
+		page URL/title
+		memory-warning UI state
+	•	Always confirm whether the repro is against the local preview URL or an old deployed page before drawing conclusions.
+	•	When reproducing “first run after update” behavior, clear or control the relevant localStorage keys and ensure Safari is on the newly built asset version.
+	•	When testing memory-pressure issues, note whether the failure is:
+		a queue/storage persistence failure
+		a runtime init failure
+		a GMNet/ORT inference OOM
+		an OS/process relaunch after completion
+	•	For real-device or simulator Safari work, prefer diagnostics evidence from the app’s typed breadcrumbs over visual guesswork.
+
+Testing Order For Safari Bugs
+	•	Run the narrowest failing test first.
+	•	If product behavior changes, run the full repo validation:
+		`npm test`
+		`npm run typecheck`
+		`npm run build`
+	•	After code changes for Safari/iPhone issues, validate with the real MobileSafari automation flow before relying on Playwright results.
