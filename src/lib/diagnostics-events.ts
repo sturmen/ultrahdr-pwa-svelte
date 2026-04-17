@@ -87,6 +87,8 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     filePickerOpened: 'file-picker-opened',
     filesDropped: 'files-dropped',
     appOpened: 'app-opened',
+    automationApiReady: 'automation-api-ready',
+    automationFilesEnqueued: 'automation-files-enqueued',
   },
   storage: {
     fullOutputViewerUrlReleased: 'full-output-viewer-url-released',
@@ -239,6 +241,16 @@ export type UserDiagnosticsEvent =
   | {
       type: 'app-opened';
       launchSource: string | null;
+    }
+  | {
+      type: 'automation-api-ready';
+      mode: string | null;
+    }
+  | {
+      type: 'automation-files-enqueued';
+      acceptedFileCount: number | null;
+      acknowledgeMobileInferenceWarning: boolean | null;
+      warningShown: boolean | null;
     };
 
 export type StorageDiagnosticsEvent =
@@ -678,6 +690,24 @@ function buildUserDiagnosticsInput(event: UserDiagnosticsEvent): DiagnosticsEven
         name: DIAGNOSTICS_EVENT_NAMES.user.appOpened,
         severity: 'info',
         context: mergeNormalizedContext({}, { launchSource: event.launchSource }),
+      };
+    case 'automation-api-ready':
+      return {
+        category: 'user',
+        name: DIAGNOSTICS_EVENT_NAMES.user.automationApiReady,
+        severity: 'info',
+        context: mergeNormalizedContext({}, { mode: event.mode }),
+      };
+    case 'automation-files-enqueued':
+      return {
+        category: 'user',
+        name: DIAGNOSTICS_EVENT_NAMES.user.automationFilesEnqueued,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          acceptedFileCount: event.acceptedFileCount,
+          acknowledgeMobileInferenceWarning: event.acknowledgeMobileInferenceWarning,
+          warningShown: event.warningShown,
+        }),
       };
   }
 }

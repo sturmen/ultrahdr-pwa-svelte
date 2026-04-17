@@ -107,6 +107,28 @@
   } from "./diagnostics-events.ts";
   import type { OfflineReadinessState } from "./offline-readiness.ts";
 
+  type AutomationEnqueueFilesOptions = {
+    acknowledgeMobileInferenceWarning?: boolean;
+  };
+
+  type AutomationEnqueueFilesResult = {
+    acceptedFileCount: number;
+    queued: boolean;
+    warningShown: boolean;
+  };
+
+  type AutomationApi = {
+    enqueueFiles: (
+      files: File[] | FileList,
+      options?: AutomationEnqueueFilesOptions,
+    ) => Promise<AutomationEnqueueFilesResult>;
+  };
+
+  type UnderTestWindow = typeof window & {
+    __ULTRAHDR_AUTOMATION__?: AutomationApi;
+    __ULTRAHDR_UNDER_TEST__?: boolean;
+  };
+
   export let files = [];
   export let launchSource = "regular";
   export let launchIntent = { action: null, tab: null };
@@ -270,6 +292,65 @@
     const params = new URLSearchParams(search);
     const flag = params.get("under-test");
     return flag === "1" || flag === "true";
+  }
+
+  function normalizeAutomationFiles(files: File[] | FileList | null | undefined): File[] {
+    return Array.from(files || []).filter((file) => file instanceof File);
+  }
+
+  async function enqueueFilesFromAutomation(
+    files: File[] | FileList,
+    options: AutomationEnqueueFilesOptions = {},
+  ): Promise<AutomationEnqueueFilesResult> {
+    const nextFiles = normalizeAutomationFiles(files);
+    const shouldAcknowledge = options.acknowledgeMobileInferenceWarning === true;
+    const pendingFiles = shouldAcknowledge ? [...pendingMobileInferenceFiles] : [];
+    const acceptedFiles = [...pendingFiles, ...nextFiles];
+
+    if (shouldAcknowledge) {
+      pendingMobileInferenceFiles = [];
+      mobileInferenceAcknowledgedForSession = true;
+      closeMobileInferenceWarning();
+    }
+
+    const queued = acceptedFiles.length > 0
+      ? await gateAndEnqueueFiles(acceptedFiles)
+      : false;
+    const warningShown = mobileInferenceWarningOpen;
+
+    recordUserDiagnostics(globalThis, {
+      type: "automation-files-enqueued",
+      acceptedFileCount: acceptedFiles.length,
+      acknowledgeMobileInferenceWarning: shouldAcknowledge,
+      warningShown,
+    });
+
+    return {
+      acceptedFileCount: acceptedFiles.length,
+      queued,
+      warningShown,
+    };
+  }
+
+  function installAutomationApi(): () => void {
+    if (typeof window === "undefined" || !isUnderTestDiagnosticsMode()) {
+      return () => {};
+    }
+
+    const runtimeWindow = window as UnderTestWindow;
+    runtimeWindow.__ULTRAHDR_AUTOMATION__ = {
+      enqueueFiles: enqueueFilesFromAutomation,
+    };
+    recordUserDiagnostics(globalThis, {
+      type: "automation-api-ready",
+      mode: "under-test",
+    });
+
+    return () => {
+      if (runtimeWindow.__ULTRAHDR_AUTOMATION__?.enqueueFiles === enqueueFilesFromAutomation) {
+        delete runtimeWindow.__ULTRAHDR_AUTOMATION__;
+      }
+    };
   }
   $: showConvertPanel = isDesktopLayout || activeMobileTab === "convert";
   $: showResultsPanel = isDesktopLayout || activeMobileTab === "results";
@@ -3113,6 +3194,7 @@
   }
 
   onMount(() => {
+    const disposeAutomationApi = installAutomationApi();
     let mediaQuery = null;
     let handleMediaChange = null;
     applyPreferencesToState(loadProcessingPreferences(globalThis));
@@ -3211,12 +3293,29 @@
       if (recoveredDiagnosticsReport) {
         diagnosticsReport = recoveredDiagnosticsReport;
         diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
-        recordLifecycleDiagnostics(globalThis, {
-          type: "recovered-popup-suppressed",
-          reason: isUnderTestDiagnosticsMode() ? "under-test-mode" : "auto-popup-disabled",
-          reportId: recoveredDiagnosticsReport.reportId,
-          memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
-        });
+        const recoveredAfterCompletion = recoveredDiagnosticsReport.recentEvents.some(
+          (event) => event?.name === "post-completion-restart-suspected",
+        );
+        const shouldOpenRecoveredPopup =
+          !isUnderTestDiagnosticsMode() &&
+          !recoveredAfterCompletion;
+        if (shouldOpenRecoveredPopup) {
+          diagnosticsReportOpen = true;
+          recordLifecycleDiagnostics(globalThis, {
+            type: "recovered-popup-opened",
+            reportId: recoveredDiagnosticsReport.reportId,
+            memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
+          });
+        } else {
+          recordLifecycleDiagnostics(globalThis, {
+            type: "recovered-popup-suppressed",
+            reason: isUnderTestDiagnosticsMode()
+              ? "under-test-mode"
+              : "post-completion-relaunch",
+            reportId: recoveredDiagnosticsReport.reportId,
+            memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
+          });
+        }
       }
       try {
         const persistedQueue = await loadQueueState();
@@ -3263,6 +3362,8 @@
           mediaQuery.removeListener(handleMediaChange);
         }
       }
+
+      disposeAutomationApi();
     };
   });
 </script>

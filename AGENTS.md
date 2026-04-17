@@ -100,3 +100,9 @@ Diagnostics Breadcrumb Requirement
 	•	If a feature or bug fix changes a flow without adding or updating the relevant breadcrumbs, the work is incomplete.
 	•	Breadcrumb payloads must be bounded, privacy-conscious, offline-shareable, and safe for autonomous AI-agent debugging.
 	•	High-frequency progress markers may be throttled or coalesced, but critical transitions, fallbacks, and failures must never be omitted.
+
+
+When working on iOS Safari bugs, use the `ios-safari-webdriver` skill.
+Prefer a real USB-connected iPhone for issues involving touch, viewport, PWA install/open flows, HDR image rendering, orientation, keyboard, and scrolling.
+Do not modify Safari/macOS security settings automatically.
+Run the narrowest failing test first, then the broader iOS Safari suite.
