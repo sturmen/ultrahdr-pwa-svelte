@@ -1,16 +1,48 @@
 import { sanitizeRuntimeInitOptions } from './runtime-contract.ts';
 
-const activeJobs = new Map<number, AbortController>();
-let runtimeInitializationPromise: Promise<Record<string, unknown>> | null = null;
-let runtimeInitializationResult: Record<string, unknown> | null = null;
-let runtimeInitializationError: unknown = null;
-let processingCoreModulePromise: Promise<typeof import('./processing-core.ts')> | null = null;
-let runtimeInitializationModulePromise: Promise<typeof import('./runtime-initialization.ts')> | null = null;
+type SharedWorkerState = {
+  activeJobs: Map<number, AbortController>;
+  completedJobs: Map<number, number>;
+  runtimeInitializationPromise: Promise<Record<string, unknown>> | null;
+  runtimeInitializationResult: Record<string, unknown> | null;
+  runtimeInitializationError: unknown;
+  processingCoreModulePromise: Promise<typeof import('./processing-core.ts')> | null;
+  runtimeInitializationModulePromise: Promise<typeof import('./runtime-initialization.ts')> | null;
+};
+
+function getSharedWorkerState(): SharedWorkerState {
+  const workerSelf = self as typeof self & {
+    __ULTRAHDR_PROCESSING_WORKER_STATE__?: SharedWorkerState;
+  };
+  if (!workerSelf.__ULTRAHDR_PROCESSING_WORKER_STATE__) {
+    workerSelf.__ULTRAHDR_PROCESSING_WORKER_STATE__ = {
+      activeJobs: new Map<number, AbortController>(),
+      completedJobs: new Map<number, number>(),
+      runtimeInitializationPromise: null,
+      runtimeInitializationResult: null,
+      runtimeInitializationError: null,
+      processingCoreModulePromise: null,
+      runtimeInitializationModulePromise: null,
+    };
+  }
+  return workerSelf.__ULTRAHDR_PROCESSING_WORKER_STATE__;
+}
 
 type WorkerMessage =
   | { type: 'init'; options?: Record<string, unknown> }
   | { type: 'cancel'; jobId: number }
   | { type: 'process'; jobId: number; file: File; options?: Record<string, unknown> };
+
+function markJobCompleted(jobId: number): void {
+  const state = getSharedWorkerState();
+  state.completedJobs.set(jobId, Date.now());
+  if (state.completedJobs.size > 100) {
+    const oldestEntry = state.completedJobs.keys().next();
+    if (!oldestEntry.done) {
+      state.completedJobs.delete(oldestEntry.value);
+    }
+  }
+}
 
 function emitModuleLoadEvent(
   type: 'init-progress' | 'progress',
@@ -48,12 +80,13 @@ function emitModuleLoadEvent(
 }
 
 async function loadRuntimeInitializationModule(): Promise<typeof import('./runtime-initialization.ts')> {
-  if (!runtimeInitializationModulePromise) {
+  const state = getSharedWorkerState();
+  if (!state.runtimeInitializationModulePromise) {
     emitModuleLoadEvent('init-progress', {
       status: 'running',
       moduleName: 'runtime initialization module',
     });
-    runtimeInitializationModulePromise = import('./runtime-initialization.ts')
+    state.runtimeInitializationModulePromise = import('./runtime-initialization.ts')
       .then((module) => {
         emitModuleLoadEvent('init-progress', {
           status: 'passed',
@@ -66,21 +99,22 @@ async function loadRuntimeInitializationModule(): Promise<typeof import('./runti
           status: 'failed',
           moduleName: 'runtime initialization module',
         });
-        runtimeInitializationModulePromise = null;
+        state.runtimeInitializationModulePromise = null;
         throw error;
       });
   }
-  return runtimeInitializationModulePromise;
+  return state.runtimeInitializationModulePromise;
 }
 
 async function loadProcessingCoreModule(jobId: number): Promise<typeof import('./processing-core.ts')> {
-  if (!processingCoreModulePromise) {
+  const state = getSharedWorkerState();
+  if (!state.processingCoreModulePromise) {
     emitModuleLoadEvent('progress', {
       jobId,
       status: 'running',
       moduleName: 'processing core module',
     });
-    processingCoreModulePromise = import('./processing-core.ts')
+    state.processingCoreModulePromise = import('./processing-core.ts')
       .then((module) => {
         emitModuleLoadEvent('progress', {
           jobId,
@@ -95,11 +129,11 @@ async function loadProcessingCoreModule(jobId: number): Promise<typeof import('.
           status: 'failed',
           moduleName: 'processing core module',
         });
-        processingCoreModulePromise = null;
+        state.processingCoreModulePromise = null;
         throw error;
       });
   }
-  return processingCoreModulePromise;
+  return state.processingCoreModulePromise;
 }
 
 function normalizeError(error: unknown): Record<string, unknown> {
@@ -150,20 +184,21 @@ function postInitError(error: unknown): void {
 }
 
 async function ensureRuntimeInitialized(initOptions: Record<string, unknown> | null = null): Promise<Record<string, unknown>> {
-  if (runtimeInitializationResult) {
-    return runtimeInitializationResult;
+  const state = getSharedWorkerState();
+  if (state.runtimeInitializationResult) {
+    return state.runtimeInitializationResult;
   }
-  if (runtimeInitializationError) {
-    throw runtimeInitializationError;
+  if (state.runtimeInitializationError) {
+    throw state.runtimeInitializationError;
   }
-  if (runtimeInitializationPromise) {
-    return runtimeInitializationPromise;
+  if (state.runtimeInitializationPromise) {
+    return state.runtimeInitializationPromise;
   }
 
   const runtimeInitializationOptions = sanitizeRuntimeInitOptions(initOptions);
   const runtimeInitializationModule = await loadRuntimeInitializationModule();
 
-  runtimeInitializationPromise = runtimeInitializationModule.initializeRuntime({
+  state.runtimeInitializationPromise = runtimeInitializationModule.initializeRuntime({
     onProgress: (event) => {
       self.postMessage({
         type: 'init-progress',
@@ -173,20 +208,20 @@ async function ensureRuntimeInitialized(initOptions: Record<string, unknown> | n
     ...runtimeInitializationOptions,
   })
     .then((result) => {
-      runtimeInitializationResult = result || {};
-      runtimeInitializationError = null;
-      return runtimeInitializationResult;
+      state.runtimeInitializationResult = result || {};
+      state.runtimeInitializationError = null;
+      return state.runtimeInitializationResult;
     })
     .catch((error) => {
-      runtimeInitializationResult = null;
-      runtimeInitializationError = error;
+      state.runtimeInitializationResult = null;
+      state.runtimeInitializationError = error;
       throw error;
     })
     .finally(() => {
-      runtimeInitializationPromise = null;
+      state.runtimeInitializationPromise = null;
     });
 
-  return runtimeInitializationPromise;
+  return state.runtimeInitializationPromise;
 }
 
 async function handleInitMessage(message: Extract<WorkerMessage, { type: 'init' }>): Promise<void> {
@@ -204,13 +239,16 @@ async function handleProcessMessage(message: Extract<WorkerMessage, { type: 'pro
     return;
   }
 
-  if (activeJobs.has(jobId)) {
-    postError(jobId, new Error(`Duplicate processing job id: ${jobId}`));
+  const state = getSharedWorkerState();
+  if (state.activeJobs.has(jobId)) {
+    return;
+  }
+  if (state.completedJobs.has(jobId)) {
     return;
   }
 
   const controller = new AbortController();
-  activeJobs.set(jobId, controller);
+  state.activeJobs.set(jobId, controller);
 
   try {
     await ensureRuntimeInitialized();
@@ -238,7 +276,8 @@ async function handleProcessMessage(message: Extract<WorkerMessage, { type: 'pro
   } catch (error) {
     postError(jobId, error);
   } finally {
-    activeJobs.delete(jobId);
+    state.activeJobs.delete(jobId);
+    markJobCompleted(jobId);
   }
 }
 
@@ -254,7 +293,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
   }
 
   if (message.type === 'cancel') {
-    const controller = activeJobs.get(Number(message.jobId));
+    const controller = getSharedWorkerState().activeJobs.get(Number(message.jobId));
     if (controller) {
       controller.abort();
     }

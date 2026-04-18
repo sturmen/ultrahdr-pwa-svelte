@@ -39,6 +39,7 @@ import {
   createInitialProcessingRuntimeState,
   reduceProcessingRuntimeState,
 } from './processing-runtime-reducer.ts';
+import { recordRuntimeDiagnostics } from './diagnostics-events.ts';
 import {
   isIOSLikeRuntime,
   isSafariLikeRuntime,
@@ -243,6 +244,13 @@ function createAbortError() {
   return error;
 }
 
+function normalizeProcessingRequestKey(options = {}) {
+  const candidate = typeof options?.processingRequestKey === 'string'
+    ? options.processingRequestKey.trim()
+    : '';
+  return candidate.length > 0 ? candidate : null;
+}
+
 function normalizeWorkerError(raw) {
   if (!raw || typeof raw !== 'object') {
     return new Error(String(raw || WORKER_MESSAGE_ERROR));
@@ -273,6 +281,10 @@ function normalizeWorkerError(raw) {
   return error;
 }
 
+function shouldSkipWorkerCompatibilityFallback(error) {
+  return error?.workerFallbackSkippedAfterPipelineStart === true;
+}
+
 function cloneEventDetail(eventDetail) {
   if (!eventDetail || typeof eventDetail !== 'object') {
     return eventDetail;
@@ -286,6 +298,7 @@ function cloneEventDetail(eventDetail) {
     error: eventDetail.error ? { ...eventDetail.error } : eventDetail.error,
   };
 }
+
 
 function cloneRuntimeInitProgressEvent(eventDetail) {
   if (!eventDetail || typeof eventDetail !== 'object') {
@@ -750,7 +763,12 @@ function initializeWorkerClient(context, initOptions = null) {
                   reject: jobReject,
                 });
 
-                worker.postMessage(payload);
+                try {
+                  worker.postMessage(payload);
+                } catch (error) {
+                  disposeJob(jobId);
+                  jobReject(error);
+                }
               });
             },
           });
@@ -811,8 +829,18 @@ function initializeWorkerClient(context, initOptions = null) {
       }
 
       if (message.type === 'error') {
+        const error = normalizeWorkerError(message.error);
+        if (job.pipelineStarted && error.name === 'ProcessingWorkerInitError') {
+          error.workerFallbackSkippedAfterPipelineStart = true;
+          recordRuntimeDiagnostics(globalThis, {
+            type: 'worker-fallback-skipped-after-pipeline-start',
+            errorName: error.name,
+            fallbackReason: 'worker-progress-already-started',
+            pipelineStarted: true,
+          });
+        }
         disposeJob(jobId);
-        job.reject(normalizeWorkerError(message.error));
+        job.reject(error);
         return;
       }
 
@@ -1125,6 +1153,7 @@ async function processImageInternal(context, file, options = {}) {
     ...(options?.runtimeInitOptions || {}),
     ...(options?.allowWasmOnly === false ? { allowWasmOnly: false } : {}),
   });
+  const processingRequestKey = normalizeProcessingRequestKey(options);
 
   if (initPath === 'error') {
     const error = createWorkerUnavailableError();
@@ -1134,19 +1163,25 @@ async function processImageInternal(context, file, options = {}) {
   if (initPath === 'main-thread') {
     await ensureMainThreadRuntimeInitialized(context, runtimeInitOptions);
     const processImageMainThread = await loadMainThreadProcessImage();
-    return processImageMainThread(file, stripMainThreadOnlyOptions(options));
+    const result = await processImageMainThread(file, stripMainThreadOnlyOptions(options));
+    return result;
   }
 
   try {
     const client = await getWorkerClient(context);
-    return client.process(file, { ...options });
+    const result = await client.process(file, options);
+    return result;
   } catch (error) {
+    if (shouldSkipWorkerCompatibilityFallback(error)) {
+      throw error;
+    }
     if (decideWorkerFallback({ allowMainThreadFallback, error }) !== 'fallback') {
       throw error;
     }
     await ensureMainThreadRuntimeInitialized(context, runtimeInitOptions);
     const processImageMainThread = await loadMainThreadProcessImage();
-    return processImageMainThread(file, stripMainThreadOnlyOptions(options));
+    const result = await processImageMainThread(file, stripMainThreadOnlyOptions(options));
+    return result;
   }
 }
 
@@ -1164,6 +1199,7 @@ export function createProcessingRuntime(dependencies = {}) {
       : processImageInternal;
   const listeners = new Set();
   const runtimeContext = createRuntimeContext();
+  const activeProcessRequests = new Map();
   let snapshot = createInitialProcessingRuntimeState();
   let disposed = false;
 
@@ -1245,6 +1281,17 @@ export function createProcessingRuntime(dependencies = {}) {
     if (disposed) {
       throw new Error('Processing runtime has been disposed.');
     }
+    const processingRequestKey = normalizeProcessingRequestKey(options);
+    if (processingRequestKey) {
+      const activeRequest = activeProcessRequests.get(processingRequestKey) ?? null;
+      if (activeRequest) {
+        recordRuntimeDiagnostics(globalThis, {
+          type: 'process-request-deduplicated',
+          processingRequestKey,
+        });
+        return activeRequest;
+      }
+    }
     const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
     const passthroughOptions = {
       ...options,
@@ -1265,25 +1312,57 @@ export function createProcessingRuntime(dependencies = {}) {
       options: passthroughOptions,
     });
     emit(requested.state);
-    try {
-      const result = await interpretRuntimeCommands(requested.commands, {
-        runtimeContext,
-        initializeOptions: passthroughOptions,
-        processFile: file,
-      });
-      const success = reducer(snapshot, {
-        type: 'PROCESS_SUCCEEDED',
-      });
-      emit(success.state);
-      return result;
-    } catch (error) {
-      const failed = reducer(snapshot, {
-        type: 'PROCESS_FAILED',
-        error,
-      });
-      emit(failed.state);
-      throw error;
+    let processAttemptCount = 0;
+    const processPromise = (async () => {
+      try {
+        const result = await interpretRuntimeCommands(requested.commands, {
+          runtimeContext,
+          initializeOptions: passthroughOptions,
+          processFile: file,
+          processingRequestKey,
+          onProcessAttempt: () => {
+            processAttemptCount += 1;
+            const attemptNumber = processAttemptCount;
+            recordRuntimeDiagnostics(globalThis, {
+              type: 'process-attempt-started',
+              processingRequestKey,
+              attemptNumber,
+            });
+            return () => {
+              recordRuntimeDiagnostics(globalThis, {
+                type: 'process-attempt-completed',
+                processingRequestKey,
+                attemptNumber,
+              });
+            };
+          },
+        });
+        const success = reducer(snapshot, {
+          type: 'PROCESS_SUCCEEDED',
+        });
+        emit(success.state);
+        return result;
+      } catch (error) {
+        const failed = reducer(snapshot, {
+          type: 'PROCESS_FAILED',
+          error,
+        });
+        emit(failed.state);
+        throw error;
+      } finally {
+        if (
+          processingRequestKey
+          && activeProcessRequests.get(processingRequestKey) === processPromise
+        ) {
+          activeProcessRequests.delete(processingRequestKey);
+        }
+      }
+    })();
+
+    if (processingRequestKey) {
+      activeProcessRequests.set(processingRequestKey, processPromise);
     }
+    return processPromise;
   }
 
   async function dispose() {
@@ -1323,6 +1402,8 @@ export function createProcessingRuntime(dependencies = {}) {
     runtimeContext: runtimeContextForCommands,
     initializeOptions,
     processFile,
+    processingRequestKey,
+    onProcessAttempt,
   }) {
     let lastResult;
     for (const command of Array.isArray(commands) ? commands : []) {
@@ -1334,11 +1415,20 @@ export function createProcessingRuntime(dependencies = {}) {
           );
           break;
         case 'PROCESS_IMAGE':
-          lastResult = await processImageInternalImpl(
-            runtimeContextForCommands,
-            command.file || processFile,
-            command.options || initializeOptions || {},
-          );
+          {
+            const finishAttempt = typeof onProcessAttempt === 'function'
+              ? onProcessAttempt()
+              : null;
+            try {
+              lastResult = await processImageInternalImpl(
+                runtimeContextForCommands,
+                command.file || processFile,
+                command.options || initializeOptions || {},
+              );
+            } finally {
+              finishAttempt?.();
+            }
+          }
           break;
         default:
           throw new Error(`Unknown runtime command: ${String(command?.type || 'undefined')}`);

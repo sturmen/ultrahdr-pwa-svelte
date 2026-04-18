@@ -1546,6 +1546,21 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.getByText(/hdr strength only applies when generating a new gain map or after discarding/i)).toBeInTheDocument();
   });
 
+  it('passes a stable queue-scoped processing request key to runtime.process', async () => {
+    renderProcessor({ files: makeFiles(1) });
+
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(runtimeProcessMock).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({
+        processingRequestKey: 'queue:0',
+      }),
+    );
+  });
+
   it('reprocesses selected stale results directly from the results toolbar', async () => {
     renderProcessor({ files: makeFiles(1) });
 

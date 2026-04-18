@@ -36,20 +36,20 @@ function flushMicrotasks(): Promise<void> {
 
 describe('processing worker lazy imports', () => {
   const originalSelf = globalThis.self;
-  let messageListener: WorkerListener | null = null;
+  let messageListeners: WorkerListener[] = [];
   let postedMessages: Array<Record<string, unknown>> = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    messageListener = null;
+    messageListeners = [];
     postedMessages = [];
     Object.defineProperty(globalThis, 'self', {
       configurable: true,
       value: {
         addEventListener: vi.fn((type: string, callback: WorkerListener) => {
           if (type === 'message') {
-            messageListener = callback;
+            messageListeners.push(callback);
           }
         }),
         postMessage: vi.fn((message: Record<string, unknown>) => {
@@ -71,9 +71,9 @@ describe('processing worker lazy imports', () => {
 
     expect(lazyWorkerMocks.runtimeInitializationModuleLoads).not.toHaveBeenCalled();
     expect(lazyWorkerMocks.processingCoreModuleLoads).not.toHaveBeenCalled();
-    expect(messageListener).not.toBeNull();
+    expect(messageListeners).toHaveLength(1);
 
-    messageListener?.({
+    messageListeners[0]?.({
       data: {
         type: 'init',
         options: { runtimeMode: 'wasm' },
@@ -105,7 +105,7 @@ describe('processing worker lazy imports', () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'worker-input.jpg', {
       type: 'image/jpeg',
     });
-    messageListener?.({
+    messageListeners[0]?.({
       data: {
         type: 'process',
         jobId: 41,
@@ -135,5 +135,141 @@ describe('processing worker lazy imports', () => {
         }),
       ]),
     );
+  });
+
+  it('forwards processing options into worker-side processing', async () => {
+    await import('../processing-worker.ts');
+
+    messageListeners[0]?.({
+      data: {
+        type: 'init',
+        options: { runtimeMode: 'wasm' },
+      },
+    } as MessageEvent<Record<string, unknown>>);
+
+    await flushMicrotasks();
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'worker-input.heic', {
+      type: 'image/heic',
+    });
+    messageListeners[0]?.({
+      data: {
+        type: 'process',
+        jobId: 42,
+        file,
+        options: {
+          processingRequestKey: 'queue:42',
+        },
+      },
+    } as MessageEvent<Record<string, unknown>>);
+
+    await flushMicrotasks();
+
+    expect(lazyWorkerMocks.processImageMock).toHaveBeenCalledWith(
+      file,
+      expect.objectContaining({
+        processingRequestKey: 'queue:42',
+      }),
+    );
+  });
+
+  it('ignores duplicate worker process messages that replay the same job id', async () => {
+    await import('../processing-worker.ts');
+
+    messageListeners[0]?.({
+      data: {
+        type: 'init',
+        options: { runtimeMode: 'wasm' },
+      },
+    } as MessageEvent<Record<string, unknown>>);
+
+    await flushMicrotasks();
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'worker-input.heic', {
+      type: 'image/heic',
+    });
+    const processMessage = {
+      data: {
+        type: 'process',
+        jobId: 77,
+        file,
+        options: {
+          processingRequestKey: 'queue:77',
+        },
+      },
+    } as MessageEvent<Record<string, unknown>>;
+
+    messageListeners[0]?.(processMessage);
+    await flushMicrotasks();
+    messageListeners[0]?.(processMessage);
+    await flushMicrotasks();
+
+    expect(lazyWorkerMocks.processImageMock).toHaveBeenCalledTimes(1);
+    expect(
+      postedMessages.filter((message) => message.type === 'result' && message.jobId === 77),
+    ).toHaveLength(1);
+  });
+
+  it('shares duplicate-job protection across duplicate worker listeners', async () => {
+    await import('../processing-worker.ts');
+    const firstListener = messageListeners[0];
+
+    vi.resetModules();
+    await import('../processing-worker.ts');
+    expect(messageListeners).toHaveLength(2);
+    const secondListener = messageListeners[1];
+
+    firstListener?.({
+      data: {
+        type: 'init',
+        options: { runtimeMode: 'wasm' },
+      },
+    } as MessageEvent<Record<string, unknown>>);
+    secondListener?.({
+      data: {
+        type: 'init',
+        options: { runtimeMode: 'wasm' },
+      },
+    } as MessageEvent<Record<string, unknown>>);
+
+    await flushMicrotasks();
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'worker-input.heic', {
+      type: 'image/heic',
+    });
+    const processMessage = {
+      data: {
+        type: 'process',
+        jobId: 88,
+        file,
+        options: {
+          processingRequestKey: 'queue:88',
+        },
+      },
+    } as MessageEvent<Record<string, unknown>>;
+
+    firstListener?.(processMessage);
+    secondListener?.(processMessage);
+    await flushMicrotasks();
+
+    expect(lazyWorkerMocks.processImageMock).toHaveBeenCalledTimes(1);
+    expect(
+      postedMessages.filter((message) => message.type === 'result' && message.jobId === 88),
+    ).toHaveLength(1);
+    expect(
+      postedMessages.filter((message) => message.type === 'error' && message.jobId === 88),
+    ).toHaveLength(0);
+  });
+
+  it('does not emit temporary verbose startup breadcrumbs on worker import', async () => {
+    await import('../processing-worker.ts');
+
+    expect(
+      postedMessages.some(
+        (message) =>
+          message.type === 'init-progress'
+          && message.event?.phase === 'verbose-debug-breadcrumb',
+      ),
+    ).toBe(false);
   });
 });

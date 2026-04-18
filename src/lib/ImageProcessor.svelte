@@ -78,6 +78,10 @@
   } from "./image-processor-gate.ts";
   import { deriveQueueUiState } from "./image-processor-queue.ts";
   import {
+    createQueueTaskRegistry,
+    createQueueTokenRegistry,
+  } from "./queue-processing-lease.ts";
+  import {
     estimatePipelineProgress,
     formatMs,
     formatExecutionProviderLabel,
@@ -105,6 +109,7 @@
     recordStorageDiagnostics,
     recordUserDiagnostics,
   } from "./diagnostics-events.ts";
+  import { bumpAppMountCounter } from "./app-mount-counter.ts";
   import type { OfflineReadinessState } from "./offline-readiness.ts";
 
   type AutomationEnqueueFilesOptions = {
@@ -122,6 +127,7 @@
       files: File[] | FileList,
       options?: AutomationEnqueueFilesOptions,
     ) => Promise<AutomationEnqueueFilesResult>;
+    resetState: () => Promise<{ queueLength: number; resultCount: number }>;
   };
 
   type UnderTestWindow = typeof window & {
@@ -194,7 +200,8 @@
   let viewerBounceTimeout = null;
   let viewerZoomScale = 1;
   let viewerPanX = 0;
-  const activeQueueLaunchLeases = new Map<number, string>();
+  const activeQueueLaunchLeases = createQueueTokenRegistry();
+  const activeQueueProcessTasks = createQueueTaskRegistry<Blob>();
   let viewerPanY = 0;
   let viewerDragActive = false;
   let viewerDragStartX = 0;
@@ -332,6 +339,23 @@
     };
   }
 
+  async function resetStateFromAutomation(): Promise<{
+    queueLength: number;
+    resultCount: number;
+  }> {
+    await reset(false);
+    const result = {
+      queueLength: queue.length,
+      resultCount: results.length,
+    };
+    recordUserDiagnostics(globalThis, {
+      type: "automation-state-reset",
+      queueLength: result.queueLength,
+      resultCount: result.resultCount,
+    });
+    return result;
+  }
+
   function installAutomationApi(): () => void {
     if (typeof window === "undefined" || !isUnderTestDiagnosticsMode()) {
       return () => {};
@@ -340,6 +364,7 @@
     const runtimeWindow = window as UnderTestWindow;
     runtimeWindow.__ULTRAHDR_AUTOMATION__ = {
       enqueueFiles: enqueueFilesFromAutomation,
+      resetState: resetStateFromAutomation,
     };
     recordUserDiagnostics(globalThis, {
       type: "automation-api-ready",
@@ -347,7 +372,10 @@
     });
 
     return () => {
-      if (runtimeWindow.__ULTRAHDR_AUTOMATION__?.enqueueFiles === enqueueFilesFromAutomation) {
+      if (
+        runtimeWindow.__ULTRAHDR_AUTOMATION__?.enqueueFiles === enqueueFilesFromAutomation
+        && runtimeWindow.__ULTRAHDR_AUTOMATION__?.resetState === resetStateFromAutomation
+      ) {
         delete runtimeWindow.__ULTRAHDR_AUTOMATION__;
       }
     };
@@ -1609,6 +1637,7 @@
       abortSignal,
       fileIndex,
       totalFiles,
+      processingRequestKey: `queue:${queueId}`,
       onProgress: (event) => updateProgressUi(event, queueId),
     };
     const forcedProvider = resolveForcedProviderFromPreference();
@@ -2017,26 +2046,22 @@
   }
 
   function acquireQueueLaunchLease(queueId, launchToken) {
-    const existingLaunchToken = activeQueueLaunchLeases.get(queueId) || null;
-    if (existingLaunchToken && existingLaunchToken !== launchToken) {
+    const acquisition = activeQueueLaunchLeases.acquire(queueId, launchToken);
+    if (!acquisition.acquired) {
       recordQueueDiagnostics(globalThis, {
         type: "duplicate-processing-launch-blocked",
         queueId,
         launchToken,
-        existingLaunchToken,
+        existingLaunchToken: acquisition.existingLaunchToken,
         reason: "lease-already-held",
       });
       return false;
     }
-    activeQueueLaunchLeases.set(queueId, launchToken);
     return true;
   }
 
   function releaseQueueLaunchLease(queueId, launchToken) {
-    const existingLaunchToken = activeQueueLaunchLeases.get(queueId) || null;
-    if (existingLaunchToken === launchToken) {
-      activeQueueLaunchLeases.delete(queueId);
-    }
+    activeQueueLaunchLeases.release(queueId, launchToken);
   }
 
   function updateQueueItem(queueId, changes) {
@@ -2424,15 +2449,31 @@
             processingPath: processingPathByQueueId.get(nextItem.id) || null,
           });
 
-          const blob = await runtime.process(
-            activeInput,
-            buildProcessingOptions(
-              controller.signal,
-              queueIndex,
-              queue.length,
-              nextItem.id,
-            ),
+          const processingInvocation = activeQueueProcessTasks.run(
+            nextItem.id,
+            launchToken,
+            () =>
+              runtime.process(
+                activeInput,
+                buildProcessingOptions(
+                  controller.signal,
+                  queueIndex,
+                  queue.length,
+                  nextItem.id,
+                ),
+              ),
           );
+          if (processingInvocation.status === "blocked") {
+            recordQueueDiagnostics(globalThis, {
+              type: "duplicate-processing-launch-blocked",
+              queueId: nextItem.id,
+              launchToken,
+              existingLaunchToken: processingInvocation.existingLaunchToken,
+              reason: "process-task-already-running",
+            });
+            continue;
+          }
+          const blob = await processingInvocation.promise;
 
           if (controller.signal.aborted) {
             return;
@@ -3285,9 +3326,12 @@
     }
 
     void (async () => {
+      const mountSample = bumpAppMountCounter(globalThis);
       recordUserDiagnostics(globalThis, {
         type: "app-opened",
         launchSource,
+        mountCount: mountSample.mountCount,
+        priorMountCount: mountSample.priorMountCount,
       });
       const recoveredDiagnosticsReport = consumeRecoveredDiagnosticsReport(globalThis);
       if (recoveredDiagnosticsReport) {

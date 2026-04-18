@@ -18,6 +18,11 @@
 - App startup and initialization UI: `src/App.svelte`, `src/lib/InitializationGate.svelte`
 - Main user flow and conversion UI: `src/lib/ImageProcessor.svelte`
 - Queue runner and reducer selectors: `src/lib/workflow-state.ts`
+- Queue launch / processing dedupe: `src/lib/queue-processing-lease.ts`, `src/lib/ImageProcessor.svelte`
+- Queue-scoped runtime process dedupe: `src/lib/processing.ts`, `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
+- Worker fallback skip after pipeline start: `src/lib/processing.ts`, `src/lib/worker-job-protocol.ts`, `src/lib/diagnostics-events.ts`
+- Verbose duplicate-processing trace breadcrumbs: `src/lib/processing.ts`, `src/lib/processing-core.ts`, `src/lib/diagnostics-events.ts`
+- MobileSafari worker re-evaluation investigation note: `docs/investigations/mobile-safari-worker-module-reevaluation.md`
 - Runtime orchestration and fallback: `src/lib/processing.ts`, `src/lib/runtime-orchestrator.ts`
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`
 - Typed diagnostics helpers and event-name contract: `src/lib/diagnostics-events.ts`

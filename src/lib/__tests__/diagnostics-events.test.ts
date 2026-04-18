@@ -158,6 +158,96 @@ describe('diagnostics-events', () => {
     expect((event.context.message as string).length).toBe(200);
   });
 
+  it('records runtime request dedupe breadcrumbs with a stable name', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordRuntimeDiagnostics(runtime, {
+      type: 'process-request-deduplicated',
+      processingRequestKey: 'queue:0',
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'runtime',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.runtime.processRequestDeduplicated,
+      severity: 'info',
+      context: {
+        processingRequestKey: 'queue:0',
+      },
+    });
+  });
+
+  it('records skipped worker fallback breadcrumbs with a stable name', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordRuntimeDiagnostics(runtime, {
+      type: 'worker-fallback-skipped-after-pipeline-start',
+      errorName: 'ProcessingWorkerInitError',
+      fallbackReason: 'worker-progress-already-started',
+      pipelineStarted: true,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'runtime',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.runtime.workerFallbackSkippedAfterPipelineStart,
+      severity: 'warning',
+      context: {
+        errorName: 'ProcessingWorkerInitError',
+        fallbackReason: 'worker-progress-already-started',
+        pipelineStarted: true,
+      },
+    });
+  });
+
+  it('records app-opened breadcrumbs with mount-count and prior-mount-count for reload inference', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordUserDiagnostics(runtime, {
+      type: 'app-opened',
+      launchSource: 'regular',
+      mountCount: 2,
+      priorMountCount: 1,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'user',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.user.appOpened,
+      severity: 'info',
+      context: {
+        launchSource: 'regular',
+        mountCount: 2,
+        priorMountCount: 1,
+      },
+    });
+  });
+
+  it('records automation reset breadcrumbs with a stable name', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordUserDiagnostics(runtime, {
+      type: 'automation-state-reset',
+      queueLength: 0,
+      resultCount: 0,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'user',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.user.automationStateReset,
+      severity: 'info',
+      context: {
+        queueLength: 0,
+        resultCount: 0,
+      },
+    });
+  });
+
   it('records pipeline breadcrumbs through the typed helper without changing the public phase name', async () => {
     const runtime = createRuntime();
     const diagnosticsEvents = await import('../diagnostics-events.ts');

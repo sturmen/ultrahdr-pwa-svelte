@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DEFAULT_MAX_CONTENT_BOOST } from '../max-content-boost.js';
+import { getRecordedDiagnosticsEvents } from '../diagnostics-events.ts';
 
 const { losslessRotateCalls } = vi.hoisted(() => ({
     losslessRotateCalls: [],
@@ -149,6 +150,9 @@ describe('processImage UltraHDR preservation path', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         losslessRotateCalls.length = 0;
+        window.localStorage.clear();
+        delete window.__ultrahdrDiagnosticsRecorder;
+        window.__ULTRAHDR_UNDER_TEST__ = true;
     });
 
     it('encodes SDR and gain-map components into compressed inputs before final encode', async () => {

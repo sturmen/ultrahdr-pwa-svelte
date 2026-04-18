@@ -106,4 +106,82 @@ describe('processing runtime API', () => {
 
     await expect(runtime.initialize()).rejects.toThrow(/unknown runtime command/i);
   });
+
+  it('joins concurrent process requests that share a processingRequestKey', async () => {
+    const { getRecordedDiagnosticsEvents, DIAGNOSTICS_EVENT_NAMES } = await import('../diagnostics-events.ts');
+    window.localStorage.clear();
+    delete window.__ultrahdrDiagnosticsRecorder;
+    const deferred = Promise.withResolvers<Blob>();
+    const processImageInternal = vi.fn(async () => deferred.promise);
+    const runtime = createProcessingRuntime({
+      processImageInternal,
+    });
+    const file = new File([new Uint8Array([1])], 'input.heic', { type: 'image/heic' });
+
+    const firstPromise = runtime.process(file, {
+      processingRequestKey: 'queue:7',
+    });
+    const secondPromise = runtime.process(file, {
+      processingRequestKey: 'queue:7',
+    });
+
+    expect(processImageInternal).toHaveBeenCalledTimes(1);
+    expect(getRecordedDiagnosticsEvents(window)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: DIAGNOSTICS_EVENT_NAMES.runtime.processAttemptStarted,
+          context: expect.objectContaining({
+            processingRequestKey: 'queue:7',
+            attemptNumber: 1,
+          }),
+        }),
+        expect.objectContaining({
+          name: DIAGNOSTICS_EVENT_NAMES.runtime.processRequestDeduplicated,
+          context: expect.objectContaining({
+            processingRequestKey: 'queue:7',
+          }),
+        }),
+      ]),
+    );
+
+    const resultBlob = new Blob(['ok'], { type: 'image/jpeg' });
+    deferred.resolve(resultBlob);
+
+    await expect(firstPromise).resolves.toBe(resultBlob);
+    await expect(secondPromise).resolves.toBe(resultBlob);
+    expect(processImageInternal).toHaveBeenCalledTimes(1);
+  });
+
+  it('records runtime processing attempt breadcrumbs for each process execution', async () => {
+    const { getRecordedDiagnosticsEvents, DIAGNOSTICS_EVENT_NAMES } = await import('../diagnostics-events.ts');
+    window.localStorage.clear();
+    delete window.__ultrahdrDiagnosticsRecorder;
+    const processImageInternal = vi.fn(async () => new Blob(['ok'], { type: 'image/jpeg' }));
+    const runtime = createProcessingRuntime({
+      processImageInternal,
+    });
+    const file = new File([new Uint8Array([1])], 'input.heic', { type: 'image/heic' });
+
+    await runtime.process(file, {
+      processingRequestKey: 'queue:9',
+    });
+
+    expect(getRecordedDiagnosticsEvents(window)).toEqual([
+      expect.objectContaining({
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.processAttemptStarted,
+        context: expect.objectContaining({
+          processingRequestKey: 'queue:9',
+          attemptNumber: 1,
+        }),
+      }),
+      expect.objectContaining({
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.processAttemptCompleted,
+        context: expect.objectContaining({
+          processingRequestKey: 'queue:9',
+          attemptNumber: 1,
+        }),
+      }),
+    ]);
+  });
+
 });

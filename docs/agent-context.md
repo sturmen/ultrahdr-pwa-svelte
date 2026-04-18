@@ -18,7 +18,8 @@
 - `src/App.svelte`: app shell, view routing, share-target launch handling, PWA update state, runtime initialization UI.
 - `src/lib/ImageProcessor.svelte`: main conversion UI and user-facing processing flow.
 - `src/lib/workflow-state.ts`: reducer-backed queue/domain state, including the single queue-runner claim/launch/settle authority consumed by `ImageProcessor.svelte`.
-- `src/lib/processing.ts`: runtime initialization pipeline, worker/main-thread fallback, inference heartbeat tracking, runtime failure persistence.
+- `src/lib/queue-processing-lease.ts`: shared queue launch and per-item processing task registries that deduplicate same-token launches and block conflicting queue invocations.
+- `src/lib/processing.ts`: runtime initialization pipeline, worker/main-thread fallback, inference heartbeat tracking, runtime failure persistence, and queue-scoped process request deduplication.
 - `src/lib/runtime-orchestrator.ts`: compact runtime state-machine orchestrator used for adapter-based initialization and processing.
 - `src/lib/runtime-*.ts`: initialization policy, cache policy, planner, reducer, state machine, capability detection, and runtime contract types.
 - `src/lib/runtime-post-update-warmup.ts`: first-launch-after-asset-version-change runtime warmup for JPEGli/libultrahdr to reduce cold-start processing pressure on iPhone/Safari.
@@ -36,6 +37,8 @@
 
 - Startup flow: `src/App.svelte` creates the processing runtime, runs the initialization gate, loads `ImageProcessor.svelte` lazily, and records diagnostics for failures and degraded modes.
 - Processing flow: `src/lib/processing.ts` decides worker or main-thread execution, ensures the runtime bundle is ready, tracks initialization/inference progress, and persists failure traces for offline debugging.
+- Worker fallback guard flow: `src/lib/processing.ts` will only use compatibility fallback before a worker job has entered pipeline telemetry; once a worker emits `pipeline-start`, later compatibility-style worker errors are surfaced instead of starting a second full processing attempt, and a typed runtime breadcrumb records the skipped fallback.
+- MobileSafari worker duplicate-delivery investigation: findings are recorded in [investigations/mobile-safari-worker-module-reevaluation.md](./investigations/mobile-safari-worker-module-reevaluation.md); temporary verbose tracing used during that investigation has been removed, but the shared worker-state duplicate-job guard remains in `src/lib/processing-worker.ts`.
 - Adapter orchestration flow: `src/lib/runtime-orchestrator.ts` coordinates initialization and processing through worker and main-thread adapters with explicit fallback behavior.
 - Offline bundle flow: `src/sw.ts` precaches app assets, validates the runtime bundle manifest, repairs corrupted caches, and answers bundle-management messages from the app.
 - Runtime asset loading flow: `src/lib/runtime-assets.ts` and `src/lib/runtime-asset-definitions.ts` provide the canonical runtime asset inventory used by wasm/module loaders, the manifest builder, cache-name resolution, and service-worker bundle classification.
@@ -45,6 +48,8 @@
 - Share target flow: `src/lib/share-target-launch.js` and `src/lib/share-store.ts` recover files launched through the installed PWA.
 - Low-memory iPhone retention flow: `src/lib/share-store.ts` treats persisted queue artifacts as the source of truth on low-memory iOS, avoids duplicate in-memory blob mirrors only after successful persistence, keeps the RAM fallback when an IndexedDB write fails, and serializes queued inputs into blob-backed records so iPhone relaunch recovery can reconstruct `File` objects reliably; `src/lib/ImageProcessor.svelte` rehydrates outputs on demand.
 - Queue runner flow: `src/lib/workflow-state.ts` owns queue start, claim, launch, settle, and restart intent; `ImageProcessor.svelte` is the thin imperative shell that dispatches those transitions and invokes `runtime.process(...)`.
+- Queue lease flow: `src/lib/queue-processing-lease.ts` backs `ImageProcessor.svelte` with exclusive queue launch tokens and joined per-item processing tasks so one claimed queue item cannot start multiple processing executions for the same launch token.
+- Queue-scoped runtime request dedupe flow: `src/lib/ImageProcessor.svelte` passes `processingRequestKey: queue:<id>` into `runtime.process(...)`, and `src/lib/processing.ts` joins concurrent calls for the same key while emitting the `process-request-deduplicated` breadcrumb.
 
 ## Commands
 

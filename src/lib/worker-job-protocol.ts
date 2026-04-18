@@ -4,6 +4,7 @@ export interface WorkerJobState {
   onProgress: ((event: unknown) => void) | null;
   abortSignal: AbortSignal | null;
   abortListener: (() => void) | null;
+  pipelineStarted: boolean;
   awaitingWasmLoadCompletion: boolean;
   wasmLoadTimeoutId: ReturnType<typeof setTimeout> | null;
   inferenceHeartbeatIntervalId: ReturnType<typeof setInterval> | null;
@@ -34,6 +35,7 @@ export function createWorkerJobState({
     onProgress,
     abortSignal,
     abortListener,
+    pipelineStarted: false,
     awaitingWasmLoadCompletion: true,
     wasmLoadTimeoutId,
     inferenceHeartbeatIntervalId: null,
@@ -80,6 +82,9 @@ export function reduceWorkerJobState(
     ...state,
     lastWorkerMessageAtMs: nowMs,
     lastProgressDetail: detail,
+    pipelineStarted:
+      state.pipelineStarted
+      || detail.phase === 'pipeline-start',
   };
   const commands: string[] = [];
 

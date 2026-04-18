@@ -184,7 +184,14 @@ describe('processing probe-free runtime init and process options', () => {
     });
     await process(file, {});
 
-    expect(localStorage.setItem).not.toHaveBeenCalled();
+    const diagnosticsWrites = localStorage.setItem.mock.calls
+      .filter(([key]) => key === '__ultrahdrDiagnosticsReports')
+      .map(([, value]) => String(value));
+
+    expect(diagnosticsWrites.length).toBeGreaterThan(0);
+    expect(diagnosticsWrites.join('\n')).not.toContain('gmnetCapability');
+    expect(diagnosticsWrites.join('\n')).not.toContain('gmnetCapabilitySource');
+    expect(diagnosticsWrites.join('\n')).not.toContain('gainMapMaxLongEdge');
   });
 
   it('does not forward gmnetCapabilityHintsByProvider in initializeRuntime init options', async () => {

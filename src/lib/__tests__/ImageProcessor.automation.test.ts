@@ -67,8 +67,12 @@ type AutomationApi = {
     },
   ) => Promise<{
     acceptedFileCount: number;
-    queued: boolean;
-    warningShown: boolean;
+      queued: boolean;
+      warningShown: boolean;
+    }>;
+  resetState: () => Promise<{
+    queueLength: number;
+    resultCount: number;
   }>;
 };
 
@@ -225,6 +229,52 @@ describe('ImageProcessor automation API', () => {
           context: expect.objectContaining({
             acceptedFileCount: 1,
             acknowledgeMobileInferenceWarning: true,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it('can reset queue and persisted automation state between under-test runs', async () => {
+    render(ImageProcessor, {
+      props: {
+        files: [],
+        runtime: createRuntime(),
+      },
+    });
+
+    await waitFor(() => {
+      expect((window as typeof window & { __ULTRAHDR_AUTOMATION__?: AutomationApi }).__ULTRAHDR_AUTOMATION__)
+        .toBeDefined();
+    });
+
+    const automationApi =
+      (window as typeof window & { __ULTRAHDR_AUTOMATION__?: AutomationApi }).__ULTRAHDR_AUTOMATION__;
+
+    await automationApi?.enqueueFiles([makeFile('reset-me.jpg')]);
+    await waitFor(() => {
+      expect(runtimeProcessMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('pipeline-file-name')).toHaveTextContent('reset-me.jpg');
+
+    const resetResult = await automationApi?.resetState();
+
+    expect(resetResult).toEqual({
+      queueLength: 0,
+      resultCount: 0,
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('pipeline-file-name')).not.toBeInTheDocument();
+    });
+
+    const events = readPersistedDiagnosticsEvents();
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'automation-state-reset',
+          context: expect.objectContaining({
+            queueLength: 0,
+            resultCount: 0,
           }),
         }),
       ]),

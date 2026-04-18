@@ -74,6 +74,10 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     zipRuntimeLoadCompleted: 'zip-runtime-load-completed',
     zipRuntimeLoadFailed: 'zip-runtime-load-failed',
     deferredInputPreviewFailed: 'deferred-input-preview-failed',
+    processRequestDeduplicated: 'process-request-deduplicated',
+    processAttemptStarted: 'process-attempt-started',
+    processAttemptCompleted: 'process-attempt-completed',
+    workerFallbackSkippedAfterPipelineStart: 'worker-fallback-skipped-after-pipeline-start',
   },
   user: {
     diagnosticsReportOpened: 'diagnostics-report-opened',
@@ -89,6 +93,7 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     appOpened: 'app-opened',
     automationApiReady: 'automation-api-ready',
     automationFilesEnqueued: 'automation-files-enqueued',
+    automationStateReset: 'automation-state-reset',
   },
   storage: {
     fullOutputViewerUrlReleased: 'full-output-viewer-url-released',
@@ -212,6 +217,21 @@ export type RuntimeDiagnosticsEvent =
       trigger: string | null;
       errorCategory: string | null;
       message: string | null;
+    }
+  | {
+      type: 'process-request-deduplicated';
+      processingRequestKey: string | null;
+    }
+  | {
+      type: 'process-attempt-started' | 'process-attempt-completed';
+      processingRequestKey: string | null;
+      attemptNumber: number | null;
+    }
+  | {
+      type: 'worker-fallback-skipped-after-pipeline-start';
+      errorName: string | null;
+      fallbackReason: string | null;
+      pipelineStarted: boolean | null;
     };
 
 export type UserDiagnosticsEvent =
@@ -241,6 +261,8 @@ export type UserDiagnosticsEvent =
   | {
       type: 'app-opened';
       launchSource: string | null;
+      mountCount: number | null;
+      priorMountCount: number | null;
     }
   | {
       type: 'automation-api-ready';
@@ -251,6 +273,11 @@ export type UserDiagnosticsEvent =
       acceptedFileCount: number | null;
       acknowledgeMobileInferenceWarning: boolean | null;
       warningShown: boolean | null;
+    }
+  | {
+      type: 'automation-state-reset';
+      queueLength: number | null;
+      resultCount: number | null;
     };
 
 export type StorageDiagnosticsEvent =
@@ -603,6 +630,46 @@ function buildRuntimeDiagnosticsInput(event: RuntimeDiagnosticsEvent): Diagnosti
           message: truncateString(event.message),
         },
       };
+    case 'process-request-deduplicated':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.processRequestDeduplicated,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          processingRequestKey: event.processingRequestKey,
+        }),
+      };
+    case 'process-attempt-started':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.processAttemptStarted,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          processingRequestKey: event.processingRequestKey,
+          attemptNumber: event.attemptNumber,
+        }),
+      };
+    case 'process-attempt-completed':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.processAttemptCompleted,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          processingRequestKey: event.processingRequestKey,
+          attemptNumber: event.attemptNumber,
+        }),
+      };
+    case 'worker-fallback-skipped-after-pipeline-start':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.workerFallbackSkippedAfterPipelineStart,
+        severity: 'warning',
+        context: mergeNormalizedContext({}, {
+          errorName: event.errorName,
+          fallbackReason: event.fallbackReason,
+          pipelineStarted: event.pipelineStarted,
+        }),
+      };
   }
 }
 
@@ -689,7 +756,11 @@ function buildUserDiagnosticsInput(event: UserDiagnosticsEvent): DiagnosticsEven
         category: 'user',
         name: DIAGNOSTICS_EVENT_NAMES.user.appOpened,
         severity: 'info',
-        context: mergeNormalizedContext({}, { launchSource: event.launchSource }),
+        context: mergeNormalizedContext({}, {
+          launchSource: event.launchSource,
+          mountCount: event.mountCount,
+          priorMountCount: event.priorMountCount,
+        }),
       };
     case 'automation-api-ready':
       return {
@@ -707,6 +778,16 @@ function buildUserDiagnosticsInput(event: UserDiagnosticsEvent): DiagnosticsEven
           acceptedFileCount: event.acceptedFileCount,
           acknowledgeMobileInferenceWarning: event.acknowledgeMobileInferenceWarning,
           warningShown: event.warningShown,
+        }),
+      };
+    case 'automation-state-reset':
+      return {
+        category: 'user',
+        name: DIAGNOSTICS_EVENT_NAMES.user.automationStateReset,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          queueLength: event.queueLength,
+          resultCount: event.resultCount,
         }),
       };
   }

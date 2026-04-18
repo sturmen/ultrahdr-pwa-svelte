@@ -6,6 +6,8 @@ import {
   PIPELINE_HISTORY_KEY,
   PIPELINE_STATE_KEY,
 } from '../pipeline-telemetry.js';
+import { getSharedDiagnosticsRecorder } from '../diagnostics.ts';
+import { DIAGNOSTICS_EVENT_NAMES } from '../diagnostics-events.ts';
 import {
   BUNDLE_STATES,
   OFFLINE_BUNDLE_STORAGE_KEY,
@@ -140,6 +142,8 @@ describe('processing worker wrapper', () => {
     MockWorker.onCancel = null;
     delete window[PIPELINE_STATE_KEY];
     delete window[PIPELINE_HISTORY_KEY];
+    delete window.__ultrahdrDiagnosticsRecorder;
+    window.localStorage.clear();
     setOnline(true);
   });
 
@@ -525,6 +529,132 @@ describe('processing worker wrapper', () => {
       expect.objectContaining({ phase: 'stage-progress' }),
     );
     expect(Array.isArray(window[PIPELINE_HISTORY_KEY])).toBe(true);
+  });
+
+  it('does not record temporary verbose runtime breadcrumbs during worker processing', async () => {
+    globalThis.Worker = MockWorker;
+    window.__ULTRAHDR_UNDER_TEST__ = true;
+
+    const { process } = await createRuntimeFixture();
+    const file = new File([new Uint8Array([1, 2])], 'input.heic', { type: 'image/heic' });
+
+    await process(file, {
+      processingRequestKey: 'queue:0',
+    });
+
+    const events = getSharedDiagnosticsRecorder(window).getEvents();
+    expect(events.some((event) => event.name === 'verbose-debug-breadcrumb')).toBe(false);
+  });
+
+  it('cleans up orphaned worker jobs when process dispatch throws before main-thread fallback', async () => {
+    globalThis.Worker = MockWorker;
+
+    MockWorker.onProcess = (worker, message) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'progress',
+            jobId: message.jobId,
+            event: {
+              phase: 'pipeline-start',
+              pipelineId: 'worker-orphan-pipeline',
+              stage: 'pipeline',
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        const buffer = new Uint8Array([1, 2, 3]).buffer;
+        worker.emit('message', {
+          data: {
+            type: 'result',
+            jobId: message.jobId,
+            mimeType: 'image/jpeg',
+            buffer,
+          },
+        });
+      });
+
+      const dispatchError = new Error('worker process dispatch failed');
+      dispatchError.name = 'ProcessingWorkerInitError';
+      throw dispatchError;
+    };
+
+    const { process } = await createRuntimeFixture();
+    const file = new File([new Uint8Array([1, 2])], 'input.heic', { type: 'image/heic' });
+    const onProgress = vi.fn();
+
+    const result = await process(file, { onProgress });
+    await flush();
+
+    expect(result).toBeInstanceOf(Blob);
+    expect(processImageCoreMock).toHaveBeenCalledTimes(1);
+    expect(onProgress).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipelineId: 'worker-orphan-pipeline',
+      }),
+    );
+  });
+
+  it('does not start a main-thread fallback after the worker has already entered the pipeline', async () => {
+    globalThis.Worker = MockWorker;
+
+    MockWorker.onProcess = (worker, message) => {
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'progress',
+            jobId: message.jobId,
+            event: {
+              phase: 'pipeline-start',
+              pipelineId: 'worker-already-started-pipeline',
+              stage: 'pipeline',
+            },
+          },
+        });
+      });
+      queueMicrotask(() => {
+        worker.emit('message', {
+          data: {
+            type: 'error',
+            jobId: message.jobId,
+            error: {
+              name: 'ProcessingWorkerInitError',
+              message: 'worker became incompatible mid-pipeline',
+            },
+          },
+        });
+      });
+    };
+
+    const { process } = await createRuntimeFixture();
+    const file = new File([new Uint8Array([1, 2])], 'input.heic', { type: 'image/heic' });
+    const onProgress = vi.fn();
+
+    await expect(process(file, { onProgress })).rejects.toMatchObject({
+      name: 'ProcessingWorkerInitError',
+    });
+
+    expect(processImageCoreMock).not.toHaveBeenCalled();
+    expect(onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipelineId: 'worker-already-started-pipeline',
+      }),
+    );
+    expect(
+      getSharedDiagnosticsRecorder(window).getEvents(),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: 'runtime',
+          name: DIAGNOSTICS_EVENT_NAMES.runtime.workerFallbackSkippedAfterPipelineStart,
+          context: expect.objectContaining({
+            fallbackReason: 'worker-progress-already-started',
+            pipelineStarted: true,
+          }),
+        }),
+      ]),
+    );
   });
 
   it('forwards gmnet execution provider progress payloads on non-probe stages', async () => {
