@@ -26,6 +26,7 @@
 - Runtime orchestration and fallback: `src/lib/processing.ts`, `src/lib/runtime-orchestrator.ts`
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`
 - Typed diagnostics helpers and event-name contract: `src/lib/diagnostics-events.ts`
+- Manual-only recovered diagnostics dialog behavior: `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
 - Share target behavior: `src/lib/share-target-launch.js`, `src/lib/share-store.ts`
 - Low-memory iPhone artifact retention: `src/lib/share-store.ts`, `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
 - First-launch-after-update runtime warmup: `src/lib/runtime-post-update-warmup.ts`, `src/App.svelte`, `src/lib/diagnostics-events.ts`

@@ -108,7 +108,6 @@ export const DIAGNOSTICS_EVENT_NAMES = {
   lifecycle: {
     visibilityChanged: 'visibility-changed',
     pagehide: 'pagehide',
-    recoveredPopupOpened: 'recovered-popup-opened',
     recoveredPopupSuppressed: 'recovered-popup-suppressed',
     postCompletionRelaunchClassified: 'post-completion-relaunch-classified',
   },
@@ -336,11 +335,6 @@ export type LifecycleDiagnosticsEvent =
   | {
       type: 'pagehide';
       context: Record<string, unknown>;
-    }
-  | {
-      type: 'recovered-popup-opened';
-      reportId: string | null;
-      memoryIssueKind: string | null;
     }
   | {
       type: 'recovered-popup-suppressed';
@@ -906,16 +900,6 @@ function buildLifecycleDiagnosticsInput(event: LifecycleDiagnosticsEvent): Diagn
         name: DIAGNOSTICS_EVENT_NAMES.lifecycle.pagehide,
         severity: 'warning',
         context: event.context,
-      };
-    case 'recovered-popup-opened':
-      return {
-        category: 'lifecycle',
-        name: DIAGNOSTICS_EVENT_NAMES.lifecycle.recoveredPopupOpened,
-        severity: 'warning',
-        context: mergeNormalizedContext({}, {
-          reportId: event.reportId,
-          memoryIssueKind: event.memoryIssueKind,
-        }),
       };
     case 'recovered-popup-suppressed':
       return {

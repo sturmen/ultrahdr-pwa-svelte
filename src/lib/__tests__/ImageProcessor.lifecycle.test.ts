@@ -6,7 +6,10 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import ImageProcessor from '../ImageProcessor.svelte';
-import { DIAGNOSTICS_ACTIVE_SESSION_KEY } from '../diagnostics.ts';
+import {
+  DIAGNOSTICS_ACTIVE_SESSION_KEY,
+  DIAGNOSTICS_REPORTS_KEY,
+} from '../diagnostics.ts';
 import { storeQueuePreviewBlob, storeQueueState } from '../share-store.ts';
 
 const runtimeProcessMock = vi.fn();
@@ -80,6 +83,13 @@ function createRuntime() {
     initialize: vi.fn(async () => ({ ready: true })),
     dispose: vi.fn(async () => {}),
   };
+}
+
+function readPersistedDiagnosticsEvents(): Array<{ name?: string; context?: Record<string, unknown> }> {
+  const persisted = JSON.parse(
+    window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
+  ) as { events?: Array<{ name?: string; context?: Record<string, unknown> }> };
+  return Array.isArray(persisted.events) ? persisted.events : [];
 }
 
 describe('ImageProcessor lifecycle durability', () => {
@@ -250,7 +260,7 @@ describe('ImageProcessor lifecycle durability', () => {
     expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
   });
 
-  it('reopens the diagnostics popup after a foreground interrupted processing relaunch', async () => {
+  it('keeps the diagnostics popup closed after a foreground interrupted processing relaunch', async () => {
     window.localStorage.setItem(
       DIAGNOSTICS_ACTIVE_SESSION_KEY,
       JSON.stringify({
@@ -280,9 +290,22 @@ describe('ImageProcessor lifecycle durability', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('diagnostics-report-dialog')).toBeInTheDocument();
-      expect(screen.getByText(/foreground-kill-recovered/i)).toBeInTheDocument();
+      expect(screen.queryByTestId('diagnostics-report-dialog')).not.toBeInTheDocument();
     });
+
+    const events = readPersistedDiagnosticsEvents();
+    expect(events.some((event) => event.name === 'recovered-popup-opened')).toBe(false);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'recovered-popup-suppressed',
+          context: expect.objectContaining({
+            reason: 'manual-only',
+            memoryIssueKind: 'foreground-kill-recovered',
+          }),
+        }),
+      ]),
+    );
   });
 
   it('uses scheduler.postTask for non-urgent queue persistence when available', async () => {

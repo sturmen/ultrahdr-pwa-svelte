@@ -3337,29 +3337,12 @@
       if (recoveredDiagnosticsReport) {
         diagnosticsReport = recoveredDiagnosticsReport;
         diagnosticsReportText = serializeDiagnosticsReport(recoveredDiagnosticsReport);
-        const recoveredAfterCompletion = recoveredDiagnosticsReport.recentEvents.some(
-          (event) => event?.name === "post-completion-restart-suspected",
-        );
-        const shouldOpenRecoveredPopup =
-          !isUnderTestDiagnosticsMode() &&
-          !recoveredAfterCompletion;
-        if (shouldOpenRecoveredPopup) {
-          diagnosticsReportOpen = true;
-          recordLifecycleDiagnostics(globalThis, {
-            type: "recovered-popup-opened",
-            reportId: recoveredDiagnosticsReport.reportId,
-            memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
-          });
-        } else {
-          recordLifecycleDiagnostics(globalThis, {
-            type: "recovered-popup-suppressed",
-            reason: isUnderTestDiagnosticsMode()
-              ? "under-test-mode"
-              : "post-completion-relaunch",
-            reportId: recoveredDiagnosticsReport.reportId,
-            memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
-          });
-        }
+        recordLifecycleDiagnostics(globalThis, {
+          type: "recovered-popup-suppressed",
+          reason: "manual-only",
+          reportId: recoveredDiagnosticsReport.reportId,
+          memoryIssueKind: recoveredDiagnosticsReport.incident?.memoryIssueKind || null,
+        });
       }
       try {
         const persistedQueue = await loadQueueState();
