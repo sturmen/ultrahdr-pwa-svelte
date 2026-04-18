@@ -133,6 +133,27 @@ describe("App PWA update UX", () => {
     expect(screen.getByRole("button", { name: /dismiss/i })).toBeInTheDocument();
   });
 
+  it("keeps the update snackbar on a single row", async () => {
+    (globalThis as TestGlobal).__PWA_UPDATE_TEST_CONFIG = {
+      initialState: {
+        updateAvailable: true,
+        notificationVisible: true,
+        availableVersion: "v-inline",
+      },
+    };
+
+    render(App);
+    const snackbar = await screen.findByTestId("pwa-update-snackbar");
+    const copy = screen.getByText(/a new version is ready/i);
+    const reloadAction = screen.getByRole("button", { name: /reload/i });
+    const dismissAction = screen.getByRole("button", { name: /dismiss/i });
+
+    expect(window.getComputedStyle(snackbar).flexWrap).toBe("nowrap");
+    expect(window.getComputedStyle(copy).whiteSpace).toBe("nowrap");
+    expect(window.getComputedStyle(reloadAction).whiteSpace).toBe("nowrap");
+    expect(window.getComputedStyle(dismissAction).whiteSpace).toBe("nowrap");
+  });
+
   it("dismiss action hides the snackbar", async () => {
     (globalThis as TestGlobal).__PWA_UPDATE_TEST_CONFIG = {
       initialState: {

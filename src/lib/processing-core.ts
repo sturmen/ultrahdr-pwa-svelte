@@ -21,7 +21,7 @@ import {
     toSingleChannelGainMapMetadata
 } from './image-utils.js';
 import { rotateJpeg } from './jpegtran-rotate.js';
-import { IMAGE_MAX_LONG_EDGE } from './constants.js';
+import { IMAGE_MAX_LONG_EDGE } from './constants.ts';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
 import {
     decideGeneratedSdrEncodingStrategy,

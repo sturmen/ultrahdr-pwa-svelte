@@ -1,6 +1,6 @@
 import * as ortWebGpu from 'onnxruntime-web/webgpu';
 import type { Env, InferenceSession, Tensor as OrtTensor } from 'onnxruntime-common';
-import { GMNET_MAX_LONG_EDGE, IMAGE_MAX_LONG_EDGE } from './constants.js';
+import { GMNET_MAX_LONG_EDGE, IMAGE_MAX_LONG_EDGE } from './constants.ts';
 import { hasWebGlSupport, isChromiumRuntime, isGmnetWebGlSupportedRuntime } from './runtime-browser.ts';
 import {
     isFirefoxRuntime as isFirefoxDetectedRuntime,

@@ -16,7 +16,9 @@
 ## Where To Look First
 
 - App startup and initialization UI: `src/App.svelte`, `src/lib/InitializationGate.svelte`
+- PWA update snackbar UI: `src/App.svelte`, `src/lib/PwaUpdateSnackbar.svelte`
 - Main user flow and conversion UI: `src/lib/ImageProcessor.svelte`
+- Mobile floating settings action: `src/lib/ImageProcessor.svelte`, `src/lib/FloatingSettingsButton.svelte`
 - Queue runner and reducer selectors: `src/lib/workflow-state.ts`
 - Queue launch / processing dedupe: `src/lib/queue-processing-lease.ts`, `src/lib/ImageProcessor.svelte`
 - Queue-scoped runtime process dedupe: `src/lib/processing.ts`, `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`

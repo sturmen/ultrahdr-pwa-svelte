@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import InitializationGate from "./lib/InitializationGate.svelte";
+  import PwaUpdateSnackbar from "./lib/PwaUpdateSnackbar.svelte";
   import {
     createProcessingRuntime,
     RUNTIME_INIT_STEP_LABELS,
@@ -613,37 +614,12 @@
   </section>
 
   {#if runtimeInitState === "ready" && pwaUpdateState.notificationVisible}
-    <div class="pwa-update-snackbar" data-testid="pwa-update-snackbar" role="status">
-      <span class="pwa-update-snackbar-copy">
-        {#if pwaUpdateState.pendingUntilIdle}
-          Reload will happen when processing becomes idle.
-        {:else}
-          A new version is ready.
-        {/if}
-      </span>
-      <button
-        class="footer-link pwa-update-snackbar-action"
-        type="button"
-        on:click={applyAppUpdate}
-        disabled={pwaUpdateState.applying || pwaUpdateState.pendingUntilIdle}
-      >
-        {#if pwaUpdateState.pendingUntilIdle}
-          Waiting for idle...
-        {:else if pwaUpdateState.applying}
-          Updating...
-        {:else}
-          Reload
-        {/if}
-      </button>
-      <button
-        class="footer-link pwa-update-snackbar-action"
-        type="button"
-        on:click={dismissAppUpdate}
-        disabled={pwaUpdateState.applying}
-      >
-        Dismiss
-      </button>
-    </div>
+    <PwaUpdateSnackbar
+      pendingUntilIdle={pwaUpdateState.pendingUntilIdle}
+      applying={pwaUpdateState.applying}
+      onApplyUpdate={applyAppUpdate}
+      onDismiss={dismissAppUpdate}
+    />
   {/if}
 
   <footer class="footer">
@@ -770,50 +746,6 @@
     text-decoration: none;
   }
 
-  .footer-link {
-    border: none;
-    background: none;
-    padding: 0;
-    margin: 0;
-    font: inherit;
-    color: var(--text-link);
-    text-decoration: none;
-    cursor: pointer;
-  }
-
-  .footer-link:hover {
-    text-decoration: underline;
-  }
-
-  .pwa-update-snackbar {
-    position: fixed;
-    left: 0.75rem;
-    right: 0.75rem;
-    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
-    z-index: 120;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem 0.8rem;
-    align-items: center;
-    padding: 0.75rem 0.9rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: 1rem;
-    background: color-mix(in srgb, var(--surface-active) 96%, transparent);
-    box-shadow: var(--shadow-lg);
-    backdrop-filter: blur(16px) saturate(115%);
-  }
-
-  .pwa-update-snackbar-copy {
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    flex: 1 1 14rem;
-  }
-
-  .pwa-update-snackbar-action:disabled {
-    opacity: 0.65;
-    cursor: progress;
-  }
-
   .footer a:hover {
     text-decoration: underline;
   }
@@ -825,13 +757,6 @@
 
     .about-page {
       gap: 1rem;
-    }
-
-    .pwa-update-snackbar {
-      left: 50%;
-      right: auto;
-      transform: translateX(-50%);
-      width: min(680px, calc(100vw - 1.5rem));
     }
   }
 </style>

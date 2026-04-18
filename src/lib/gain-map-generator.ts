@@ -7,7 +7,7 @@ import {
   type GmnetTiledContext,
 } from './gmnet-session.ts';
 import { GMNetCheckpointStore } from './gmnet-checkpoint-store.js';
-import { IMAGE_MAX_LONG_EDGE } from './constants.js';
+import { IMAGE_MAX_LONG_EDGE } from './constants.ts';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
 import type { GainMapMetadata } from './gain-map-metadata.js';
 

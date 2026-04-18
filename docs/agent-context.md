@@ -16,7 +16,9 @@
 ## Top-Level Modules
 
 - `src/App.svelte`: app shell, view routing, share-target launch handling, PWA update state, runtime initialization UI.
+- `src/lib/PwaUpdateSnackbar.svelte`: extracted app-shell PWA update snackbar UI and action layout contract.
 - `src/lib/ImageProcessor.svelte`: main conversion UI and user-facing processing flow.
+- `src/lib/FloatingSettingsButton.svelte`: extracted mobile floating settings action with update-aware vertical offset.
 - `src/lib/workflow-state.ts`: reducer-backed queue/domain state, including the single queue-runner claim/launch/settle authority consumed by `ImageProcessor.svelte`.
 - `src/lib/queue-processing-lease.ts`: shared queue launch and per-item processing task registries that deduplicate same-token launches and block conflicting queue invocations.
 - `src/lib/processing.ts`: runtime initialization pipeline, worker/main-thread fallback, inference heartbeat tracking, runtime failure persistence, and queue-scoped process request deduplication.

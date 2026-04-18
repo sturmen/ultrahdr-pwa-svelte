@@ -174,6 +174,21 @@ describe('ImageProcessor mobile-native UI behavior', () => {
     expect(screen.queryByText(/high-efficiency jpeg encoding/i)).not.toBeInTheDocument();
   });
 
+  it('raises the floating settings button when the update snackbar is visible', async () => {
+    renderProcessor({
+      files: makeFiles(1),
+      pwaUpdateState: {
+        notificationVisible: true,
+      },
+    });
+
+    const fabLayer = screen.getByTestId('floating-gear').parentElement;
+    expect(fabLayer).not.toBeNull();
+    const fabBottom = window.getComputedStyle(fabLayer as HTMLElement).bottom;
+    expect(fabBottom).toContain('9.6rem');
+    expect(fabBottom).toContain('safe-area-inset-bottom');
+  });
+
   it('shows mobile results action bar with export and clear controls', async () => {
     renderProcessor({ files: makeFiles(1) });
 

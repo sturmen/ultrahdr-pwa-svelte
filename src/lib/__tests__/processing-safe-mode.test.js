@@ -1,4 +1,4 @@
-import { IMAGE_MAX_LONG_EDGE } from '../constants.js';
+import { IMAGE_MAX_LONG_EDGE } from '../constants.ts';
 /**
  * @vitest-environment jsdom
  */
