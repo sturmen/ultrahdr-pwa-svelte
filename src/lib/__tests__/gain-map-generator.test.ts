@@ -481,3 +481,62 @@ describe('GmnetGainMapGenerator (split/tile primary, probe-free)', () => {
     );
   });
 });
+
+describe('GmnetGainMapGenerator idle-release lifecycle', () => {
+  it('scheduleIdleRelease does nothing when no session cached', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => ({ run: vi.fn(), on: vi.fn(), off: vi.fn() }),
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+      idleReleaseDelayMs: 10,
+    });
+    generator.scheduleIdleRelease();
+    expect(generator.session).toBeNull();
+  });
+
+  it('releaseIdleSession calls session.dispose and clears cache', async () => {
+    const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
+    const dispose = vi.fn(async () => ({ releasedSessionCount: 2, errors: [] }));
+    const session = { run: vi.fn(), on: vi.fn(), off: vi.fn(), dispose };
+    const generator = new GmnetGainMapGenerator({
+      sessionFactory: () => session,
+      buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+      runtime: createRuntime(),
+      idleReleaseDelayMs: 60_000,
+    });
+    generator.getSession();
+    expect(generator.session).toBe(session);
+    await generator.releaseIdleSession();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(generator.session).toBeNull();
+  });
+
+  it('fires idle-release after timer elapses and is canceled by getSession', async () => {
+    vi.useFakeTimers();
+    try {
+      const { GmnetGainMapGenerator } = await import('../gain-map-generator.ts');
+      const dispose = vi.fn(async () => ({ releasedSessionCount: 1, errors: [] }));
+      const session = { run: vi.fn(), on: vi.fn(), off: vi.fn(), dispose };
+      const generator = new GmnetGainMapGenerator({
+        sessionFactory: () => session,
+        buildMetadata: () => ({ hdrCapacityMax: 2.3 }),
+        runtime: createRuntime(),
+        idleReleaseDelayMs: 5_000,
+      });
+      generator.getSession();
+      generator.scheduleIdleRelease();
+      vi.advanceTimersByTime(2_000);
+      generator.getSession();
+      vi.advanceTimersByTime(10_000);
+      expect(dispose).not.toHaveBeenCalled();
+      generator.scheduleIdleRelease();
+      vi.advanceTimersByTime(6_000);
+      await vi.runAllTimersAsync();
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(generator.session).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

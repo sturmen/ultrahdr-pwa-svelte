@@ -135,6 +135,16 @@ export async function waitForServiceWorkerControl(page: Page): Promise<void> {
   });
 }
 
+export async function waitForServiceWorkerReady(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    if (!('serviceWorker' in navigator)) {
+      throw new Error('Service workers are unavailable in this browser context.');
+    }
+
+    await navigator.serviceWorker.ready;
+  });
+}
+
 export async function waitForBundleReady(page: Page): Promise<void> {
   await page.waitForFunction((storageKey) => {
     try {
@@ -163,7 +173,7 @@ export async function primeOfflineRuntime(page: Page, testInfo: TestInfo): Promi
   await installStartupRuntimeOverride(page, { projectName: testInfo.project.name });
   await gotoApp(page);
   await ensureRuntimeGateReady(page, testInfo, config.runtimeGateOptions);
-  await waitForServiceWorkerControl(page);
+  await waitForServiceWorkerReady(page);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await ensureRuntimeGateReady(page, testInfo, config.runtimeGateOptions);
   await waitForServiceWorkerControl(page);

@@ -139,6 +139,7 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     compressedPayloadReleased: 'compressed-payload-released',
     gmnetGainMapSourceReleased: 'gmnet-gain-map-source-released',
     heifHandlesReleased: 'heif-handles-released',
+    gmnetSessionIdleReleased: 'gmnet-session-idle-released',
   },
 } as const;
 
@@ -501,6 +502,11 @@ export type ProcessingMemoryDiagnosticsEvent =
       trigger: string | null;
       releasedHandles: number | null;
       contextFreed: boolean | null;
+    }
+  | {
+      type: 'gmnet-session-idle-released';
+      releasedSessionCount: number | null;
+      errorCount: number | null;
     };
 
 export type DiagnosticsDomainEvent =
@@ -614,6 +620,16 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
           trigger: event.trigger,
           releasedHandles: event.releasedHandles,
           contextFreed: event.contextFreed,
+        }),
+      };
+    case 'gmnet-session-idle-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionIdleReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          releasedSessionCount: event.releasedSessionCount,
+          errorCount: event.errorCount,
         }),
       };
   }

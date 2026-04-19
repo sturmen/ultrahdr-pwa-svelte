@@ -1408,6 +1408,34 @@ export class GMNetInferenceSession {
         }
     }
 
+    async dispose(): Promise<{ releasedSessionCount: number; errors: unknown[] }> {
+        const errors: unknown[] = [];
+        let releasedSessionCount = 0;
+        const releaseOne = async (session: GmnetSessionLike | null) => {
+            if (!session) return;
+            const maybeRelease = (session as unknown as { release?: () => Promise<void> | void }).release;
+            if (typeof maybeRelease === 'function') {
+                try {
+                    await maybeRelease.call(session);
+                    releasedSessionCount += 1;
+                } catch (error) {
+                    errors.push(error);
+                }
+            }
+        };
+        for (const cached of this.sessionsByVariantAndProvider.values()) {
+            await releaseOne(cached?.globalSession ?? null);
+            await releaseOne(cached?.localSession ?? null);
+        }
+        this.sessionsByVariantAndProvider.clear();
+        this.executionProviderByVariantAndProvider.clear();
+        this.session = null;
+        this.globalSession = null;
+        this.localSession = null;
+        this.activeExecutionProvider = null;
+        return { releasedSessionCount, errors };
+    }
+
     createProbeImageData(size: number, forceSquare = false): ImageData {
         const width = Math.max(1, Math.floor(Number(size) || 1));
         // For WebGL inline models (which require square inputs), use square dimensions

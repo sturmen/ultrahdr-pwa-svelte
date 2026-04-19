@@ -62,7 +62,10 @@ type GmnetSessionLike = {
   runTileStep?: GMNetInferenceSession['runTileStep'];
   finalizeTiledInference?: (context: GmnetTiledContext, options?: Record<string, unknown>) => Uint8ClampedArray;
   run: GMNetInferenceSession['run'];
+  dispose?: GMNetInferenceSession['dispose'];
 };
+
+export const DEFAULT_GMNET_IDLE_RELEASE_MS = 60_000;
 type GmnetErrorWithDiagnostics = Error & { diagnostics?: Record<string, unknown> };
 type GmnetCheckpointSnapshot = {
   accumIngm: Float32Array;
@@ -363,6 +366,9 @@ export class GmnetGainMapGenerator {
   session: GmnetSessionLike | null;
   checkpointStore: GMNetCheckpointStore | null;
   webglParityCache: Map<string, GmnetParityCacheEntry>;
+  idleReleaseDelayMs: number;
+  private idleReleaseTimer: ReturnType<typeof setTimeout> | null;
+  private idleReleaseInFlight: Promise<void> | null;
 
   constructor({
     sessionFactory = () => new GMNetInferenceSession(),
@@ -370,12 +376,14 @@ export class GmnetGainMapGenerator {
     buildMetadata,
     runtime = globalThis,
     isSupported = isGmnetRuntimeSupported,
+    idleReleaseDelayMs = DEFAULT_GMNET_IDLE_RELEASE_MS,
   }: {
     sessionFactory?: () => GmnetSessionLike;
     checkpointStoreFactory?: ({ runtime }: { runtime: GmnetRuntime }) => GMNetCheckpointStore;
     buildMetadata: (maxContentBoost?: number) => GainMapMetadata;
     runtime?: GmnetRuntime;
     isSupported?: (runtime?: GmnetRuntime) => boolean;
+    idleReleaseDelayMs?: number;
   }) {
     if (typeof sessionFactory !== 'function') {
       throw new Error('GmnetGainMapGenerator requires a sessionFactory function.');
@@ -398,13 +406,71 @@ export class GmnetGainMapGenerator {
     this.session = null;
     this.checkpointStore = null;
     this.webglParityCache = new Map();
+    this.idleReleaseDelayMs = Math.max(0, Math.floor(idleReleaseDelayMs));
+    this.idleReleaseTimer = null;
+    this.idleReleaseInFlight = null;
   }
 
   getSession(): GmnetSessionLike {
+    this.cancelIdleRelease();
     if (!this.session) {
       this.session = this.sessionFactory();
     }
     return this.session;
+  }
+
+  cancelIdleRelease(): void {
+    if (this.idleReleaseTimer !== null) {
+      clearTimeout(this.idleReleaseTimer);
+      this.idleReleaseTimer = null;
+    }
+  }
+
+  scheduleIdleRelease(delayMs: number = this.idleReleaseDelayMs): void {
+    this.cancelIdleRelease();
+    if (!this.session || delayMs <= 0) return;
+    this.idleReleaseTimer = setTimeout(() => {
+      this.idleReleaseTimer = null;
+      void this.releaseIdleSession();
+    }, delayMs);
+  }
+
+  async releaseIdleSession(): Promise<void> {
+    if (this.idleReleaseInFlight) return this.idleReleaseInFlight;
+    const session = this.session;
+    if (!session) return;
+    const dispose = session.dispose;
+    const runtime = this.runtime;
+    const work = (async () => {
+      let releasedSessionCount = 0;
+      const errors: unknown[] = [];
+      try {
+        if (typeof dispose === 'function') {
+          const result = await dispose.call(session);
+          releasedSessionCount = result?.releasedSessionCount ?? 0;
+          if (Array.isArray(result?.errors)) errors.push(...result.errors);
+        }
+      } catch (error) {
+        errors.push(error);
+      }
+      this.session = null;
+      try {
+        const diagnostics = await import('./diagnostics-events.ts');
+        diagnostics.recordProcessingMemoryDiagnostics(runtime, {
+          type: 'gmnet-session-idle-released',
+          releasedSessionCount,
+          errorCount: errors.length,
+        });
+      } catch {
+        // diagnostics best-effort
+      }
+    })();
+    this.idleReleaseInFlight = work;
+    try {
+      await work;
+    } finally {
+      this.idleReleaseInFlight = null;
+    }
   }
 
   getCheckpointStore(): GMNetCheckpointStore {
@@ -464,6 +530,18 @@ export class GmnetGainMapGenerator {
       throw new Error('GMNet runtime is not supported in this environment.');
     }
 
+    this.cancelIdleRelease();
+    try {
+      return await this.generateInternal(imageData, options);
+    } finally {
+      this.scheduleIdleRelease();
+    }
+  }
+
+  private async generateInternal(imageData: ImageData, options: GmnetGenerateOptions): Promise<{
+    gainMapImageData: ImageData;
+    metadata: GainMapMetadata;
+  }> {
     const session = this.getSession();
     const normalizedForcedProviders = Array.isArray(options?.forceExecutionProviders)
       ? options.forceExecutionProviders
