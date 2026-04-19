@@ -15,7 +15,7 @@ export type PreservedHeicResult = {
 const execFile = promisify(execFileCallback);
 
 type HeicFixtureProbe = {
-  kind: 'preserved' | 'discarded';
+  kind: 'preserved' | 'discarded' | 'hdr-intent' | 'decoded-raster';
   fileType?: string;
   gainMapWidth?: number;
   gainMapHeight?: number;
@@ -23,6 +23,26 @@ type HeicFixtureProbe = {
   sdrHeight?: number;
   isMonochrome?: boolean;
   hasNonZeroPixels?: boolean;
+  format?: 'rgba1010102' | 'rgbaf16';
+  ct?: 'pq' | 'hlg' | 'linear';
+  width?: number;
+  height?: number;
+  strideBytes?: number;
+  pixelFormat?: 'rgba8';
+  bitDepth?: number;
+  logLines: string[];
+};
+
+type HdrIntentFixtureProbe = {
+  kind: 'hdr-intent';
+  format: 'rgba1010102' | 'rgbaf16';
+  ct: 'pq' | 'hlg' | 'linear';
+  width: number;
+  height: number;
+  strideBytes: number;
+  dataByteLength: number;
+  bitsPerPixel: number | null;
+  diagnosticsEventNames: string[];
   logLines: string[];
 };
 
@@ -216,7 +236,27 @@ try {
   const file = new File([buffer], filename, { type: 'image/heic' });
   const result = await mod.processHeic(file, { discardGainMap });
 
-  if (result instanceof File) {
+  if (result?.kind === 'hdr-intent-heif') {
+    console.log(JSON.stringify({
+      kind: 'hdr-intent',
+      format: result.hdrIntent.format,
+      ct: result.hdrIntent.ct,
+      width: result.hdrIntent.width,
+      height: result.hdrIntent.height,
+      strideBytes: result.hdrIntent.strideBytes,
+      logLines: logs,
+    }));
+  } else if (result?.pixelFormat === 'rgba8' && result?.data) {
+    console.log(JSON.stringify({
+      kind: 'decoded-raster',
+      width: result.width,
+      height: result.height,
+      strideBytes: result.strideBytes,
+      pixelFormat: result.pixelFormat,
+      bitDepth: result.bitDepth,
+      logLines: logs,
+    }));
+  } else if (result instanceof File) {
     console.log(JSON.stringify({
       kind: 'discarded',
       fileType: result.type,
@@ -265,4 +305,167 @@ try {
   const lines = stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
   const summaryLine = lines[lines.length - 1];
   return JSON.parse(summaryLine) as HeicFixtureProbe;
+}
+
+export async function runHdrIntentFixtureProbe(
+  filename: string,
+  memoryTier: 'low' | 'mid' | 'high',
+): Promise<HdrIntentFixtureProbe> {
+  const configPath = path.resolve(process.cwd(), 'vite.config.test.ts');
+  const childProgram = `
+import fs from 'fs';
+import path from 'path';
+import { createServer, loadConfigFromFile, mergeConfig } from 'vite';
+
+const filename = process.env.HEIF_HDR_FIXTURE_FILENAME;
+const memoryTier = process.env.HEIF_HDR_MEMORY_TIER;
+const logs = [];
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+const originalNavigator = global.navigator;
+const originalLocalStorage = global.localStorage;
+
+console.log = (...args) => {
+  logs.push(args.join(' '));
+  originalLog(...args);
+};
+console.warn = (...args) => {
+  logs.push(args.join(' '));
+  originalWarn(...args);
+};
+console.error = (...args) => {
+  logs.push(args.join(' '));
+  originalError(...args);
+};
+
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {
+    userAgent: memoryTier === 'low'
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+    deviceMemory: memoryTier === 'high' ? 16 : 4,
+  },
+});
+
+const localStorageData = new Map();
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: {
+    getItem(key) {
+      return localStorageData.has(key) ? localStorageData.get(key) : null;
+    },
+    setItem(key, value) {
+      localStorageData.set(String(key), String(value));
+    },
+    removeItem(key) {
+      localStorageData.delete(String(key));
+    },
+    clear() {
+      localStorageData.clear();
+    },
+  },
+});
+
+const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, ${JSON.stringify(configPath)});
+const config = mergeConfig(loaded.config, {
+  appType: 'custom',
+  optimizeDeps: { noDiscovery: true, entries: [] },
+  define: { 'import.meta.env.VITEST': 'true' },
+  server: { middlewareMode: true, hmr: false },
+});
+const server = await createServer(config);
+const originalFetch = global.fetch;
+
+global.fetch = async (url) => {
+  if (url.toString().includes('libheif.wasm')) {
+    const wasmPath = path.resolve(process.cwd(), 'node_modules/libheif-js/libheif-wasm/libheif.wasm');
+    const assetsWasm = path.resolve(process.cwd(), 'assets', 'libheif.wasm');
+    const buffer = fs.existsSync(wasmPath) ? fs.readFileSync(wasmPath) : fs.readFileSync(assetsWasm);
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+    };
+  }
+  return originalFetch(url);
+};
+
+try {
+  const [{ processHeifHdr }, diagnosticsEvents, { default: initLibheif }] = await Promise.all([
+    server.ssrLoadModule('/src/lib/heif-hdr-processing.js'),
+    server.ssrLoadModule('/src/lib/diagnostics-events.ts'),
+    server.ssrLoadModule('/src/lib/libheif-browser.js'),
+  ]);
+  const filePath = path.resolve(process.cwd(), 'fixtures', filename);
+  const buffer = fs.readFileSync(filePath);
+  const file = new File([buffer], filename, { type: 'image/heif' });
+  const heif = await initLibheif();
+  const decoder = new heif.HeifDecoder();
+  const images = decoder.decode(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+  const primary = images?.[0];
+  const decoded = primary
+    ? heif.heif_js_decode_image2(
+        primary.handle,
+        heif.heif_colorspace.heif_colorspace_RGB,
+        heif.heif_chroma.heif_chroma_interleaved_RRGGBBAA_LE,
+      )
+    : null;
+  const interleavedChannel = decoded?.channels?.find((channel) => channel.id === heif.heif_channel.heif_channel_interleaved)
+    || decoded?.channels?.[0]
+    || null;
+  const result = await processHeifHdr(file);
+  const events = diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis);
+  const downgradeEvent = events.find((event) => event.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentFormatDowngraded) || null;
+
+  console.log(JSON.stringify({
+    kind: 'hdr-intent',
+    format: result.hdrIntent.format,
+    ct: result.hdrIntent.ct,
+    width: result.hdrIntent.width,
+    height: result.hdrIntent.height,
+    strideBytes: result.hdrIntent.strideBytes,
+    dataByteLength: result.hdrIntent.data.byteLength,
+    bitsPerPixel: Number(interleavedChannel?.bits_per_pixel ?? downgradeEvent?.context?.bitsPerPixel ?? NaN) || null,
+    diagnosticsEventNames: events.map((event) => event.name),
+    logLines: logs,
+  }));
+} finally {
+  global.fetch = originalFetch;
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: originalNavigator,
+  });
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: originalLocalStorage,
+  });
+  await server.close();
+}
+`.trim();
+
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      '--max-old-space-size=8192',
+      '--input-type=module',
+      '-e',
+      childProgram,
+    ],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        FORCE_COLOR: '0',
+        HEIF_HDR_FIXTURE_FILENAME: filename,
+        HEIF_HDR_MEMORY_TIER: memoryTier,
+      },
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+
+  const lines = stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean);
+  const summaryLine = lines[lines.length - 1];
+  return JSON.parse(summaryLine) as HdrIntentFixtureProbe;
 }

@@ -31,6 +31,8 @@
 - Manual-only recovered diagnostics dialog behavior: `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
 - Share target behavior: `src/lib/share-target-launch.js`, `src/lib/share-store.ts`
 - Low-memory iPhone artifact retention: `src/lib/share-store.ts`, `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
+- HDR intent peak-memory release (MobileSafari): `src/lib/hdr-intent-source-release.ts`, `src/lib/processing-core.ts`, `src/lib/heif-hdr-processing.ts`, `src/lib/diagnostics-events.ts` — emits `hdr-intent-source-released`, `hdr-intent-format-downgraded`
+- GMNet tiled peak-memory release: `src/lib/gmnet-tile-memory.ts`, `src/lib/gmnet-session.ts`, `src/lib/diagnostics-events.ts` — emits `gmnet-source-image-released`; low-memory tier clamps tileInputSize to 384 and reuses a single weight/accum pair
 - First-launch-after-update runtime warmup: `src/lib/runtime-post-update-warmup.ts`, `src/App.svelte`, `src/lib/diagnostics-events.ts`
 - Real Safari/Appium file injection under test mode: `src/lib/ImageProcessor.svelte`, `src/lib/image-processor-gate.ts`, `src/lib/diagnostics-events.ts`
 - Offline bundle and caching: `src/sw.ts`, `src/lib/offline-runtime-bundle.ts`, `src/lib/runtime-bundle-asset-map.ts`

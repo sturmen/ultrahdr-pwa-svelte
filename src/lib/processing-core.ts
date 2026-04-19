@@ -23,6 +23,7 @@ import {
 import { rotateJpeg } from './jpegtran-rotate.js';
 import { IMAGE_MAX_LONG_EDGE } from './constants.ts';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
+import { releaseHdrIntentSource } from './hdr-intent-source-release.ts';
 import {
     decideGeneratedSdrEncodingStrategy,
     decidePreservedUltraHdrRoute,
@@ -1793,6 +1794,8 @@ export async function compressHdrIntentOnly(
                 range: hdrIntent.range,
             });
         }
+
+        releaseHdrIntentSource(hdrIntent, globalThis, 'post-set-hdr-intent-image');
 
         if (!options.stripExif && exifPayload instanceof Uint8Array && exifPayload.length > 0) {
             let finalExifPayload: Uint8Array | null = normalizeExifOrientationTo1(exifPayload);

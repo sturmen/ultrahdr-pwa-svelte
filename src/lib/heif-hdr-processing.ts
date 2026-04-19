@@ -6,6 +6,8 @@ import {
     resolveRuntimeAssetUrl,
 } from './runtime-assets.ts';
 import { LIBHEIF_WASM_BINARY_ASSET } from './runtime-asset-definitions.ts';
+import { getProcessingProfile } from './capabilities.ts';
+import { recordProcessingMemoryDiagnostics } from './diagnostics-events.ts';
 import type {
     FloatHdrIntentPayload,
     HdrIntentHeifResult,
@@ -295,6 +297,29 @@ function mapOrientedPixelToSource(
     }
 }
 
+export type HdrIntentMemoryTier = 'low' | 'mid' | 'high';
+
+export interface HdrIntentFormatResolution {
+    format: 'rgba1010102' | 'rgbaf16';
+    downgraded: boolean;
+    reason: 'low-memory-tier' | null;
+}
+
+export function resolveHdrIntentFormat(input: {
+    bitsPerPixel: number;
+    memoryTier: HdrIntentMemoryTier;
+}): HdrIntentFormatResolution {
+    const bpp = Number(input.bitsPerPixel);
+    const fitsInPacked = Number.isInteger(bpp) && bpp > 0 && bpp <= 10;
+    if (fitsInPacked) {
+        return { format: 'rgba1010102', downgraded: false, reason: null };
+    }
+    if (input.memoryTier === 'low') {
+        return { format: 'rgba1010102', downgraded: true, reason: 'low-memory-tier' };
+    }
+    return { format: 'rgbaf16', downgraded: false, reason: null };
+}
+
 function scaleChannelTo10Bit(codeValue: number, codeMax: number): number {
     const normalized = Math.max(0, Math.min(codeMax, codeValue));
     if (codeMax === 1023) {
@@ -325,12 +350,19 @@ async function initLibHeif(): Promise<LibHeifModule> {
     return libheif;
 }
 
+export interface DecodePrimaryToHdrIntentResult {
+    image: DecodedHdrIntentImage;
+    formatResolution: HdrIntentFormatResolution;
+    bitsPerPixel: number;
+}
+
 function decodePrimaryToHdrIntent(
     heif: LibHeifModule,
     primaryImage: HeifPrimaryImage,
     nclx: HdrNclxInfo,
     orientation: number,
-): DecodedHdrIntentImage {
+    options: { memoryTier?: HdrIntentMemoryTier } = {},
+): DecodePrimaryToHdrIntentResult {
     const width = primaryImage.get_width();
     const height = primaryImage.get_height();
     const decoded = heif.heif_js_decode_image2(
@@ -357,7 +389,11 @@ function decodePrimaryToHdrIntent(
     const strideBytes = interleavedChannel.stride || (width * 8);
     const channelCodeMax = resolveChannelCodeMax(interleavedChannel);
     const bitsPerPixel = Number(interleavedChannel.bits_per_pixel);
-    const shouldPack1010102 = Number.isInteger(bitsPerPixel) && bitsPerPixel > 0 && bitsPerPixel <= 10;
+    const formatResolution = resolveHdrIntentFormat({
+        bitsPerPixel,
+        memoryTier: options.memoryTier ?? 'mid',
+    });
+    const shouldPack1010102 = formatResolution.format === 'rgba1010102';
 
     if (shouldPack1010102) {
         const packedBytes = new Uint8Array(outWidth * outHeight * 4);
@@ -385,12 +421,16 @@ function decodePrimaryToHdrIntent(
         }
 
         return {
-            data: packedBytes,
-            width: outWidth,
-            height: outHeight,
-            strideBytes: outWidth * 4,
-            format: 'rgba1010102',
-            ct: getHdrIntentTransfer(nclx),
+            image: {
+                data: packedBytes,
+                width: outWidth,
+                height: outHeight,
+                strideBytes: outWidth * 4,
+                format: 'rgba1010102',
+                ct: getHdrIntentTransfer(nclx),
+            },
+            formatResolution,
+            bitsPerPixel,
         };
     }
 
@@ -429,12 +469,16 @@ function decodePrimaryToHdrIntent(
     }
 
     return {
-        data: halfFloatBytes,
-        width: outWidth,
-        height: outHeight,
-        strideBytes: outWidth * 8,
-        format: 'rgbaf16',
-        ct: 'linear',
+        image: {
+            data: halfFloatBytes,
+            width: outWidth,
+            height: outHeight,
+            strideBytes: outWidth * 8,
+            format: 'rgbaf16',
+            ct: 'linear',
+        },
+        formatResolution,
+        bitsPerPixel,
     };
 }
 
@@ -463,7 +507,19 @@ export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
     }
 
     const primary = images[0];
-    const hdrIntentImage = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation);
+    const memoryTier = getProcessingProfile().memoryTier;
+    const decodeResult = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation, { memoryTier });
+    const hdrIntentImage = decodeResult.image;
+    if (decodeResult.formatResolution.downgraded) {
+        recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+            type: 'hdr-intent-format-downgraded',
+            fromFormat: 'rgbaf16',
+            toFormat: decodeResult.formatResolution.format,
+            reason: decodeResult.formatResolution.reason,
+            memoryTier,
+            bitsPerPixel: decodeResult.bitsPerPixel,
+        });
+    }
     const hdrIntent: HdrIntentPayload = hdrIntentImage.format === 'rgba1010102'
         ? {
             data: hdrIntentImage.data,
@@ -472,7 +528,7 @@ export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
             strideBytes: hdrIntentImage.strideBytes,
             format: 'rgba1010102',
             cg: 'bt2100',
-            ct: hdrIntentImage.ct,
+            ct: hdrIntentImage.ct as 'pq' | 'hlg',
             range: supportedNclx.fullRange ? 'full' : 'limited',
         }
         : {

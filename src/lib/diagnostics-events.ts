@@ -130,6 +130,11 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     jpegliLoaderReady: 'jpegli-loader-ready',
     jpegliLoaderFailed: 'jpegli-loader-failed',
   },
+  processingMemory: {
+    hdrIntentSourceReleased: 'hdr-intent-source-released',
+    hdrIntentFormatDowngraded: 'hdr-intent-format-downgraded',
+    gmnetSourceImageReleased: 'gmnet-source-image-released',
+  },
 } as const;
 
 export type QueueDiagnosticsEvent =
@@ -443,6 +448,28 @@ export type PipelineDiagnosticsEvent = {
   error: unknown;
 };
 
+export type ProcessingMemoryDiagnosticsEvent =
+  | {
+      type: 'hdr-intent-source-released';
+      trigger: string | null;
+      sourceBytes: number | null;
+      format: string | null;
+    }
+  | {
+      type: 'hdr-intent-format-downgraded';
+      fromFormat: string | null;
+      toFormat: string | null;
+      reason: string | null;
+      memoryTier: string | null;
+      bitsPerPixel: number | null;
+    }
+  | {
+      type: 'gmnet-source-image-released';
+      trigger: string | null;
+      sourceBytes: number | null;
+      tileTotal: number | null;
+    };
+
 export type DiagnosticsDomainEvent =
   | { domain: 'queue'; event: QueueDiagnosticsEvent }
   | { domain: 'runtime'; event: RuntimeDiagnosticsEvent }
@@ -451,6 +478,7 @@ export type DiagnosticsDomainEvent =
   | { domain: 'lifecycle'; event: LifecycleDiagnosticsEvent }
   | { domain: 'runtime-init'; event: RuntimeInitDiagnosticsEvent }
   | { domain: 'runtime-asset'; event: RuntimeAssetDiagnosticsEvent }
+  | { domain: 'processing-memory'; event: ProcessingMemoryDiagnosticsEvent }
   | { domain: 'pipeline'; event: PipelineDiagnosticsEvent };
 
 function toDiagnosticsInput(request: DiagnosticsDomainEvent): DiagnosticsEventInput {
@@ -469,8 +497,50 @@ function toDiagnosticsInput(request: DiagnosticsDomainEvent): DiagnosticsEventIn
       return buildRuntimeInitDiagnosticsInput(request.event);
     case 'runtime-asset':
       return buildRuntimeAssetDiagnosticsInput(request.event);
+    case 'processing-memory':
+      return buildProcessingMemoryDiagnosticsInput(request.event);
     case 'pipeline':
       return buildPipelineDiagnosticsInput(request.event);
+  }
+}
+
+function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnosticsEvent): DiagnosticsEventInput {
+  switch (event.type) {
+    case 'hdr-intent-source-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentSourceReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          trigger: event.trigger,
+          sourceBytes: event.sourceBytes,
+          format: event.format,
+        }),
+      };
+    case 'hdr-intent-format-downgraded':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentFormatDowngraded,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          fromFormat: event.fromFormat,
+          toFormat: event.toFormat,
+          reason: event.reason,
+          memoryTier: event.memoryTier,
+          bitsPerPixel: event.bitsPerPixel,
+        }),
+      };
+    case 'gmnet-source-image-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSourceImageReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          trigger: event.trigger,
+          sourceBytes: event.sourceBytes,
+          tileTotal: event.tileTotal,
+        }),
+      };
   }
 }
 
@@ -1169,6 +1239,10 @@ export function recordRuntimeInitDiagnostics(runtime: RuntimeLike = globalThis, 
 
 export function recordRuntimeAssetDiagnostics(runtime: RuntimeLike = globalThis, event: RuntimeAssetDiagnosticsEvent): DiagnosticsEvent {
   return recordDiagnosticsEvent(runtime, { domain: 'runtime-asset', event });
+}
+
+export function recordProcessingMemoryDiagnostics(runtime: RuntimeLike = globalThis, event: ProcessingMemoryDiagnosticsEvent): DiagnosticsEvent {
+  return recordDiagnosticsEvent(runtime, { domain: 'processing-memory', event });
 }
 
 export function recordPipelineDiagnostics(runtime: RuntimeLike = globalThis, event: PipelineDiagnosticsEvent): DiagnosticsEvent {

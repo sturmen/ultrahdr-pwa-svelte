@@ -248,6 +248,82 @@ describe('diagnostics-events', () => {
     });
   });
 
+  it('records HDR-intent source-release breadcrumbs with bounded payload', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'hdr-intent-source-released',
+      trigger: 'post-set-hdr-intent-image',
+      sourceBytes: 48771072,
+      format: 'rgba1010102',
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentSourceReleased,
+      severity: 'info',
+      context: {
+        trigger: 'post-set-hdr-intent-image',
+        sourceBytes: 48771072,
+        format: 'rgba1010102',
+      },
+    });
+  });
+
+  it('records HDR-intent format-downgrade breadcrumbs on low-memory tiers', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'hdr-intent-format-downgraded',
+      fromFormat: 'rgbaf16',
+      toFormat: 'rgba1010102',
+      reason: 'low-memory-tier',
+      memoryTier: 'low',
+      bitsPerPixel: 12,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentFormatDowngraded,
+      severity: 'info',
+      context: {
+        fromFormat: 'rgbaf16',
+        toFormat: 'rgba1010102',
+        reason: 'low-memory-tier',
+        memoryTier: 'low',
+        bitsPerPixel: 12,
+      },
+    });
+  });
+
+  it('records GMNet source-image-released breadcrumbs after last tile step', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'gmnet-source-image-released',
+      trigger: 'last-tile-completed',
+      sourceBytes: 48771072,
+      tileTotal: 24,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSourceImageReleased,
+      severity: 'info',
+      context: {
+        trigger: 'last-tile-completed',
+        sourceBytes: 48771072,
+        tileTotal: 24,
+      },
+    });
+  });
+
   it('records pipeline breadcrumbs through the typed helper without changing the public phase name', async () => {
     const runtime = createRuntime();
     const diagnosticsEvents = await import('../diagnostics-events.ts');

@@ -9,6 +9,11 @@ import {
     isWindowsRuntime as isWindowsDetectedRuntime,
 } from './runtime-detection.ts';
 import { resizeRasterImageSync } from './raster-image.ts';
+import {
+    createTiledInferenceBuffers,
+    releaseTiledSourceImageIfComplete,
+} from './gmnet-tile-memory.ts';
+import { getProcessingProfile } from './capabilities.ts';
 
 export const REQUIRED_GMNET_EXECUTION_PROVIDER = 'webgpu';
 export const GMNET_FALLBACK_EXECUTION_PROVIDER = 'webgl';
@@ -143,6 +148,8 @@ type GmnetGlobalContext = {
     qmax: TensorLike;
     qmaxScalar: number;
 };
+export type GmnetTileMemoryTier = 'low' | 'mid' | 'high';
+
 export type GmnetTiledContext = {
     provider: string;
     sourceWidth: number;
@@ -155,6 +162,7 @@ export type GmnetTiledContext = {
     completedTileCount: number;
     pendingTileCount: number;
     accumIngm: Float32Array | null;
+    weightAccumIngm: Float32Array | null;
     global: GmnetGlobalContext | null;
     destroyed?: boolean;
     destroyContext?: boolean;
@@ -1430,6 +1438,7 @@ export class GMNetInferenceSession {
         gmnetTileInputSize?: number;
         gmnetTileHaloPx?: number;
         localInputMaxLongEdge?: number;
+        memoryTier?: GmnetTileMemoryTier;
     } = {}): GmnetTileConfig {
         const normalizedProvider = normalizeExecutionProvider(provider);
         const sourceLongEdge = Math.max(sourceWidth, sourceHeight);
@@ -1438,6 +1447,8 @@ export class GMNetInferenceSession {
         const capabilityTileLimit = normalizeLongEdgeLimit(options?.localInputMaxLongEdge, 0);
         const isWebgl = normalizedProvider === GMNET_FALLBACK_EXECUTION_PROVIDER;
         const fixedInputSize = isWebgl;
+        const isLowMemoryTier = options?.memoryTier === 'low';
+        const LOW_MEMORY_TIER_TILE_CLAMP = 384;
 
         let tileInputSize;
         if (isWebgl) {
@@ -1446,7 +1457,10 @@ export class GMNetInferenceSession {
             tileInputSize = requestedTileInputSize;
         } else {
             const inferredLimit = capabilityTileLimit > 0 ? capabilityTileLimit : sourceLongEdge;
-            tileInputSize = Math.max(1, Math.min(inferredLimit, 1536));
+            const upperBound = isLowMemoryTier
+                ? Math.min(1536, LOW_MEMORY_TIER_TILE_CLAMP)
+                : 1536;
+            tileInputSize = Math.max(1, Math.min(inferredLimit, upperBound));
         }
 
         let haloPx;
@@ -1555,6 +1569,7 @@ export class GMNetInferenceSession {
         localInputMaxLongEdge?: number;
         gmnetTileInputSize?: number;
         gmnetTileHaloPx?: number;
+        memoryTier?: GmnetTileMemoryTier;
     } = {}): Promise<GmnetTiledContext> {
         const requestedVariant = normalizeModelVariant(options?.gmnetModelVariant);
         const forceExecutionProviders = Array.isArray(options?.forceExecutionProviders)
@@ -1598,8 +1613,13 @@ export class GMNetInferenceSession {
             throw new Error('GMNet global session must output wker, wchn, and qmax.');
         }
 
-        const tileConfig = this.resolveTileConfiguration(provider, sourceWidth, sourceHeight, options);
+        const resolvedMemoryTier = options?.memoryTier ?? getProcessingProfile().memoryTier;
+        const tileConfig = this.resolveTileConfiguration(provider, sourceWidth, sourceHeight, {
+            ...options,
+            memoryTier: resolvedMemoryTier,
+        });
         const tiles = this.createTilePlan(sourceWidth, sourceHeight, tileConfig);
+        const buffers = createTiledInferenceBuffers(sourceWidth * sourceHeight);
         return {
             provider,
             sourceWidth,
@@ -1611,7 +1631,8 @@ export class GMNetInferenceSession {
             tileCompleted: new Uint8Array(tiles.length),
             completedTileCount: 0,
             pendingTileCount: tiles.length,
-            accumIngm: new Float32Array(sourceWidth * sourceHeight),
+            accumIngm: buffers.accumIngm,
+            weightAccumIngm: buffers.weightAccumIngm,
             global: {
                 wker,
                 wchn,
@@ -1668,6 +1689,7 @@ export class GMNetInferenceSession {
 
             const outputData = outputTensor.data;
             const sourceWidth = context.sourceWidth;
+            const weightAccum = context.weightAccumIngm;
             for (let coreY = 0; coreY < tile.coreHeight; coreY += 1) {
                 const sampleY = tile.coreOffsetY + coreY;
                 const weightY = tile.weightY[coreY];
@@ -1681,6 +1703,9 @@ export class GMNetInferenceSession {
                     const targetIndex = targetRowOffset + targetX;
                     const weight = tile.weightX[coreX] * weightY;
                     context.accumIngm![targetIndex] += value * weight;
+                    if (weightAccum) {
+                        weightAccum[targetIndex] += weight;
+                    }
                 }
             }
         } finally {
@@ -1691,6 +1716,9 @@ export class GMNetInferenceSession {
         context.tileCompleted![normalizedTileIndex] = 1;
         context.completedTileCount += 1;
         context.pendingTileCount = Math.max(0, tiles.length - context.completedTileCount);
+        if (context.completedTileCount >= tiles.length) {
+            releaseTiledSourceImageIfComplete(context, this.runtime);
+        }
         const metadata = {
             tileIndex: normalizedTileIndex,
             tileTotal: tiles.length,
@@ -1719,34 +1747,20 @@ export class GMNetInferenceSession {
         context.tiles = [];
         context.tileCompleted = null;
         context.accumIngm = null;
+        context.weightAccumIngm = null;
         context.completedTileCount = 0;
         context.pendingTileCount = 0;
     }
 
     finalizeTiledInference(context: GmnetTiledContext, options: { destroyContext?: boolean } = {}): Uint8ClampedArray {
-        if (!context || !context.accumIngm || !Array.isArray(context.tiles)) {
+        if (!context || !context.accumIngm || !context.weightAccumIngm || !Array.isArray(context.tiles)) {
             throw new Error('GMNet tile context is invalid.');
         }
         const shouldDestroyContext = options?.destroyContext !== false;
         try {
             const pixelCount = context.sourceWidth * context.sourceHeight;
             const output = new Uint8ClampedArray(pixelCount * 4);
-            const weightAccumulator = new Float32Array(pixelCount);
-            const sourceWidth = context.sourceWidth;
-            for (const tile of context.tiles!) {
-                for (let coreY = 0; coreY < tile.coreHeight; coreY += 1) {
-                    const weightY = tile.weightY[coreY];
-                    const targetY = tile.coreY + coreY;
-                    const targetRowOffset = targetY * sourceWidth;
-                    for (let coreX = 0; coreX < tile.coreWidth; coreX += 1) {
-                        const targetX = tile.coreX + coreX;
-                        const targetIndex = targetRowOffset + targetX;
-                        const weight = tile.weightX[coreX] * weightY;
-                        weightAccumulator[targetIndex] += weight;
-                    }
-                }
-            }
-
+            const weightAccumulator = context.weightAccumIngm;
             const qmaxScalar = Number(context?.global?.qmaxScalar) || 1;
             for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
                 const weight = weightAccumulator[pixelIndex];
