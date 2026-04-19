@@ -24,6 +24,9 @@ import { rotateJpeg } from './jpegtran-rotate.js';
 import { IMAGE_MAX_LONG_EDGE } from './constants.ts';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
 import { releaseHdrIntentSource } from './hdr-intent-source-release.ts';
+import { releaseSdrPixelSource } from './sdr-pixel-source-release.ts';
+import { releaseGmnetGainMapSource } from './gmnet-gain-map-source-release.ts';
+import { releaseCompressedPayloadBag, type CompressedPayloadBag } from './compressed-payload-release.ts';
 import {
     decideGeneratedSdrEncodingStrategy,
     decidePreservedUltraHdrRoute,
@@ -1065,6 +1068,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             withProcessingPath(),
         );
         console.log('[Process] Compression complete');
+        releaseSdrPixelSource(workingImageData, globalThis, 'post-compress-images');
 
         // Finalize UltraHDR
         const blob = await telemetry.runStage(
@@ -1147,13 +1151,26 @@ async function rebuildUhdrFromCompressed(
             if (exifPayload) {
                 await telemetry.runStage('rebuild-set-exif', async () => encoder.setExifData(exifPayload));
             }
-            await telemetry.runStage('rebuild-encode', async () => encoder.encode(wasmQuality));
         } else {
             encoder.setCompressedBaseImage(strippedBase);
             encoder.setCompressedGainMapImage(gainMapJpegBytes, encoderGainMapMetadata);
             if (exifPayload) {
                 encoder.setExifData(exifPayload);
             }
+        }
+
+        const rebuildBag: CompressedPayloadBag = {
+            baseJpeg: strippedBase,
+            gainMapJpeg: gainMapJpegBytes,
+            exif: exifPayload,
+        };
+        releaseCompressedPayloadBag(rebuildBag, globalThis, 'post-rebuild-set-compressed-payloads');
+        strippedBase = new Uint8Array(0);
+        gainMapJpegBytes = new Uint8Array(0);
+
+        if (telemetry) {
+            await telemetry.runStage('rebuild-encode', async () => encoder.encode(wasmQuality));
+        } else {
             encoder.encode(wasmQuality);
         }
 
@@ -1653,13 +1670,16 @@ export async function compressImages(
             }
         }
         console.log("[end] encode-sdr-to-jpeg success")
+        if (rotation !== 0) {
+            releaseSdrPixelSource(rotatedSdrImageData, globalThis, 'post-encode-sdr-to-jpeg');
+        }
         console.log("[start] encode-gain-map-to-jpeg")
         if (telemetry) {
             telemetry.emitStageProgress('encode-gain-map-to-jpeg', 0, {
                 note: 'Encoding gain map JPEG 0%',
             });
         }
-        const gainMapJpegBytes = telemetry ?
+        let gainMapJpegBytes = telemetry ?
             await telemetry.runStage(
                 'encode-gain-map-to-jpeg',
                 async () => encoderFn(
@@ -1679,6 +1699,7 @@ export async function compressImages(
             });
         }
         console.log("[end] encode-gain-map-to-jpeg success")
+        releaseGmnetGainMapSource(encoderGainMapImageData, globalThis, 'post-encode-gain-map');
         let finalExifPayload: Uint8Array | null = exifPayload;
         if (finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
             const inputOrientation = extractExifOrientation(finalExifPayload);
@@ -1692,7 +1713,7 @@ export async function compressImages(
             }
         }
 
-        const baseJpegForEncoder =
+        let baseJpegForEncoder =
             !options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0 ?
                 insertExifSegment(sdrJpegBytes, finalExifPayload) :
                 sdrJpegBytes;
@@ -1711,14 +1732,29 @@ export async function compressImages(
         }
 
         if (!options.stripExif && finalExifPayload instanceof Uint8Array && finalExifPayload.length > 0) {
+            const exifForEncoder = finalExifPayload;
             if (telemetry) {
                 await telemetry.runStage('encode-set-exif', async () => {
-                    encoder.setExifData(finalExifPayload);
+                    encoder.setExifData(exifForEncoder);
                 });
             } else {
-                encoder.setExifData(finalExifPayload);
+                encoder.setExifData(exifForEncoder);
             }
         }
+
+        const compressedPayloadBag: CompressedPayloadBag = {
+            baseJpeg: baseJpegForEncoder,
+            gainMapJpeg: gainMapJpegBytes,
+            exif: finalExifPayload,
+        };
+        if (sdrJpegBytes !== baseJpegForEncoder) {
+            compressedPayloadBag.sdrJpeg = sdrJpegBytes;
+        }
+        releaseCompressedPayloadBag(compressedPayloadBag, globalThis, 'post-set-compressed-payloads');
+        sdrJpegBytes = new Uint8Array(0);
+        baseJpegForEncoder = new Uint8Array(0);
+        gainMapJpegBytes = new Uint8Array(0);
+        finalExifPayload = null;
 
         // Encode to UltraHDR JPEG.
         if (telemetry) {

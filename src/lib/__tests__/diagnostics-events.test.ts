@@ -324,6 +324,74 @@ describe('diagnostics-events', () => {
     });
   });
 
+  it('records SDR-pixel source-release breadcrumbs with bounded payload', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'sdr-pixel-source-released',
+      trigger: 'post-encode-sdr-to-jpeg',
+      sourceBytes: 48771072,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.sdrPixelSourceReleased,
+      severity: 'info',
+      context: {
+        trigger: 'post-encode-sdr-to-jpeg',
+        sourceBytes: 48771072,
+      },
+    });
+  });
+
+  it('records compressed-payload release breadcrumbs with kind and size', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'compressed-payload-released',
+      trigger: 'post-set-compressed-payloads',
+      kind: 'base-jpeg',
+      sourceBytes: 12345678,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.compressedPayloadReleased,
+      severity: 'info',
+      context: {
+        trigger: 'post-set-compressed-payloads',
+        kind: 'base-jpeg',
+        sourceBytes: 12345678,
+      },
+    });
+  });
+
+  it('records GMNet gain-map source-release breadcrumbs after jpegli encode', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'gmnet-gain-map-source-released',
+      trigger: 'post-encode-gain-map',
+      sourceBytes: 48771072,
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetGainMapSourceReleased,
+      severity: 'info',
+      context: {
+        trigger: 'post-encode-gain-map',
+        sourceBytes: 48771072,
+      },
+    });
+  });
+
   it('records pipeline breadcrumbs through the typed helper without changing the public phase name', async () => {
     const runtime = createRuntime();
     const diagnosticsEvents = await import('../diagnostics-events.ts');

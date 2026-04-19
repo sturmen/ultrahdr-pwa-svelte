@@ -45,26 +45,30 @@ vi.mock('../jpegli-decoder.js', () => ({
 
 const encodedBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xee, 0x00, 0x01, 0xff, 0xd9]);
 
-const sdrImageData = new ImageData(
-    new Uint8ClampedArray([
-        100, 110, 120, 255,
-        130, 140, 150, 255,
-        120, 130, 140, 255,
-        140, 150, 160, 255
-    ]),
-    2,
-    2
-);
-const gainMapImageData = new ImageData(
-    new Uint8ClampedArray([
-        10, 10, 10, 255,
-        20, 20, 20, 255,
-        30, 30, 30, 255,
-        40, 40, 40, 255
-    ]),
-    2,
-    2
-);
+function makeSdrImageData() {
+    return new ImageData(
+        new Uint8ClampedArray([
+            100, 110, 120, 255,
+            130, 140, 150, 255,
+            120, 130, 140, 255,
+            140, 150, 160, 255
+        ]),
+        2,
+        2
+    );
+}
+function makeGainMapImageData() {
+    return new ImageData(
+        new Uint8ClampedArray([
+            10, 10, 10, 255,
+            20, 20, 20, 255,
+            30, 30, 30, 255,
+            40, 40, 40, 255
+        ]),
+        2,
+        2
+    );
+}
 
 const inputUhdrBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xd9]);
 const tinyJpegBase64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBUQEBAVFhUVFRUVFRUVFRUVFRUVFRUWFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0OGxAQGy0mICYtLS8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAgMBIgACEQEDEQH/xAAXAAEAAwAAAAAAAAAAAAAAAAAAAQID/8QAFhABAQEAAAAAAAAAAAAAAAAAABES/9oACAEBAAEFAtNv/8QAFhEAAwAAAAAAAAAAAAAAAAAAARAR/9oACAEDAQE/AYf/xAAVEQEBAAAAAAAAAAAAAAAAAAABEP/aAAgBAgEBPwGH/8QAGhABAAMAAwAAAAAAAAAAAAAAAAERITFBUf/aAAgBAQAGPwKjNf/EABsQAQEAAwEBAQAAAAAAAAAAAAERACExQVGh/9oACAEBAAE/IdXQjFzWq9KQ2rgo8sfr/9oADAMBAAIAAwAAABAf/wD/xAAXEQEBAQEAAAAAAAAAAAAAAAABABEh/9oACAEDAQE/EFjP/8QAFxEBAQEBAAAAAAAAAAAAAAAAAREhQf/aAAgBAgEBPxBfM//EAB0QAQACAgIDAAAAAAAAAAAAAAEAESExQVFhcZH/2gAIAQEAAT8QObXbJ0UuE1ULhBrxwC4j5V0F3l0JgS3f/2Q==';
@@ -122,8 +126,8 @@ const encoderInstance = {
 
 vi.mock('../heic-processing.js', () => ({
     processHeic: vi.fn(async () => ({
-        sdr: sdrImageData,
-        gainMap: gainMapImageData,
+        sdr: makeSdrImageData(),
+        gainMap: makeGainMapImageData(),
         gainMapMetadata,
         name: 'input.heic'
     }))
@@ -239,8 +243,8 @@ describe('processImage UltraHDR preservation path', () => {
         isUhdrImage.mockResolvedValue(false);
 
         processHeic.mockResolvedValueOnce({
-            sdr: sdrImageData,
-            gainMap: gainMapImageData,
+            sdr: makeSdrImageData(),
+            gainMap: makeGainMapImageData(),
             gainMapHeadroom: 2.859227,
             name: 'input.heic'
         });
@@ -269,8 +273,8 @@ describe('processImage UltraHDR preservation path', () => {
         isUhdrImage.mockResolvedValue(false);
 
         processHeic.mockResolvedValueOnce({
-            sdr: sdrImageData,
-            gainMap: gainMapImageData,
+            sdr: makeSdrImageData(),
+            gainMap: makeGainMapImageData(),
             gainMapHeadroom: 2.859227,
             name: 'input.heic'
         });
@@ -589,6 +593,12 @@ describe('processImage UltraHDR preservation path', () => {
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(false);
 
+        const encodeJpegliDataRefs: Array<Uint8ClampedArray | Uint8Array> = [];
+        encodeJpegli.mockImplementation(async (imageData: { data: Uint8ClampedArray | Uint8Array }) => {
+            encodeJpegliDataRefs.push(imageData.data);
+            return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+        });
+
         const sdrData = new Uint8ClampedArray([
             100, 110, 120, 255,
             130, 140, 150, 255,
@@ -630,9 +640,8 @@ describe('processImage UltraHDR preservation path', () => {
             stripExif: true,
         });
 
-        const encodedImageData = encodeJpegli.mock.calls.map(([imageData]) => imageData);
-        expect(encodedImageData.some((imageData) => imageData.data === sdrData)).toBe(true);
-        expect(encodedImageData.some((imageData) => imageData.data === gainMapData)).toBe(true);
+        expect(encodeJpegliDataRefs.some((data) => data === sdrData)).toBe(true);
+        expect(encodeJpegliDataRefs.some((data) => data === gainMapData)).toBe(true);
     });
 
     it('skips gain-map pixel normalization when preserved pixels and metadata are already single-channel', async () => {

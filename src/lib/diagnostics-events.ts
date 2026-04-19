@@ -134,6 +134,9 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     hdrIntentSourceReleased: 'hdr-intent-source-released',
     hdrIntentFormatDowngraded: 'hdr-intent-format-downgraded',
     gmnetSourceImageReleased: 'gmnet-source-image-released',
+    sdrPixelSourceReleased: 'sdr-pixel-source-released',
+    compressedPayloadReleased: 'compressed-payload-released',
+    gmnetGainMapSourceReleased: 'gmnet-gain-map-source-released',
   },
 } as const;
 
@@ -468,6 +471,22 @@ export type ProcessingMemoryDiagnosticsEvent =
       trigger: string | null;
       sourceBytes: number | null;
       tileTotal: number | null;
+    }
+  | {
+      type: 'sdr-pixel-source-released';
+      trigger: string | null;
+      sourceBytes: number | null;
+    }
+  | {
+      type: 'compressed-payload-released';
+      trigger: string | null;
+      kind: string | null;
+      sourceBytes: number | null;
+    }
+  | {
+      type: 'gmnet-gain-map-source-released';
+      trigger: string | null;
+      sourceBytes: number | null;
     };
 
 export type DiagnosticsDomainEvent =
@@ -539,6 +558,37 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
           trigger: event.trigger,
           sourceBytes: event.sourceBytes,
           tileTotal: event.tileTotal,
+        }),
+      };
+    case 'sdr-pixel-source-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.sdrPixelSourceReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          trigger: event.trigger,
+          sourceBytes: event.sourceBytes,
+        }),
+      };
+    case 'compressed-payload-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.compressedPayloadReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          trigger: event.trigger,
+          kind: event.kind,
+          sourceBytes: event.sourceBytes,
+        }),
+      };
+    case 'gmnet-gain-map-source-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetGainMapSourceReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          trigger: event.trigger,
+          sourceBytes: event.sourceBytes,
         }),
       };
   }

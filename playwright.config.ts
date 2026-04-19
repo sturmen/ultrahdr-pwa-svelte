@@ -68,7 +68,7 @@ export default defineConfig({
     webServer: {
         command: 'npm run build:wasm && npm run build && npm run preview',
         url: 'http://localhost:4173/ultrahdr-pwa-svelte/',
-        reuseExistingServer: false,
+        reuseExistingServer: process.env.REUSE_WEBSERVER === '1',
         timeout: 600 * 1000,
     },
 });
