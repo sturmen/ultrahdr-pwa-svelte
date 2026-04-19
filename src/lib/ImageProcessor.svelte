@@ -1695,6 +1695,14 @@
       return await createInputPreviewTask(file);
     } catch (previewError) {
       console.warn("[UI] Failed to create input preview:", previewError);
+      const message = summarizePreviewErrorMessage(previewError).slice(0, 200);
+      const errorCategory = classifyDeferredPreviewError(previewError);
+      recordRuntimeDiagnostics(globalThis, {
+        type: "initial-input-preview-failed",
+        trigger: "initial-input-preview",
+        errorCategory,
+        message,
+      });
       return null;
     }
   }

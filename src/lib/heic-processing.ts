@@ -75,6 +75,12 @@ interface LibHeifModule {
         auxIdsPtr: number,
         auxCount: number,
     ): number;
+    heif_image_handle_get_number_of_thumbnails?(handle: HeifImageHandle): number;
+    heif_image_handle_get_list_of_thumbnail_IDs?(
+        handle: HeifImageHandle,
+        idsPtr: number,
+        count: number,
+    ): number;
     _malloc(size: number): number;
     _free(ptr: number): void;
     HEAP32: Int32Array;
@@ -279,11 +285,60 @@ function _freeHeifContext(heif: LibHeifModule, decoder: HeifDecoderInstance): vo
     } catch { /* teardown must not throw */ }
 }
 
+function _getThumbnailHandle(
+    heif: LibHeifModule,
+    decoder: HeifDecoderInstance,
+    primaryHandle: HeifImageHandle,
+): HeifImageHandle | null {
+    if (
+        typeof heif.heif_image_handle_get_number_of_thumbnails !== 'function'
+        || typeof heif.heif_image_handle_get_list_of_thumbnail_IDs !== 'function'
+    ) {
+        return null;
+    }
+    let count = 0;
+    try {
+        count = heif.heif_image_handle_get_number_of_thumbnails(primaryHandle);
+    } catch {
+        return null;
+    }
+    if (!count || count <= 0) return null;
+
+    const idsPtr = heif._malloc(count * 4);
+    try {
+        let got = 0;
+        try {
+            got = heif.heif_image_handle_get_list_of_thumbnail_IDs(primaryHandle, idsPtr, count);
+        } catch {
+            return null;
+        }
+        if (!got) return null;
+
+        const ctx = decoder.decoder;
+        for (let i = 0; i < got; i++) {
+            const thumbId = heif.HEAP32[(idsPtr >> 2) + i];
+            let thumbHandle: HeifImageHandle | null = null;
+            try {
+                thumbHandle = heif.heif_js_context_get_image_handle(ctx, thumbId);
+            } catch {
+                continue;
+            }
+            if (_isHeifHandle(thumbHandle)) {
+                return thumbHandle;
+            }
+        }
+        return null;
+    } finally {
+        heif._free(idsPtr);
+    }
+}
+
 export async function decodeHeifPreviewImage(file: File): Promise<DecodedRasterImage> {
     const heif = await initLibHeif();
     const arrayBuffer = await file.arrayBuffer();
     const decoder = new heif.HeifDecoder();
     let data: HeifImageLike[] | null = null;
+    let thumbHandle: HeifImageHandle | null = null;
     try {
         data = decoder.decode(arrayBuffer);
 
@@ -291,8 +346,16 @@ export async function decodeHeifPreviewImage(file: File): Promise<DecodedRasterI
             throw new Error('No images found in HEIC file');
         }
 
-        return _decodeHandleToImageData(heif, data[0].handle);
+        const primaryHandle = data[0].handle;
+        thumbHandle = _getThumbnailHandle(heif, decoder, primaryHandle);
+        if (thumbHandle) {
+            return _decodeHandleToImageData(heif, thumbHandle);
+        }
+        return _decodeHandleToImageData(heif, primaryHandle);
     } finally {
+        if (thumbHandle) {
+            try { heif.heif_image_handle_release(thumbHandle); } catch { /* teardown must not throw */ }
+        }
         _releaseHeifImages(heif, data);
         _freeHeifContext(heif, decoder);
     }

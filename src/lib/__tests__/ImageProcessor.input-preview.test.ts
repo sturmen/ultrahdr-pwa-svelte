@@ -275,22 +275,8 @@ describe('ImageProcessor input previews', () => {
     expect(previewBlob?.type).toBe('image/jpeg');
   });
 
-  it('defers raw HDR HEIF preview persistence and fills it in asynchronously as jpeg', async () => {
-    const hdrPreviewGate = createDeferred<{
-      data: Uint8Array;
-      width: number;
-      height: number;
-      strideBytes: number;
-      pixelFormat: 'rgba8';
-      bitDepth: number;
-    }>();
+  it('skips preview generation entirely for HDR-intent HIF inputs to avoid main-thread libheif decode', async () => {
     previewMocks.probeInputProcessingPathFromHeadersMock.mockResolvedValue('hdr-intent');
-    previewMocks.loadImageDataMock.mockRejectedValueOnce(
-      new Error('browser cannot decode HDR HEIF preview source'),
-    );
-    previewMocks.decodeHeifPreviewImageMock.mockImplementationOnce(
-      async () => hdrPreviewGate.promise,
-    );
 
     render(ImageProcessor, {
       props: {
@@ -299,39 +285,22 @@ describe('ImageProcessor input previews', () => {
       },
     });
 
-    await Promise.resolve();
-
-    expect(previewMocks.storeQueuePreviewBlobMock).not.toHaveBeenCalled();
-
-    hdrPreviewGate.resolve({
-      data: new Uint8Array([0, 0, 255, 255]),
-      width: 1,
-      height: 1,
-      strideBytes: 4,
-      pixelFormat: 'rgba8',
-      bitDepth: 8,
-    });
-
     await waitFor(() => {
-      expect(previewMocks.storeQueuePreviewBlobMock).toHaveBeenCalled();
+      expect(screen.getAllByTestId('workflow-card-0').length).toBeGreaterThan(0);
     });
 
-    const previewBlob = previewMocks.storeQueuePreviewBlobMock.mock.calls.at(-1)?.[1];
-    expect(previewBlob?.type).toBe('image/jpeg');
+    expect(previewMocks.decodeHeifPreviewImageMock).not.toHaveBeenCalled();
+    expect(previewMocks.storeQueuePreviewBlobMock).not.toHaveBeenCalled();
   });
 
-  it('records a deferred preview diagnostics breadcrumb and keeps the queue healthy when jpegli preview decode fails', async () => {
-    previewMocks.probeInputProcessingPathFromHeadersMock.mockResolvedValue('hdr-intent');
+  it('records a preview diagnostics breadcrumb and keeps the queue healthy when initial preview generation fails', async () => {
     previewMocks.loadImageDataMock.mockRejectedValueOnce(
-      new Error('browser cannot decode HDR HEIF preview source'),
-    );
-    previewMocks.decodeHeifPreviewImageMock.mockRejectedValueOnce(
       new Error('Jpegli WASM module failed to load'),
     );
 
     render(ImageProcessor, {
       props: {
-        files: [new File(['hdr-heif'], 'photo.hif', { type: 'image/heif' })],
+        files: [new File(['jpeg'], 'photo.jpg', { type: 'image/jpeg' })],
         runtime: createRuntime(),
       },
     });
@@ -341,28 +310,13 @@ describe('ImageProcessor input previews', () => {
         window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
       ) as { events: Array<{ name: string; severity: string; context: Record<string, unknown> }> };
       expect(
-        persisted.events.some((event) => event.name === 'deferred-input-preview-failed'),
+        persisted.events.some((event) => event.name === 'initial-input-preview-failed'),
       ).toBe(true);
     });
 
+    await waitFor(() => {
+      expect(screen.getAllByTestId('workflow-card-0').length).toBeGreaterThan(0);
+    });
     expect(previewMocks.storeQueuePreviewBlobMock).not.toHaveBeenCalled();
-    expect(screen.getAllByTestId('workflow-card-0').length).toBeGreaterThan(0);
-
-    const persisted = JSON.parse(
-      window.localStorage.getItem(DIAGNOSTICS_REPORTS_KEY) || '{"events":[]}',
-    ) as { events: Array<{ name: string; severity: string; context: Record<string, unknown> }> };
-    const previewFailure = persisted.events.find(
-      (event) => event.name === 'deferred-input-preview-failed',
-    );
-    expect(previewFailure).toEqual(
-      expect.objectContaining({
-        severity: 'warning',
-        context: expect.objectContaining({
-          queueId: 0,
-          trigger: 'deferred-input-preview',
-          errorCategory: 'jpegli-load-failed',
-        }),
-      }),
-    );
   });
 });

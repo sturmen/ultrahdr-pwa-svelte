@@ -84,14 +84,11 @@ async function createHeifPreview(file: File): Promise<Blob> {
   return createJpegPreviewBlob(imageData);
 }
 
-export async function createInputPreviewTask(file: File): Promise<InputPreviewTask> {
+export async function createInputPreviewTask(file: File): Promise<InputPreviewTask | null> {
   if (isHeifFamilyFile(file)) {
     const processingPath = await probeInputProcessingPathFromHeaders(file);
     if (processingPath === 'hdr-intent') {
-      return {
-        status: 'pending',
-        promise: createHeifPreview(file),
-      };
+      return null;
     }
     return {
       status: 'ready',

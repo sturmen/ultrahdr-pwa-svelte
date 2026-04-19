@@ -74,6 +74,7 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     zipRuntimeLoadCompleted: 'zip-runtime-load-completed',
     zipRuntimeLoadFailed: 'zip-runtime-load-failed',
     deferredInputPreviewFailed: 'deferred-input-preview-failed',
+    initialInputPreviewFailed: 'initial-input-preview-failed',
     processRequestDeduplicated: 'process-request-deduplicated',
     processAttemptStarted: 'process-attempt-started',
     processAttemptCompleted: 'process-attempt-completed',
@@ -222,6 +223,12 @@ export type RuntimeDiagnosticsEvent =
   | {
       type: 'deferred-input-preview-failed';
       queueId: number | null;
+      trigger: string | null;
+      errorCategory: string | null;
+      message: string | null;
+    }
+  | {
+      type: 'initial-input-preview-failed';
       trigger: string | null;
       errorCategory: string | null;
       message: string | null;
@@ -757,6 +764,17 @@ function buildRuntimeDiagnosticsInput(event: RuntimeDiagnosticsEvent): Diagnosti
         severity: 'warning',
         context: {
           queueId: normalizeNumber(event.queueId),
+          trigger: normalizeString(event.trigger),
+          errorCategory: normalizeString(event.errorCategory),
+          message: truncateString(event.message),
+        },
+      };
+    case 'initial-input-preview-failed':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtime.initialInputPreviewFailed,
+        severity: 'warning',
+        context: {
           trigger: normalizeString(event.trigger),
           errorCategory: normalizeString(event.errorCategory),
           message: truncateString(event.message),

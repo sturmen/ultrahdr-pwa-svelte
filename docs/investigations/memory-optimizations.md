@@ -303,6 +303,59 @@ Run-2 steady-state heap (`endDeltaMB`) is now converging — the main-thread lib
 - Did not null out module-level `libheif` cache between jobs. WASM heap stays (Round 4 already verified this is ~0 MB per-run cost).
 - Did not move preview decode off main thread — bigger refactor, deferred.
 
+## Round 7 — Kill main-thread libheif decode for HDR-intent + thumbnail-first preview
+
+### Root cause
+
+Round 6 cleanup released handles/context but did not change the fact that **every HIF upload ran a full libheif decode on the main thread** via the preview pipeline. Residual +157 MB peak delta on run 2 came from:
+
+1. HDR-intent HIF inputs still hit `decodeHeifPreviewImage` → full 4032×3024 decode on main thread, blocking UI ~1.8 s and producing a large working set.
+2. Non-HDR HEIC inputs also decoded the full-resolution primary image just to resize down to 256 px — wasteful.
+
+### Fix
+
+**Option A — `src/lib/input-preview.ts`:**
+
+- `createInputPreviewTask` return type → `Promise<InputPreviewTask | null>`.
+- HDR-intent HIF branch (`probeInputProcessingPathFromHeaders(file) === 'hdr-intent'`) returns `null` — no preview generated, placeholder SVG shown instead.
+- `ImageProcessor.svelte:assignInitialPreviewForQueueItem` already handled `null` via `INPUT_PREVIEW_PLACEHOLDER_URL`.
+
+**Option B — `src/lib/heic-processing.ts`:**
+
+- New `_getThumbnailHandle(heif, decoder, primaryHandle)` — calls `heif_image_handle_get_number_of_thumbnails` + `_get_list_of_thumbnail_IDs`, retrieves first valid thumbnail handle via `heif_js_context_get_image_handle`. Frees its `_malloc`'d ID buffer.
+- `decodeHeifPreviewImage` tries thumbnail first; falls back to primary decode only if no thumbnails (iPhone HEIC files embed 320×240 thumbnails).
+- Thumbnail handle released in outer finally alongside primary images + context.
+
+**Telemetry — `src/lib/diagnostics-events.ts` + `ImageProcessor.svelte`:**
+
+- New `initial-input-preview-failed` event (warning severity). Replaces the `deferred-input-preview-failed` coverage lost when Option A removed the deferred path. Recorded from `resolvePreviewTaskForFile` catch.
+
+### Verification
+
+`npx playwright test --project=chromium tests/e2e/memory-profile.spec.ts -g hif-hdr-intent-repeat-2x`:
+
+| Metric | Before Round 7 | After Round 7 | Δ |
+|---|---|---|---|
+| `overallPeakMB` | 1389 | **551.2** | **−838 MB (−60%)** |
+| `firstRunPeakMB` | 1222 | 549.1 | −673 MB |
+| `secondRunPeakMB` | 1389 | **551.2** | **−838 MB** |
+| `firstRunEndMB` | 1209 | 549.1 | −660 MB |
+| `secondRunEndMB` | 1219 | **549.5** | −670 MB |
+| `peakDeltaMB` | +157 | **+2.1** | **−155 MB** |
+| `endDeltaMB` | +10.5 | **+0.4** | **−10 MB** |
+
+Peak now **well below** the MobileSafari ~1 GB crash threshold on the worst-case 2x-HIF repeat profile.
+
+- `npm run typecheck` → 0 errors.
+- `npm test` → 722 passed, 1 skipped. 4 input-preview tests rewritten for Option A behavior.
+
+### Decisions
+
+- Option A + Option B bundled — B costs little, benefits every HEIC/HIF non-HDR preview; A is the big win for HDR-intent. Landing together simplifies the risk story.
+- Did not implement Option C (worker-side preview pipeline) — peak already 551 MB, deep below the crash budget. Bigger refactor deferred.
+- Kept `InputPreviewTask` union's `pending` variant as legacy unreachable code — avoids breaking Svelte caller's type narrowing (`previewTask.status === 'ready'` vs `pending`).
+- Added `initial-input-preview-failed` to diagnostics registry rather than silently dropping the telemetry.
+
 ## Chronological summary
 
 1. Round 3 plan targeted `encode-ultrahdr` peak on HIF. Assumed libultrahdr encoder internals.
@@ -315,6 +368,7 @@ Run-2 steady-state heap (`endDeltaMB`) is now converging — the main-thread lib
 8. Attribution: all +649 MB of run 2's stage delta is inside a single `await blob.arrayBuffer()` (1860 ms). V8 reports JS allocations honestly (100 MB calibration → +99.5 MB reported).
 9. Round 6 root cause: main-thread `heic-processing.ts` never released libheif handles/context. Preview pipeline re-leaked full working set each run.
 10. Round 6 landed: ported Round 4 cleanup pattern to `heic-processing.ts`. Run-2 peak 1627 → 1380 MB; end-delta +400 → +10 MB.
+11. Round 7 landed: skip preview for HDR-intent HIF (Option A) + thumbnail-first HEIC decode (Option B). Run-2 peak 1389 → 551 MB; peak-delta +157 → +2.1 MB. Below MobileSafari crash budget.
 
 ## Prior rounds (landed)
 
