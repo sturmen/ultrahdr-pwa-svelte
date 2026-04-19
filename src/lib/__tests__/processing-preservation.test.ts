@@ -138,7 +138,8 @@ vi.mock('../tiff-processing.js', () => ({
 }));
 
 vi.mock('../input-exif.js', () => ({
-    extractExifApp1PayloadFromInput: vi.fn(() => extractedExifPayload)
+    extractExifApp1PayloadFromInput: vi.fn(() => extractedExifPayload),
+    setInputExifProbeSink: vi.fn(),
 }));
 
 vi.mock('../ultrahdr-wasm.js', () => ({

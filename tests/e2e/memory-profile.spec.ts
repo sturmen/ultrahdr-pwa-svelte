@@ -20,7 +20,7 @@ const __dirname = path.dirname(__filename);
 const PIPELINE_STATE_KEY = '__ultrahdrPipelineState';
 const SAMPLES_KEY = '__ultrahdrMemorySamples';
 const STAGE_EVENTS_KEY = '__ultrahdrMemoryStageEvents';
-const SAMPLE_INTERVAL_MS = 50;
+const SAMPLE_INTERVAL_MS = 20;
 const PROCESSING_TIMEOUT = 600_000;
 const POLL_INTERVAL = 250;
 
@@ -250,3 +250,135 @@ for (const fixture of FIXTURES) {
         expect(stageEvents.length).toBeGreaterThan(0);
     });
 }
+
+test(`memory profile: hif-hdr-intent-repeat-2x`, async ({ page }, testInfo) => {
+    await installStartupRuntimeOverride(page, { projectName: testInfo.project.name });
+    await installMemoryProbe(page);
+    await page.goto('/ultrahdr-pwa-svelte/');
+    await ensureRuntimeGateReady(page, testInfo, { timeoutMs: 240_000 });
+
+    const memAvail = await page.evaluate(() => {
+        const p = performance as Performance & { memory?: { usedJSHeapSize: number } };
+        return Boolean(p.memory && typeof p.memory.usedJSHeapSize === 'number');
+    });
+    test.skip(!memAvail, 'performance.memory not available in this browser');
+
+    const fullPath = path.resolve(__dirname, '../..', 'fixtures/test_hdr_no_gain_map.HIF');
+    if (!fs.existsSync(fullPath)) {
+        test.skip(true, 'fixture missing: fixtures/test_hdr_no_gain_map.HIF');
+        return;
+    }
+
+    // First run.
+    await uploadFile(page, fullPath);
+    await waitForProcessingDone(page);
+    const firstRunPeak = await page.evaluate((samplesKey) => {
+        const s = (window as Record<string, unknown>)[samplesKey] as Array<{ used: number }>;
+        let peak = 0;
+        for (const x of s) if (x.used > peak) peak = x.used;
+        return peak;
+    }, SAMPLES_KEY);
+
+    // Mark boundary: insert a synthetic stage event so we can split samples.
+    const boundaryTs = await page.evaluate((stageEventsKey) => {
+        const events = (window as Record<string, unknown>)[stageEventsKey] as Array<Record<string, unknown>>;
+        const ts = performance.now();
+        events.push({ ts, phase: 'repeat-boundary', stage: null, substage: 'between-runs', usedHeapBytes: null, elapsedMs: null });
+        return ts;
+    }, STAGE_EVENTS_KEY);
+
+    // Optional V8-accounting disambiguation — gated behind MEMORY_PROFILE_DISAMBIGUATE=1.
+    // Allocates 100 MB synchronously, holds briefly, releases. If performance.memory
+    // under-reports, the repeat-run extract-source-exif delta is likely a V8 accounting
+    // artifact rather than a real retained buffer.
+    const disambiguateEnabled = process.env.MEMORY_PROFILE_DISAMBIGUATE === '1';
+    let disambiguation: { preMB: number; peakMB: number; postMB: number } | null = null;
+    if (disambiguateEnabled) {
+        disambiguation = await page.evaluate(async (stageEventsKey) => {
+            const events = (window as Record<string, unknown>)[stageEventsKey] as Array<Record<string, unknown>>;
+            const perfMem = performance as Performance & { memory?: { usedJSHeapSize: number } };
+            const readUsed = (): number => perfMem.memory?.usedJSHeapSize ?? 0;
+            const toMB = (b: number): number => Number((b / (1024 * 1024)).toFixed(1));
+            const preBytes = readUsed();
+            events.push({ ts: performance.now(), phase: 'disambiguate-pre-alloc', stage: null, substage: 'v8-calibration', usedHeapBytes: preBytes, elapsedMs: null });
+            let hold: Uint8Array[] | null = [];
+            for (let i = 0; i < 10; i++) {
+                const chunk = new Uint8Array(10 * 1024 * 1024);
+                for (let j = 0; j < chunk.length; j += 4096) chunk[j] = (i + 1) & 0xff;
+                hold.push(chunk);
+            }
+            await new Promise((r) => setTimeout(r, 100));
+            const peakBytes = readUsed();
+            events.push({ ts: performance.now(), phase: 'disambiguate-peak', stage: null, substage: 'v8-calibration', usedHeapBytes: peakBytes, elapsedMs: null });
+            hold = null;
+            await new Promise((r) => setTimeout(r, 200));
+            const postBytes = readUsed();
+            events.push({ ts: performance.now(), phase: 'disambiguate-post-release', stage: null, substage: 'v8-calibration', usedHeapBytes: postBytes, elapsedMs: null });
+            return { preMB: toMB(preBytes), peakMB: toMB(peakBytes), postMB: toMB(postBytes) };
+        }, STAGE_EVENTS_KEY);
+    }
+
+    // Reset UI between runs (keeps worker + cached libheif module alive).
+    await page.evaluate(async () => {
+        const automation = (window as Record<string, unknown>).__ULTRAHDR_AUTOMATION__ as
+            | { resetState?: () => Promise<unknown> }
+            | undefined;
+        if (automation?.resetState) {
+            await automation.resetState();
+        }
+    });
+    await page.waitForTimeout(500);
+
+    // Second run.
+    await uploadFile(page, fullPath);
+    await waitForProcessingDone(page);
+
+    const { samples, stageEvents, overallPeak } = await page.evaluate(
+        ({ samplesKey, stageEventsKey }) => {
+            const w = window as Record<string, unknown>;
+            const samples = (w[samplesKey] as Array<{ ts: number; used: number; stage: string | null }>) || [];
+            const stageEvents = (w[stageEventsKey] as Array<Record<string, unknown>>) || [];
+            let peak = 0;
+            for (const s of samples) if (s.used > peak) peak = s.used;
+            return { samples, stageEvents, overallPeak: peak };
+        },
+        { samplesKey: SAMPLES_KEY, stageEventsKey: STAGE_EVENTS_KEY },
+    );
+
+    const firstSamples = samples.filter((s) => s.ts <= boundaryTs);
+    const secondSamples = samples.filter((s) => s.ts > boundaryTs);
+    const peakFirst = firstSamples.reduce((m, s) => Math.max(m, s.used), 0);
+    const peakSecond = secondSamples.reduce((m, s) => Math.max(m, s.used), 0);
+    const endFirst = firstSamples.length > 0 ? firstSamples[firstSamples.length - 1].used : 0;
+    const endSecond = secondSamples.length > 0 ? secondSamples[secondSamples.length - 1].used : 0;
+
+    const summary = {
+        fixture: 'fixtures/test_hdr_no_gain_map.HIF (2x)',
+        overallPeakMB: Number((overallPeak / (1024 * 1024)).toFixed(1)),
+        firstRunPeakMB: Number((peakFirst / (1024 * 1024)).toFixed(1)),
+        secondRunPeakMB: Number((peakSecond / (1024 * 1024)).toFixed(1)),
+        firstRunEndMB: Number((endFirst / (1024 * 1024)).toFixed(1)),
+        secondRunEndMB: Number((endSecond / (1024 * 1024)).toFixed(1)),
+        peakDeltaMB: Number(((peakSecond - peakFirst) / (1024 * 1024)).toFixed(1)),
+        endDeltaMB: Number(((endSecond - endFirst) / (1024 * 1024)).toFixed(1)),
+        firstSampleCount: firstSamples.length,
+        secondSampleCount: secondSamples.length,
+        stageCount: stageEvents.length,
+        boundaryTs,
+        firstRunPeakReference: Number((firstRunPeak / (1024 * 1024)).toFixed(1)),
+        disambiguation,
+    };
+
+    console.log(`\n===== MEMORY PROFILE: hif-hdr-intent-repeat-2x =====`);
+    console.log(JSON.stringify(summary, null, 2));
+
+    const artifactDir = path.resolve(__dirname, '../../test-results/memory-profile');
+    fs.mkdirSync(artifactDir, { recursive: true });
+    const artifactBase = path.join(artifactDir, 'hif-hdr-intent-repeat-2x');
+    fs.writeFileSync(`${artifactBase}.samples.json`, JSON.stringify(samples));
+    fs.writeFileSync(`${artifactBase}.stage-events.json`, JSON.stringify(stageEvents));
+    fs.writeFileSync(`${artifactBase}.summary.json`, JSON.stringify(summary, null, 2));
+
+    expect(firstSamples.length).toBeGreaterThan(0);
+    expect(secondSamples.length).toBeGreaterThan(0);
+});

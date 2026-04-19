@@ -1,6 +1,40 @@
 import { extractExifPayloadFromJpeg } from './exif-utils.js';
 import type { ProcessingPathClassification } from './processing-types.js';
 
+type InputExifProbeSink = (substage: string) => void;
+let inputExifProbeSink: InputExifProbeSink | null = null;
+
+export function setInputExifProbeSink(sink: InputExifProbeSink | null): void {
+  inputExifProbeSink = sink;
+}
+
+function emitInputExifProbe(substage: string): void {
+  if (inputExifProbeSink) {
+    try {
+      inputExifProbeSink(substage);
+    } catch {
+      // Probe diagnostics must not affect pipeline.
+    }
+    return;
+  }
+  const g: unknown = typeof globalThis !== 'undefined' ? globalThis : undefined;
+  const target = g as { dispatchEvent?: (ev: Event) => boolean } | undefined;
+  if (!target || typeof target.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') {
+    return;
+  }
+  try {
+    target.dispatchEvent(new CustomEvent('ultrahdr:processing-progress', {
+      detail: {
+        phase: 'stage-progress',
+        stage: 'extract-source-exif',
+        substage,
+      },
+    }));
+  } catch {
+    // best-effort probe
+  }
+}
+
 const JPEG_APP1_MAX_PAYLOAD = 0xffff - 2;
 const EXIF_HEADER = new Uint8Array([0x45, 0x78, 0x69, 0x66, 0x00, 0x00]);
 
@@ -783,6 +817,7 @@ export function extractExifPayloadFromHeif(bytes: Uint8Array): Uint8Array | null
       return;
     }
 
+    emitInputExifProbe('heif-pre-exif-extent-slice');
     const chunks: Uint8Array[] = [];
     for (const extent of iloc.extents) {
       /* istanbul ignore next -- zero-length extents are ignored defensively */
@@ -808,13 +843,17 @@ export function extractExifPayloadFromHeif(bytes: Uint8Array): Uint8Array | null
       }
       chunks.push(input.slice(sourceOffset, sourceEnd));
     }
+    emitInputExifProbe('heif-post-exif-extent-slice');
 
     /* istanbul ignore next -- all extents were empty */
     if (chunks.length === 0) {
       return;
     }
 
-    const decoded = decodeHeifExifItemPayload(concatenateChunks(chunks));
+    const merged = concatenateChunks(chunks);
+    emitInputExifProbe('heif-post-exif-concat');
+    const decoded = decodeHeifExifItemPayload(merged);
+    emitInputExifProbe('heif-post-exif-decode');
     if (decoded) {
       extracted = decoded;
     }
@@ -1150,8 +1189,10 @@ export function extractExifApp1PayloadFromInput(
   fileName = '',
   mimeType = '',
 ): Uint8Array | null {
+  emitInputExifProbe('pre-exif-parse');
   const input = toUint8Array(bytes);
   if (!input || input.length === 0) {
+    emitInputExifProbe('post-exif-parse-empty');
     return null;
   }
 
@@ -1159,23 +1200,40 @@ export function extractExifApp1PayloadFromInput(
   const extension = getExtension(fileName);
   try {
     if (isJpegInput(mime, extension)) {
-      return extractExifPayloadFromJpeg(input);
+      emitInputExifProbe('dispatch-jpeg');
+      const out = extractExifPayloadFromJpeg(input);
+      emitInputExifProbe('post-exif-parse-jpeg');
+      return out;
     }
     if (isPngInput(mime, extension)) {
-      return extractExifPayloadFromPng(input);
+      emitInputExifProbe('dispatch-png');
+      const out = extractExifPayloadFromPng(input);
+      emitInputExifProbe('post-exif-parse-png');
+      return out;
     }
     if (isWebpInput(mime, extension)) {
-      return extractExifPayloadFromWebp(input);
+      emitInputExifProbe('dispatch-webp');
+      const out = extractExifPayloadFromWebp(input);
+      emitInputExifProbe('post-exif-parse-webp');
+      return out;
     }
     if (isHeifInput(mime, extension)) {
-      return extractExifPayloadFromHeif(input);
+      emitInputExifProbe('dispatch-heif');
+      const out = extractExifPayloadFromHeif(input);
+      emitInputExifProbe('post-exif-parse-heif');
+      return out;
     }
     if (isTiffInput(mime, extension)) {
-      return extractExifPayloadFromTiff(input);
+      emitInputExifProbe('dispatch-tiff');
+      const out = extractExifPayloadFromTiff(input);
+      emitInputExifProbe('post-exif-parse-tiff');
+      return out;
     }
   } catch (error) {
     console.warn('Failed to extract EXIF from input:', error);
+    emitInputExifProbe('post-exif-parse-error');
     return null;
   }
+  emitInputExifProbe('post-exif-parse-unmatched');
   return null;
 }

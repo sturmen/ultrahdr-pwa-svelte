@@ -17,6 +17,7 @@ interface HeifImageLike {
     get_width(): number;
     get_height(): number;
     display(imageData: ImageData, callback: (displayData: ImageData | null) => void): void;
+    free?(): void;
 }
 
 interface HeifDecoderInstance {
@@ -40,6 +41,7 @@ interface HeifInterleavedChannel {
 interface HeifDecodeResult {
     code?: number;
     channels?: HeifInterleavedChannel[];
+    image?: unknown;
 }
 
 interface LibHeifModule {
@@ -63,6 +65,8 @@ interface LibHeifModule {
     heif_image_handle_get_width(handle: HeifImageHandle): number;
     heif_image_handle_get_height(handle: HeifImageHandle): number;
     heif_image_handle_release(handle: HeifImageHandle): void;
+    heif_image_release?(image: unknown): void;
+    heif_context_free?(context: unknown): void;
     heif_image_handle_get_number_of_auxiliary_images(handle: HeifImageHandle, type: null): number;
     heif_image_handle_get_number_of_depth_images(handle: HeifImageHandle): number;
     heif_image_handle_get_list_of_auxiliary_image_IDs(
@@ -167,95 +171,131 @@ export async function processHeic(
     }
 
     const decoder = new heif.HeifDecoder();
-    const data = decoder.decode(arrayBuffer);
+    let data: HeifImageLike[] | null = null;
+    try {
+        data = decoder.decode(arrayBuffer);
 
-    if (!data || data.length === 0) {
-        throw new Error('No images found in HEIC file');
-    }
-
-    console.log('[HEIC] Found', data.length, 'top-level images');
-
-    // Detect spatial/stereoscopic images (multiple top-level images with similar dimensions)
-    const primaryImage = data[0];
-    const primaryW = primaryImage.get_width();
-    const primaryH = primaryImage.get_height();
-
-    if (data.length > 1) {
-        const secondaryW = data[1].get_width();
-        const secondaryH = data[1].get_height();
-        const isSpatial = (secondaryW === primaryW && secondaryH === primaryH);
-        if (isSpatial) {
-            console.log(`[HEIC] Spatial/stereoscopic image detected: ${data.length} top-level images of ${primaryW}x${primaryH}`);
-        } else {
-            console.log(`[HEIC] Multiple top-level images: primary ${primaryW}x${primaryH}, secondary ${secondaryW}x${secondaryH}`);
+        if (!data || data.length === 0) {
+            throw new Error('No images found in HEIC file');
         }
-    }
 
-    let gainMapImageData = null;
+        console.log('[HEIC] Found', data.length, 'top-level images');
 
-    if (!options.discardGainMap) {
-        const topLevelIds = _getTopLevelImageIds(heif, decoder);
+        // Detect spatial/stereoscopic images (multiple top-level images with similar dimensions)
+        const primaryImage = data[0];
+        const primaryW = primaryImage.get_width();
+        const primaryH = primaryImage.get_height();
 
-        // Primary path for iPhone HEIF: gain map stored as a hidden image item.
-        gainMapImageData = await _extractIphoneHiddenGainMapItem(
-            heif,
-            decoder,
-            topLevelIds,
-            primaryW,
-            primaryH
-        );
+        if (data.length > 1) {
+            const secondaryW = data[1].get_width();
+            const secondaryH = data[1].get_height();
+            const isSpatial = (secondaryW === primaryW && secondaryH === primaryH);
+            if (isSpatial) {
+                console.log(`[HEIC] Spatial/stereoscopic image detected: ${data.length} top-level images of ${primaryW}x${primaryH}`);
+            } else {
+                console.log(`[HEIC] Multiple top-level images: primary ${primaryW}x${primaryH}, secondary ${secondaryW}x${secondaryH}`);
+            }
+        }
 
-        // Secondary path: standard auxiliary-image relationship API.
-        if (!gainMapImageData) {
-            gainMapImageData = await _extractViaAuxiliaryApi(
+        let gainMapImageData = null;
+
+        if (!options.discardGainMap) {
+            const topLevelIds = _getTopLevelImageIds(heif, decoder);
+
+            // Primary path for iPhone HEIF: gain map stored as a hidden image item.
+            gainMapImageData = await _extractIphoneHiddenGainMapItem(
                 heif,
                 decoder,
                 topLevelIds,
                 primaryW,
                 primaryH
             );
+
+            // Secondary path: standard auxiliary-image relationship API.
+            if (!gainMapImageData) {
+                gainMapImageData = await _extractViaAuxiliaryApi(
+                    heif,
+                    decoder,
+                    topLevelIds,
+                    primaryW,
+                    primaryH
+                );
+            }
+
+            if (!gainMapImageData) {
+                console.log('[HEIC] No native gain map found via iPhone item path or auxiliary API. Will fall through to ITM generation.');
+            }
+
+        } else {
+            console.log('[HEIC] Gain map extraction skipped (discardGainMap=true)');
         }
 
-        if (!gainMapImageData) {
-            console.log('[HEIC] No native gain map found via iPhone item path or auxiliary API. Will fall through to ITM generation.');
+        if (gainMapImageData) {
+            const sdrImageData = _decodeHandleToImageData(heif, primaryImage.handle);
+            console.log('[HEIC] Returning SDR + Gain Map (gain map will be preserved through pipeline)');
+            return {
+                sdr: sdrImageData,
+                gainMap: gainMapImageData,
+                gainMapMetadata,
+                gainMapHeadroom,
+                name: file.name
+            };
         }
 
-    } else {
-        console.log('[HEIC] Gain map extraction skipped (discardGainMap=true)');
-    }
+        if (isSupportedRawHdrHeif(sourceBytes)) {
+            console.log('[HEIC] No native gain map found and HDR metadata detected. Routing through raw HDR intent pipeline.');
+            return processHeifHdr(file);
+        }
 
-    if (gainMapImageData) {
-        const sdrImageData = _decodeHandleToImageData(heif, primaryImage.handle);
-        console.log('[HEIC] Returning SDR + Gain Map (gain map will be preserved through pipeline)');
-        return {
-            sdr: sdrImageData,
-            gainMap: gainMapImageData,
-            gainMapMetadata,
-            gainMapHeadroom,
-            name: file.name
-        };
+        console.log('[HEIC] No gain map found (or discarded), falling back to ITM');
+        return _decodeHandleToImageData(heif, primaryImage.handle);
+    } finally {
+        _releaseHeifImages(heif, data);
+        _freeHeifContext(heif, decoder);
     }
+}
 
-    if (isSupportedRawHdrHeif(sourceBytes)) {
-        console.log('[HEIC] No native gain map found and HDR metadata detected. Routing through raw HDR intent pipeline.');
-        return processHeifHdr(file);
+function _releaseHeifImages(heif: LibHeifModule, images: HeifImageLike[] | null | undefined): void {
+    if (!images) return;
+    for (const img of images) {
+        try {
+            if (typeof img.free === 'function') {
+                img.free();
+            } else if (img.handle && typeof heif.heif_image_handle_release === 'function') {
+                heif.heif_image_handle_release(img.handle);
+                (img as { handle: HeifImageHandle | null }).handle = null;
+            }
+        } catch { /* teardown must not throw */ }
     }
+}
 
-    console.log('[HEIC] No gain map found (or discarded), falling back to ITM');
-    return _decodeHandleToImageData(heif, primaryImage.handle);
+function _freeHeifContext(heif: LibHeifModule, decoder: HeifDecoderInstance): void {
+    try {
+        const ctx = decoder.decoder;
+        if (ctx && typeof heif.heif_context_free === 'function') {
+            heif.heif_context_free(ctx);
+            (decoder as { decoder: unknown }).decoder = null;
+        }
+    } catch { /* teardown must not throw */ }
 }
 
 export async function decodeHeifPreviewImage(file: File): Promise<DecodedRasterImage> {
     const heif = await initLibHeif();
     const arrayBuffer = await file.arrayBuffer();
     const decoder = new heif.HeifDecoder();
-    const data = decoder.decode(arrayBuffer);
+    let data: HeifImageLike[] | null = null;
+    try {
+        data = decoder.decode(arrayBuffer);
 
-    if (!data || data.length === 0) {
-        throw new Error('No images found in HEIC file');
+        if (!data || data.length === 0) {
+            throw new Error('No images found in HEIC file');
+        }
+
+        return _decodeHandleToImageData(heif, data[0].handle);
+    } finally {
+        _releaseHeifImages(heif, data);
+        _freeHeifContext(heif, decoder);
     }
-
-    return _decodeHandleToImageData(heif, data[0].handle);
 }
 
 /**
@@ -316,25 +356,34 @@ function _decodeHandleToImageData(heif: LibHeifModule, handle: HeifImageHandle):
         heif.heif_chroma.heif_chroma_interleaved_RGBA
     );
     if (!decoded || decoded.code) {
+        if (decoded?.image && typeof heif.heif_image_release === 'function') {
+            try { heif.heif_image_release(decoded.image); } catch { /* teardown must not throw */ }
+        }
         throw new Error('HEIF image decoding error');
     }
 
-    const interleavedChannel = decoded.channels?.find((channel: HeifInterleavedChannel) => channel.id === heif.heif_channel.heif_channel_interleaved)
-        || decoded.channels?.[0];
-    if (!interleavedChannel?.data) {
-        throw new Error('HEIF image decoding did not expose interleaved pixels');
-    }
+    try {
+        const interleavedChannel = decoded.channels?.find((channel: HeifInterleavedChannel) => channel.id === heif.heif_channel.heif_channel_interleaved)
+            || decoded.channels?.[0];
+        if (!interleavedChannel?.data) {
+            throw new Error('HEIF image decoding did not expose interleaved pixels');
+        }
 
-    const width = interleavedChannel.width || heif.heif_image_handle_get_width(handle);
-    const height = interleavedChannel.height || heif.heif_image_handle_get_height(handle);
-    return {
-        data: new Uint8Array(interleavedChannel.data),
-        width,
-        height,
-        strideBytes: interleavedChannel.stride || (width * 4),
-        pixelFormat: 'rgba8',
-        bitDepth: Number(interleavedChannel.bits_per_pixel) || 8,
-    };
+        const width = interleavedChannel.width || heif.heif_image_handle_get_width(handle);
+        const height = interleavedChannel.height || heif.heif_image_handle_get_height(handle);
+        return {
+            data: new Uint8Array(interleavedChannel.data),
+            width,
+            height,
+            strideBytes: interleavedChannel.stride || (width * 4),
+            pixelFormat: 'rgba8',
+            bitDepth: Number(interleavedChannel.bits_per_pixel) || 8,
+        };
+    } finally {
+        if (decoded.image && typeof heif.heif_image_release === 'function') {
+            try { heif.heif_image_release(decoded.image); } catch { /* teardown must not throw */ }
+        }
+    }
 }
 
 async function _extractIphoneHiddenGainMapItem(

@@ -7,7 +7,7 @@ import {
     extractExifOrientation,
     extractExifPayloadFromJpeg
 } from './exif-utils.js';
-import { extractExifApp1PayloadFromInput } from './input-exif.js';
+import { extractExifApp1PayloadFromInput, setInputExifProbeSink } from './input-exif.js';
 import { isGmnetRuntimeSupported, GmnetGainMapGenerator } from './gain-map-generator.js';
 import {
     resizeImageData,
@@ -15,6 +15,7 @@ import {
     loadImageData,
     jpegBytesToImageData,
     blobToUint8Array,
+    setImageUtilsProbeSink,
     isMonochromeGainMapImageData,
     toMonochromeGainMapImageData,
     isSingleChannelGainMapMetadata,
@@ -678,12 +679,25 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             if (mergedOptions.stripExif || !(sourceInputFile instanceof Blob)) {
                 return null;
             }
-            sourceInputBytes = await blobToUint8Array(sourceInputFile);
-            return extractExifApp1PayloadFromInput(
-                sourceInputBytes,
-                sourceInputFile.name || '',
-                sourceInputFile.type || ''
-            );
+            setImageUtilsProbeSink((substage) => {
+                telemetry.emitStageProgress('extract-source-exif', 0, { substage });
+            });
+            setInputExifProbeSink((substage) => {
+                telemetry.emitStageProgress('extract-source-exif', 0, { substage });
+            });
+            try {
+                sourceInputBytes = await blobToUint8Array(sourceInputFile);
+                const out = extractExifApp1PayloadFromInput(
+                    sourceInputBytes,
+                    sourceInputFile.name || '',
+                    sourceInputFile.type || ''
+                );
+                telemetry.emitStageProgress('extract-source-exif', 0, { substage: 'stage-exit' });
+                return out;
+            } finally {
+                setImageUtilsProbeSink(null);
+                setInputExifProbeSink(null);
+            }
         });
         console.log(
             `[Orientation] Initial EXIF extraction ${sourceExifBytes instanceof Uint8Array ? 'succeeded' : 'not available'} (stripExif=${mergedOptions.stripExif})`
@@ -691,7 +705,15 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
 
         let workingFile: PreprocessedInput = await telemetry.runStage('preprocess-file', async () => {
             throwIfAborted(mergedOptions.abortSignal);
-            return preprocessFile(file, mergedOptions);
+            const heifModule = await import('./heif-hdr-processing.js');
+            heifModule.setHeifProbeSink((substage) => {
+                telemetry.emitStageProgress('preprocess-file', 0, { substage });
+            });
+            try {
+                return await preprocessFile(file, mergedOptions);
+            } finally {
+                heifModule.setHeifProbeSink(null);
+            }
         });
 
         // Check if JPEG already has a gain map (UltraHDR) or is a standard JPEG suitable for lossless SDR preservation

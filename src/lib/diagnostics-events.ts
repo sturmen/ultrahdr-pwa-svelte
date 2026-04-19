@@ -137,6 +137,7 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     sdrPixelSourceReleased: 'sdr-pixel-source-released',
     compressedPayloadReleased: 'compressed-payload-released',
     gmnetGainMapSourceReleased: 'gmnet-gain-map-source-released',
+    heifHandlesReleased: 'heif-handles-released',
   },
 } as const;
 
@@ -487,6 +488,12 @@ export type ProcessingMemoryDiagnosticsEvent =
       type: 'gmnet-gain-map-source-released';
       trigger: string | null;
       sourceBytes: number | null;
+    }
+  | {
+      type: 'heif-handles-released';
+      trigger: string | null;
+      releasedHandles: number | null;
+      contextFreed: boolean | null;
     };
 
 export type DiagnosticsDomainEvent =
@@ -589,6 +596,17 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
         context: mergeNormalizedContext({}, {
           trigger: event.trigger,
           sourceBytes: event.sourceBytes,
+        }),
+      };
+    case 'heif-handles-released':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.heifHandlesReleased,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          trigger: event.trigger,
+          releasedHandles: event.releasedHandles,
+          contextFreed: event.contextFreed,
         }),
       };
   }

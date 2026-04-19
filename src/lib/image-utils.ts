@@ -134,14 +134,57 @@ export async function imageDataToJpegBlob(imageData: ImageDataLike, quality = 0.
     return new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' });
 }
 
+type ImageUtilsProbeSink = (substage: string) => void;
+let imageUtilsProbeSink: ImageUtilsProbeSink | null = null;
+
+export function setImageUtilsProbeSink(sink: ImageUtilsProbeSink | null): void {
+    imageUtilsProbeSink = sink;
+}
+
+function emitImageUtilsProbe(substage: string): void {
+    if (imageUtilsProbeSink) {
+        try {
+            imageUtilsProbeSink(substage);
+        } catch {
+            // Probe diagnostics must not affect pipeline.
+        }
+        return;
+    }
+    const g: unknown = typeof globalThis !== 'undefined' ? globalThis : undefined;
+    const target = g as { dispatchEvent?: (ev: Event) => boolean } | undefined;
+    if (!target || typeof target.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') {
+        return;
+    }
+    try {
+        target.dispatchEvent(new CustomEvent('ultrahdr:processing-progress', {
+            detail: {
+                phase: 'stage-progress',
+                stage: 'extract-source-exif',
+                substage,
+            },
+        }));
+    } catch {
+        // best-effort probe
+    }
+}
+
 export async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {
     if (blob && typeof blob.arrayBuffer === 'function') {
-        return new Uint8Array(await blob.arrayBuffer());
+        emitImageUtilsProbe('pre-blob-array-buffer');
+        const ab = await blob.arrayBuffer();
+        emitImageUtilsProbe('post-blob-array-buffer');
+        const result = new Uint8Array(ab);
+        emitImageUtilsProbe('post-uint8array-wrap');
+        return result;
     }
 
     if (typeof Response !== 'undefined') {
+        emitImageUtilsProbe('pre-response-array-buffer');
         const arrayBuffer = await new Response(blob).arrayBuffer();
-        return new Uint8Array(arrayBuffer);
+        emitImageUtilsProbe('post-response-array-buffer');
+        const result = new Uint8Array(arrayBuffer);
+        emitImageUtilsProbe('post-uint8array-wrap');
+        return result;
     }
 
     return new Promise((resolve, reject) => {

@@ -75,6 +75,7 @@ vi.mock('../ultrahdr-wasm.js', () => ({
 
 vi.mock('../heif-hdr-processing.js', () => ({
   processHeifHdr: processHeifHdrMock,
+  setHeifProbeSink: vi.fn(),
 }));
 
 vi.mock('../heic-processing.js', () => ({

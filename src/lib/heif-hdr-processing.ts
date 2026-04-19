@@ -47,10 +47,12 @@ interface HeifPrimaryImage {
     handle: unknown;
     get_width(): number;
     get_height(): number;
+    free?(): void;
 }
 
 interface HeifDecoderInstance {
     decode(buffer: ArrayBuffer): HeifPrimaryImage[];
+    decoder?: unknown;
 }
 
 interface HeifDecoderConstructor {
@@ -74,6 +76,8 @@ interface LibHeifModule {
         heif_channel_interleaved: number;
     };
     heif_image_release?(image: unknown): void;
+    heif_image_handle_release?(handle: unknown): void;
+    heif_context_free?(context: unknown): void;
 }
 
 type HdrIntentTransfer = Extract<HdrIntentPayload['ct'], 'pq' | 'hlg'>;
@@ -88,6 +92,40 @@ type FloatDecodedHdrIntentImage = Pick<
 type DecodedHdrIntentImage = PackedDecodedHdrIntentImage | FloatDecodedHdrIntentImage;
 
 let libheif: LibHeifModule | null = null;
+
+type HeifProbeSink = (substage: string) => void;
+let heifProbeSink: HeifProbeSink | null = null;
+
+export function setHeifProbeSink(sink: HeifProbeSink | null): void {
+    heifProbeSink = sink;
+}
+
+function emitHeifProbe(substage: string): void {
+    if (heifProbeSink) {
+        try {
+            heifProbeSink(substage);
+        } catch {
+            // Profiler diagnostics must not affect pipeline.
+        }
+        return;
+    }
+    const g: unknown = typeof globalThis !== 'undefined' ? globalThis : undefined;
+    const target = g as { dispatchEvent?: (ev: Event) => boolean } | undefined;
+    if (!target || typeof target.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') {
+        return;
+    }
+    try {
+        target.dispatchEvent(new CustomEvent('ultrahdr:processing-progress', {
+            detail: {
+                phase: 'stage-progress',
+                stage: 'preprocess-file',
+                substage,
+            },
+        }));
+    } catch {
+        // Profiler diagnostics must not affect pipeline.
+    }
+}
 
 function findNclxColorInfo(bytes: Uint8Array): HdrNclxInfo | null {
     if (!(bytes instanceof Uint8Array) || bytes.length < 12) {
@@ -365,11 +403,13 @@ function decodePrimaryToHdrIntent(
 ): DecodePrimaryToHdrIntentResult {
     const width = primaryImage.get_width();
     const height = primaryImage.get_height();
+    emitHeifProbe('heif-pre-decode-image2');
     const decoded = heif.heif_js_decode_image2(
         primaryImage.handle,
         heif.heif_colorspace.heif_colorspace_RGB,
         heif.heif_chroma.heif_chroma_interleaved_RRGGBBAA_LE
     );
+    emitHeifProbe('heif-post-decode-image2');
     if (!decoded || decoded.code) {
         throw new Error('HEIF HDR primary image decode failed');
     }
@@ -379,6 +419,7 @@ function decodePrimaryToHdrIntent(
     if (!interleavedChannel?.data) {
         throw new Error('HEIF HDR primary image did not expose interleaved 16-bit pixels');
     }
+    emitHeifProbe('heif-interleaved-channel-found');
 
     const { width: outWidth, height: outHeight } = getOrientedDimensions(width, height, orientation);
     const srcView = new DataView(
@@ -396,8 +437,10 @@ function decodePrimaryToHdrIntent(
     const shouldPack1010102 = formatResolution.format === 'rgba1010102';
 
     if (shouldPack1010102) {
+        emitHeifProbe('heif-pre-pack1010102-alloc');
         const packedBytes = new Uint8Array(outWidth * outHeight * 4);
         const packedView = new DataView(packedBytes.buffer);
+        emitHeifProbe('heif-post-pack1010102-alloc');
 
         for (let y = 0; y < outHeight; y++) {
             for (let x = 0; x < outWidth; x++) {
@@ -415,10 +458,12 @@ function decodePrimaryToHdrIntent(
                 packedView.setUint32(dstIndex * 4, packedPixel >>> 0, true);
             }
         }
+        emitHeifProbe('heif-post-pack1010102-loop');
 
         if (decoded.image && typeof heif.heif_image_release === 'function') {
             heif.heif_image_release(decoded.image);
         }
+        emitHeifProbe('heif-post-image-release-1010102');
 
         return {
             image: {
@@ -434,8 +479,10 @@ function decodePrimaryToHdrIntent(
         };
     }
 
+    emitHeifProbe('heif-pre-halffloat-alloc');
     const halfFloatBytes = new Uint8Array(outWidth * outHeight * 8);
     const halfFloatView = new DataView(halfFloatBytes.buffer);
+    emitHeifProbe('heif-post-halffloat-alloc');
 
     for (let y = 0; y < outHeight; y++) {
         for (let x = 0; x < outWidth; x++) {
@@ -463,10 +510,12 @@ function decodePrimaryToHdrIntent(
             halfFloatView.setUint16(dstOffset + 6, float32ToFloat16(a), true);
         }
     }
+    emitHeifProbe('heif-post-halffloat-loop');
 
     if (decoded.image && typeof heif.heif_image_release === 'function') {
         heif.heif_image_release(decoded.image);
     }
+    emitHeifProbe('heif-post-image-release-halffloat');
 
     return {
         image: {
@@ -483,8 +532,11 @@ function decodePrimaryToHdrIntent(
 }
 
 export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
+    emitHeifProbe('heif-start');
     const heif = await initLibHeif();
+    emitHeifProbe('heif-module-ready');
     const buffer = new Uint8Array(await file.arrayBuffer());
+    emitHeifProbe('heif-file-read');
     const supportedNclx = findNclxColorInfo(buffer);
     if (!isSupportedHdrInfo(supportedNclx)) {
         throw new Error('Unsupported HDR HEIF input: expected Rec.2020 PQ or HLG primary image');
@@ -499,52 +551,105 @@ export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
     const orientation = (containerTransform.hasRotation || containerTransform.hasMirror)
         ? 1
         : exifOrientation;
+    emitHeifProbe('heif-container-parsed');
 
     const decoder = new heif.HeifDecoder();
+    emitHeifProbe('heif-decoder-created');
     const images = decoder.decode(buffer.buffer);
+    emitHeifProbe('heif-container-decoded');
     if (!images || images.length === 0) {
         throw new Error('No images found in HEIF file');
     }
 
-    const primary = images[0];
-    const memoryTier = getProcessingProfile().memoryTier;
-    const decodeResult = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation, { memoryTier });
-    const hdrIntentImage = decodeResult.image;
-    if (decodeResult.formatResolution.downgraded) {
-        recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
-            type: 'hdr-intent-format-downgraded',
-            fromFormat: 'rgbaf16',
-            toFormat: decodeResult.formatResolution.format,
-            reason: decodeResult.formatResolution.reason,
-            memoryTier,
-            bitsPerPixel: decodeResult.bitsPerPixel,
-        });
-    }
-    const hdrIntent: HdrIntentPayload = hdrIntentImage.format === 'rgba1010102'
-        ? {
-            data: hdrIntentImage.data,
-            width: hdrIntentImage.width,
-            height: hdrIntentImage.height,
-            strideBytes: hdrIntentImage.strideBytes,
-            format: 'rgba1010102',
-            cg: 'bt2100',
-            ct: hdrIntentImage.ct as 'pq' | 'hlg',
-            range: supportedNclx.fullRange ? 'full' : 'limited',
+    try {
+        const primary = images[0];
+        const memoryTier = getProcessingProfile().memoryTier;
+        emitHeifProbe('heif-pre-decode-primary');
+        const decodeResult = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation, { memoryTier });
+        emitHeifProbe('heif-post-decode-primary');
+        const hdrIntentImage = decodeResult.image;
+        if (decodeResult.formatResolution.downgraded) {
+            recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+                type: 'hdr-intent-format-downgraded',
+                fromFormat: 'rgbaf16',
+                toFormat: decodeResult.formatResolution.format,
+                reason: decodeResult.formatResolution.reason,
+                memoryTier,
+                bitsPerPixel: decodeResult.bitsPerPixel,
+            });
         }
-        : {
-            data: hdrIntentImage.data,
-            width: hdrIntentImage.width,
-            height: hdrIntentImage.height,
-            strideBytes: hdrIntentImage.strideBytes,
-            format: 'rgbaf16',
-            cg: 'bt2100',
-            ct: 'linear',
-            range: supportedNclx.fullRange ? 'full' : 'limited',
-        };
+        const hdrIntent: HdrIntentPayload = hdrIntentImage.format === 'rgba1010102'
+            ? {
+                data: hdrIntentImage.data,
+                width: hdrIntentImage.width,
+                height: hdrIntentImage.height,
+                strideBytes: hdrIntentImage.strideBytes,
+                format: 'rgba1010102',
+                cg: 'bt2100',
+                ct: hdrIntentImage.ct as 'pq' | 'hlg',
+                range: supportedNclx.fullRange ? 'full' : 'limited',
+            }
+            : {
+                data: hdrIntentImage.data,
+                width: hdrIntentImage.width,
+                height: hdrIntentImage.height,
+                strideBytes: hdrIntentImage.strideBytes,
+                format: 'rgbaf16',
+                cg: 'bt2100',
+                ct: 'linear',
+                range: supportedNclx.fullRange ? 'full' : 'limited',
+            };
 
-    return {
-        kind: 'hdr-intent-heif',
-        hdrIntent,
-        sourceExifBytes,
-    };
+        return {
+            kind: 'hdr-intent-heif',
+            hdrIntent,
+            sourceExifBytes,
+        };
+    } finally {
+        releaseHeifHandles(heif, decoder, images);
+    }
+}
+
+function releaseHeifHandles(
+    heif: LibHeifModule,
+    decoder: HeifDecoderInstance,
+    images: HeifPrimaryImage[],
+): void {
+    let releasedHandles = 0;
+    for (const img of images) {
+        try {
+            if (typeof img.free === 'function') {
+                img.free();
+                releasedHandles++;
+            } else if (img.handle && typeof heif.heif_image_handle_release === 'function') {
+                heif.heif_image_handle_release(img.handle);
+                (img as { handle: unknown }).handle = null;
+                releasedHandles++;
+            }
+        } catch {
+            // Teardown must never throw.
+        }
+    }
+    let contextFreed = false;
+    try {
+        const ctx = decoder.decoder;
+        if (ctx && typeof heif.heif_context_free === 'function') {
+            heif.heif_context_free(ctx);
+            decoder.decoder = null;
+            contextFreed = true;
+        }
+    } catch {
+        // Teardown must never throw.
+    }
+    try {
+        recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+            type: 'heif-handles-released',
+            trigger: 'post-process-heif-hdr',
+            releasedHandles,
+            contextFreed,
+        });
+    } catch {
+        // Diagnostics must not block teardown (test runtimes lack localStorage).
+    }
+    emitHeifProbe('heif-handles-released');
 }

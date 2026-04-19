@@ -58,6 +58,7 @@ vi.mock('../gain-map-generator.js', () => {
 
 vi.mock('../input-exif.js', () => ({
   extractExifApp1PayloadFromInput: vi.fn(() => null),
+  setInputExifProbeSink: vi.fn(),
 }));
 
 vi.mock('../ultrahdr-wasm.js', () => ({
