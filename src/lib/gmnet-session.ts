@@ -477,6 +477,43 @@ const GMNET_MEMORY_CONSERVATIVE_SESSION_OPTIONS = Object.freeze({
     executionMode: 'sequential',
 });
 
+type GmnetProbeSink = (substage: string, context?: Record<string, unknown>) => void;
+let gmnetProbeSink: GmnetProbeSink | null = null;
+
+export function setGmnetProbeSink(sink: GmnetProbeSink | null): void {
+    gmnetProbeSink = sink;
+}
+
+function dispatchGmnetProbe(substage: string, context: Record<string, unknown>): void {
+    if (gmnetProbeSink) {
+        try { gmnetProbeSink(substage, context); } catch { /* probes must not affect pipeline */ }
+        return;
+    }
+    const g: unknown = typeof globalThis !== 'undefined' ? globalThis : undefined;
+    const target = g as { dispatchEvent?: (ev: Event) => boolean } | undefined;
+    if (!target?.dispatchEvent || typeof CustomEvent !== 'function') return;
+    try {
+        target.dispatchEvent(new CustomEvent('ultrahdr:processing-progress', {
+            detail: {
+                phase: 'stage-progress',
+                stage: 'generate-gain-map',
+                substage,
+                ...context,
+            },
+        }));
+    } catch { /* probes must not affect pipeline */ }
+}
+
+async function recordGmnetProcessingMemory(
+    runtime: GmnetRuntime,
+    event: Parameters<typeof import('./diagnostics-events.ts').recordProcessingMemoryDiagnostics>[1],
+): Promise<void> {
+    try {
+        const diagnostics = await import('./diagnostics-events.ts');
+        diagnostics.recordProcessingMemoryDiagnostics(runtime as typeof globalThis, event);
+    } catch { /* diagnostics best-effort */ }
+}
+
 export function hasWebGpuSupport(runtime: GmnetRuntime = globalThis): boolean {
     return typeof runtime?.navigator?.gpu !== 'undefined';
 }
@@ -1336,15 +1373,51 @@ export class GMNetInferenceSession {
                 }];
             }
 
+            const preCreateProvider = normalizeExecutionProvider(requestedProvider) || requestedProvider;
+            dispatchGmnetProbe('gmnet-session-pre-create', {
+                provider: preCreateProvider,
+                variant: normalizedVariant,
+            });
+            void recordGmnetProcessingMemory(this.runtime, {
+                type: 'gmnet-session-pre-create',
+                provider: preCreateProvider,
+                variant: normalizedVariant,
+            });
+            const globalCreateStartMs = nowMs(this.runtime);
             const createdGlobalSession = await ortModule.InferenceSession.create(
                 normalizeModelPayload(globalPayloads.modelPayload),
                 globalSessionOptions,
             );
+            const globalCreateElapsedMs = nowMs(this.runtime) - globalCreateStartMs;
+            dispatchGmnetProbe('gmnet-session-post-create-global', {
+                provider: preCreateProvider,
+                variant: normalizedVariant,
+                probeElapsedMs: globalCreateElapsedMs,
+            });
+            void recordGmnetProcessingMemory(this.runtime, {
+                type: 'gmnet-session-post-create-global',
+                provider: preCreateProvider,
+                variant: normalizedVariant,
+                elapsedMs: globalCreateElapsedMs,
+            });
             this.emit('progress', { loaded: 1, total: 2 });
+            const localCreateStartMs = nowMs(this.runtime);
             const createdLocalSession = await ortModule.InferenceSession.create(
                 normalizeModelPayload(localPayloads.modelPayload),
                 localSessionOptions,
             );
+            const localCreateElapsedMs = nowMs(this.runtime) - localCreateStartMs;
+            dispatchGmnetProbe('gmnet-session-post-create-local', {
+                provider: preCreateProvider,
+                variant: normalizedVariant,
+                probeElapsedMs: localCreateElapsedMs,
+            });
+            void recordGmnetProcessingMemory(this.runtime, {
+                type: 'gmnet-session-post-create-local',
+                provider: preCreateProvider,
+                variant: normalizedVariant,
+                elapsedMs: localCreateElapsedMs,
+            });
             const resolvedExecutionProvider = normalizeExecutionProvider(resolveActiveExecutionProvider(
                 createdLocalSession,
                 requestedExecutionProviders,
@@ -1695,6 +1768,21 @@ export class GMNetInferenceSession {
         }
 
         const tile = tiles[normalizedTileIndex];
+        const isFirstTile = context.completedTileCount === 0;
+        const firstRunProvider = this.activeExecutionProvider
+            ?? normalizeExecutionProvider(REQUIRED_GMNET_EXECUTION_PROVIDER);
+        if (isFirstTile) {
+            dispatchGmnetProbe('gmnet-session-pre-first-run', {
+                provider: firstRunProvider,
+                tileIndex: normalizedTileIndex,
+            });
+            void recordGmnetProcessingMemory(this.runtime, {
+                type: 'gmnet-session-pre-first-run',
+                provider: firstRunProvider,
+                tileIndex: normalizedTileIndex,
+            });
+        }
+        const firstRunStartMs = isFirstTile ? nowMs(this.runtime) : 0;
         const localTensor = this.createLocalTensorFromSourceTile(context.sourceImageData!, tile);
         let outputTensor = null;
         try {
@@ -1746,6 +1834,34 @@ export class GMNetInferenceSession {
         context.pendingTileCount = Math.max(0, tiles.length - context.completedTileCount);
         if (context.completedTileCount >= tiles.length) {
             releaseTiledSourceImageIfComplete(context, this.runtime);
+        }
+        if (isFirstTile) {
+            const firstRunElapsedMs = nowMs(this.runtime) - firstRunStartMs;
+            dispatchGmnetProbe('gmnet-session-post-first-run', {
+                provider: firstRunProvider,
+                probeElapsedMs: firstRunElapsedMs,
+            });
+            void recordGmnetProcessingMemory(this.runtime, {
+                type: 'gmnet-session-post-first-run',
+                provider: firstRunProvider,
+                elapsedMs: firstRunElapsedMs,
+            });
+            const g = globalThis as { __ultrahdrGmnetWarmIdleProbe?: boolean; __ultrahdrGmnetWarmIdleProbeMs?: number };
+            if (g.__ultrahdrGmnetWarmIdleProbe === true) {
+                const idleMs = typeof g.__ultrahdrGmnetWarmIdleProbeMs === 'number' && g.__ultrahdrGmnetWarmIdleProbeMs > 0
+                    ? g.__ultrahdrGmnetWarmIdleProbeMs
+                    : 500;
+                await new Promise((resolve) => setTimeout(resolve, idleMs));
+                dispatchGmnetProbe('gmnet-session-post-warm-idle', {
+                    provider: firstRunProvider,
+                    idleMs,
+                });
+                void recordGmnetProcessingMemory(this.runtime, {
+                    type: 'gmnet-session-post-warm-idle',
+                    provider: firstRunProvider,
+                    idleMs,
+                });
+            }
         }
         const metadata = {
             tileIndex: normalizedTileIndex,

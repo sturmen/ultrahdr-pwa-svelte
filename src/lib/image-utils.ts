@@ -36,18 +36,22 @@ export async function loadImageData(
     const bytes = preloadedBytes ?? await blobToUint8Array(blob);
 
     if (blob.type === 'image/jpeg') {
+        emitImageUtilsProbe('load-image-data-pre-jpegli-decode');
         const decoded = await decodeJpegli(bytes);
+        emitImageUtilsProbe('load-image-data-post-jpegli-decode');
         const imageData = await orientDecodedJpegImageData(
             new ImageData(decoded.data, decoded.width, decoded.height),
             bytes,
             config,
         );
+        emitImageUtilsProbe('load-image-data-post-orient');
         const width = imageData.width;
         const height = imageData.height;
         return { imageData, width, height };
     }
 
     const imageData = await decodeRasterBuffer(bytes);
+    emitImageUtilsProbe('load-image-data-post-raster-decode');
     const width = imageData.width;
     const height = imageData.height;
     return { imageData, width, height };
@@ -100,10 +104,14 @@ export async function transformImageData(
 
     let transformed = normalizedImageData;
     if (targetWidth !== normalizedImageData.width || targetHeight !== normalizedImageData.height) {
+        emitImageUtilsProbe('transform-image-data-pre-resize');
         transformed = await resizeRasterImage(transformed, targetWidth, targetHeight);
+        emitImageUtilsProbe('transform-image-data-post-resize');
     }
     if (normalizedRotation !== 0) {
+        emitImageUtilsProbe('transform-image-data-pre-rotate');
         transformed = await rotateRasterImage(transformed, normalizedRotation);
+        emitImageUtilsProbe('transform-image-data-post-rotate');
     }
     return transformed;
 }
@@ -130,7 +138,9 @@ export async function jpegBytesToImageData(
 
 export async function imageDataToJpegBlob(imageData: ImageDataLike, quality = 0.95): Promise<Blob> {
     const normalizedImageData = normalizeImageData(imageData);
+    emitImageUtilsProbe('image-data-to-jpeg-pre-encode');
     const bytes = await encodeJpegli(normalizedImageData, Math.round(quality * 100));
+    emitImageUtilsProbe('image-data-to-jpeg-post-encode');
     return new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' });
 }
 

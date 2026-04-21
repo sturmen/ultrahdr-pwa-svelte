@@ -356,6 +356,192 @@ Peak now **well below** the MobileSafari ~1 GB crash threshold on the worst-case
 - Kept `InputPreviewTask` union's `pending` variant as legacy unreachable code — avoids breaking Svelte caller's type narrowing (`previewTask.status === 'ready'` vs `pending`).
 - Added `initial-input-preview-failed` to diagnostics registry rather than silently dropping the telemetry.
 
+## Round 8 — GMNet baseline attribution (landed — instrumentation only)
+
+Post-Round-7 `sdr-large` profile showed `<pre-pipeline>` 540.8 MB dominating
+overall peak. Hypothesis: ORT WebGPU shader compile + device buffer residency.
+
+### Landed
+
+**Phase A** — 6 lifecycle diagnostics events + probe-sink in `gmnet-session.ts`:
+
+- `gmnet-session-pre-create`
+- `gmnet-session-post-create-global` (with `probeElapsedMs`)
+- `gmnet-session-post-create-local` (with `probeElapsedMs`)
+- `gmnet-session-pre-first-run` (with `tileIndex`)
+- `gmnet-session-post-first-run` (with `probeElapsedMs`)
+- `gmnet-session-post-warm-idle` (gated by `__ultrahdrGmnetWarmIdleProbe` flag)
+
+Plus two `processing-core.ts` substage probes:
+
+- `gmnet-session-pre-module-import`
+- `gmnet-session-post-module-import`
+
+Probe sink bridges worker-side dispatches to main via
+`telemetry.emitStageProgress` inside the `generate-gain-map` stage. Diagnostics
+registry updated (`diagnostics-events.ts` — 6 new event names, types, builder
+cases). `elapsedMs` field on dispatched probes renamed to `probeElapsedMs` to
+avoid collision with `pipeline-telemetry.ts`'s pipeline-wide `elapsedMs`.
+
+**Phase B** — `gmnet-baseline-attribution` test in `memory-profile.spec.ts`.
+Uses `sdr-large` fixture. Produces `gmnet-baseline-attribution.summary.json`
+with per-probe heap samples + step-delta table. Profiler event schema extended
+to capture `provider`, `variant`, `probeElapsedMs`, `tileIndex`, `idleMs`.
+
+### Finding
+
+Per-probe heap (Chromium `--enable-precise-memory-info`, `sdr-large`):
+
+| Probe | Heap MB | Delta |
+|---|---|---|
+| pre-module-import | 542.1 | (entry) |
+| post-module-import | 542.2 | +0.1 |
+| pre-create | 540.9 | −1.3 (GC during session setup) |
+| post-create-global | 541.0 | +0.1 |
+| post-create-local | 541.1 | +0.1 |
+| pre-first-run | 541.2 | +0.1 |
+| post-first-run | 541.3 | +0.1 |
+
+**Total heap growth across full GMNet session-create + first-run path:
+~0 MB.** The 542 MB is already resident at `pre-module-import` — before
+`gmnet-session.ts` loads. Session construction is free. Shader compile is
+free. Model weight upload is free (JS heap accounting).
+
+### Implications
+
+Original hypothesis — "ORT WebGPU shader compile + device buffer residency
+dominates baseline" — **disproven**. The planned ORT knob sweep
+(`freeDimensionOverrides`, `preferredOutputLocation`,
+`graphOptimizationLevel`, `enableGraphCapture`, drop `powerPreference`,
+dispose-global-early) cannot reduce a baseline not owned by the session.
+
+The 542 MB is consumed **before** the `generate-gain-map` stage by some mix
+of:
+
+1. App shell + Svelte runtime + component state
+2. Worker boot + worker-side module graph
+3. ORT WebGPU module preload (`preloadGmnetRuntimeDependencies` →
+   `loadOrtWasmModule` + `loadOrtWebGpu`)
+4. Jpegli WASM compile + factory warmup
+5. libheif WASM compile
+6. Main-thread retained refs to the source JPEG blob
+7. WebGPU adapter state (`powerPreference: 'high-performance'` device heap)
+
+### Verification
+
+- `npm run typecheck` → 0 errors.
+- `npm test` → 725 passed, 1 skipped (no regressions).
+- `npx playwright test --project=chromium tests/e2e/memory-profile.spec.ts -g gmnet-baseline-attribution`
+  → 1 passed; summary at
+  `test-results/memory-profile/gmnet-baseline-attribution.summary.json`.
+
+### Next step — Round 9
+
+Attribute one layer up: `pre-pipeline` substages for app startup, worker boot,
+and ORT module preload. Likely candidates for landing:
+
+- Move ORT WebGPU module import from eager `preloadGmnetRuntimeDependencies`
+  to lazy `getSession`-time (possibly saves 50–100 MB by deferring webgpu
+  runtime WASM instantiation until first generation)
+- Measure jpegli WASM resident cost; consider lazy-warmup
+- Drop `powerPreference: 'high-performance'` — test integrated-GPU adapter
+  memory footprint
+- Audit main-thread retained refs to the source input blob after worker
+  structured-clone
+
+The Phase C ORT knob sweep from the original plan is **shelved** — baseline is
+not session-owned. Revisit only if transient tile allocations (not baseline)
+become the next bottleneck.
+
+## Round 8.5 — main-thread preview is the 500 MB culprit
+
+Added 9 boot milestones + 11 main-thread preview / image-utils probes
+(`preview-task-entry`, `preview-pre-load-image-data`,
+`load-image-data-pre/post-jpegli-decode`, `load-image-data-post-orient`,
+`transform-image-data-pre/post-resize`, `image-data-to-jpeg-pre/post-encode`,
+`preview-post-jpeg-blob`) inside `src/lib/input-preview.ts` and
+`src/lib/image-utils.ts`. Artifact
+`test-results/memory-profile/gmnet-baseline-attribution.summary.json`.
+
+Boot phase is **not** the culprit:
+
+| Transition | Heap | Δ |
+|---|---|---|
+| boot-entry → boot-post-mount | 2 → 37.9 | +35.9 (Svelte hydrate) |
+| mount → runtime-gate → idle-3s | 37.9 → 38.2 | +0.3 (flat) |
+| idle-3s → upload-inflight | 38.2 → 38.4 | +0.2 |
+
+**Main-thread preview decode is the culprit.** Fixture `test_sdr.jpg` =
+4472×7952 JPEG (35.5 MP, 6.2 MB on disk). Two preview passes run on main
+thread — the input preview (before worker dispatch) and the output preview
+(after worker returns the SDR rasterized result):
+
+| Transition (pass 1, input preview) | Heap | Δ |
+|---|---|---|
+| boot-post-upload-inflight → load-image-data-pre-jpegli-decode | 38.4 → 44.3 | +5.9 |
+| **pre-jpegli-decode → post-jpegli-decode** | 44.3 → 408.0 | **+363.7** |
+| post-orient → pre-resize | 408 → 408.8 | +0.8 |
+| **pre-resize → post-resize** | 408.8 → 540.6 | **+131.8** |
+| post-resize → post-encode → post-jpeg-blob | 540.6 → 540.6 | 0 |
+
+| Transition (pass 2, output preview) | Heap | Δ |
+|---|---|---|
+| gmnet-post-first-run → pre-load-image-data (GC drop) | 541.3 → 277.4 | −263.9 |
+| **pre-jpegli-decode → post-jpegli-decode** | 277.4 → 462.1 | **+184.6** |
+| **pre-resize → post-resize** | 462.1 → 598.6 | **+136.5** |
+
+Overall peak: 598.8 MB. Both passes share the same two heavy operators:
+
+1. **`decodeJpegli(bytes)`** on a 35.5 MP JPEG = 184–364 MB. Jpegli WASM
+   decodes the full resolution JPEG into a linear RGBA buffer (4472×7952×4 =
+   142 MB in theory) but allocates additional jpegli internal state. First
+   pass is heavier because WASM heap is still cold; second pass inherits a
+   smaller working set after GC.
+2. **`resizeImageData` → `resizeRasterImage`** = 132–137 MB. Canvas path
+   allocates a full-res backing buffer before downsampling.
+
+The entire preview blob is 256 px (downsampled by `PREVIEW_MAX_DIMENSION`).
+Paying 500 MB of peak heap to produce a 256 px thumbnail of a 35 MP source is
+the actual baseline driver.
+
+### Implications
+
+- GMNet session, ORT WebGPU, jpegli/libheif runtime cost: ~0 MB baseline
+  contribution (confirmed Round 8 + Round 8.5).
+- The 540 MB that was mis-attributed to "GMNet baseline" in Rounds 7–8 is
+  actually preview-pass peak heap that happens to persist because V8 hasn't
+  GC'd the intermediate ImageData + canvas bitmap before the next stage
+  starts.
+- Repeat-run scenario (Round 6) already masked this because libheif dominated
+  run 1. On JPEG inputs there is no libheif mask, and preview is the peak.
+
+### Round 9 candidates (ranked by expected MB saved per line changed)
+
+1. **Browser-decoded bitmap for preview** (highest ROI). Swap
+   `loadImageData(blob) → resizeImageData(256)` in
+   `createPreviewBlobFromImageBlob` for
+   `createImageBitmap(blob, { resizeWidth, resizeHeight, resizeQuality: 'medium' })`.
+   Browser native path downsamples during decode; never materializes the
+   35 MP intermediate. Expected savings: 400–500 MB peak on JPEG previews.
+   Fallback to jpegli decode only if `createImageBitmap` rejects.
+2. **Skip input preview for large inputs** (fast ship). Gate
+   `createStandardRasterPreview` on file size or declared EXIF dimensions;
+   use `INPUT_PREVIEW_PLACEHOLDER_URL` for images ≥ 20 MP until the worker
+   output preview arrives.
+3. **Pipeline-side preview reuse**. The worker already decodes the input to
+   `ImageData`. Ship a 256 px thumbnail back from the worker alongside the
+   final output and skip the main-thread preview pass entirely.
+4. **Free `decoded.data` before orient**. `orientDecodedJpegImageData`
+   currently wraps the jpegli buffer in `ImageData`, then rotates if needed.
+   Ensure we detach the intermediate after rotation.
+
+### Plan for Round 9 landing
+
+Pick (1): `createImageBitmap` fast-path with jpegli fallback. Small surface
+area (one function), large savings, no pipeline-output contract change.
+Land with regression test: re-run `gmnet-baseline-attribution` and assert
+post-resize delta < 20 MB.
+
 ## Chronological summary
 
 1. Round 3 plan targeted `encode-ultrahdr` peak on HIF. Assumed libultrahdr encoder internals.
@@ -369,6 +555,8 @@ Peak now **well below** the MobileSafari ~1 GB crash threshold on the worst-case
 9. Round 6 root cause: main-thread `heic-processing.ts` never released libheif handles/context. Preview pipeline re-leaked full working set each run.
 10. Round 6 landed: ported Round 4 cleanup pattern to `heic-processing.ts`. Run-2 peak 1627 → 1380 MB; end-delta +400 → +10 MB.
 11. Round 7 landed: skip preview for HDR-intent HIF (Option A) + thumbnail-first HEIC decode (Option B). Run-2 peak 1389 → 551 MB; peak-delta +157 → +2.1 MB. Below MobileSafari crash budget.
+12. Round 8 landed (instrumentation only): 6 GMNet lifecycle probes + `gmnet-baseline-attribution` test. Attribution disproves "WebGPU session owns the baseline" hypothesis — session create + first run add ~0 MB. 542 MB baseline is pre-stage (startup + ORT module + WASM). ORT knob sweep shelved; Round 9 targets startup attribution.
+13. Round 8.5 landed (instrumentation only): 9 boot milestones + 11 main-thread preview/image-utils probes. Boot is ~38 MB; mount is the only non-trivial pre-upload alloc (+36 MB Svelte hydrate). The 500 MB "baseline" is **main-thread preview decode** on a 35.5 MP JPEG — jpegli decode (+364 MB) + canvas resize (+132 MB). Second pass (output preview) adds another 185 + 137 MB on top, peaking at 598 MB. Round 9 landing target: replace `loadImageData + resizeImageData` preview path with `createImageBitmap(..., { resizeWidth, resizeHeight })`.
 
 ## Prior rounds (landed)
 

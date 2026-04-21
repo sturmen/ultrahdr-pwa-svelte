@@ -10,6 +10,19 @@ import type { DecodedRasterImage } from './processing-types.ts';
 const PREVIEW_MAX_DIMENSION = 256;
 const PREVIEW_JPEG_QUALITY = 0.7;
 
+function emitPreviewProbe(substage: string): void {
+  const g: unknown = typeof globalThis !== 'undefined' ? globalThis : undefined;
+  const target = g as { dispatchEvent?: (ev: Event) => boolean } | undefined;
+  if (!target?.dispatchEvent || typeof CustomEvent !== 'function') return;
+  try {
+    target.dispatchEvent(new CustomEvent('ultrahdr:processing-progress', {
+      detail: { phase: 'stage-progress', stage: 'input-preview', substage },
+    }));
+  } catch {
+    // diagnostics must not throw
+  }
+}
+
 export const INPUT_PREVIEW_PLACEHOLDER_URL =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23e8eef6'/%3E%3Cpath d='M16 44l10-12 8 9 6-7 8 10H16z' fill='%2392a5bb'/%3E%3Ccircle cx='24' cy='22' r='5' fill='%23b8c7d8'/%3E%3C/svg%3E";
 
@@ -64,8 +77,12 @@ async function createJpegPreviewBlob(source: ImageDataLike): Promise<Blob> {
 }
 
 export async function createPreviewBlobFromImageBlob(blob: Blob): Promise<Blob> {
+  emitPreviewProbe('preview-pre-load-image-data');
   const { imageData } = await loadImageData(blob);
-  return createJpegPreviewBlob(imageData);
+  emitPreviewProbe('preview-post-load-image-data');
+  const result = await createJpegPreviewBlob(imageData);
+  emitPreviewProbe('preview-post-jpeg-blob');
+  return result;
 }
 
 async function createStandardRasterPreview(file: File): Promise<Blob> {
@@ -85,6 +102,7 @@ async function createHeifPreview(file: File): Promise<Blob> {
 }
 
 export async function createInputPreviewTask(file: File): Promise<InputPreviewTask | null> {
+  emitPreviewProbe('preview-task-entry');
   if (isHeifFamilyFile(file)) {
     const processingPath = await probeInputProcessingPathFromHeaders(file);
     if (processingPath === 'hdr-intent') {

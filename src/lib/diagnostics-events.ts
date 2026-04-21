@@ -140,6 +140,12 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     gmnetGainMapSourceReleased: 'gmnet-gain-map-source-released',
     heifHandlesReleased: 'heif-handles-released',
     gmnetSessionIdleReleased: 'gmnet-session-idle-released',
+    gmnetSessionPreCreate: 'gmnet-session-pre-create',
+    gmnetSessionPostCreateGlobal: 'gmnet-session-post-create-global',
+    gmnetSessionPostCreateLocal: 'gmnet-session-post-create-local',
+    gmnetSessionPreFirstRun: 'gmnet-session-pre-first-run',
+    gmnetSessionPostFirstRun: 'gmnet-session-post-first-run',
+    gmnetSessionPostWarmIdle: 'gmnet-session-post-warm-idle',
   },
 } as const;
 
@@ -507,6 +513,32 @@ export type ProcessingMemoryDiagnosticsEvent =
       type: 'gmnet-session-idle-released';
       releasedSessionCount: number | null;
       errorCount: number | null;
+    }
+  | {
+      type: 'gmnet-session-pre-create';
+      provider: string | null;
+      variant: string | null;
+    }
+  | {
+      type: 'gmnet-session-post-create-global' | 'gmnet-session-post-create-local';
+      provider: string | null;
+      variant: string | null;
+      elapsedMs: number | null;
+    }
+  | {
+      type: 'gmnet-session-pre-first-run';
+      provider: string | null;
+      tileIndex: number | null;
+    }
+  | {
+      type: 'gmnet-session-post-first-run';
+      provider: string | null;
+      elapsedMs: number | null;
+    }
+  | {
+      type: 'gmnet-session-post-warm-idle';
+      provider: string | null;
+      idleMs: number | null;
     };
 
 export type DiagnosticsDomainEvent =
@@ -630,6 +662,68 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
         context: mergeNormalizedContext({}, {
           releasedSessionCount: event.releasedSessionCount,
           errorCount: event.errorCount,
+        }),
+      };
+    case 'gmnet-session-pre-create':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionPreCreate,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          provider: event.provider,
+          variant: event.variant,
+        }),
+      };
+    case 'gmnet-session-post-create-global':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionPostCreateGlobal,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          provider: event.provider,
+          variant: event.variant,
+          elapsedMs: event.elapsedMs,
+        }),
+      };
+    case 'gmnet-session-post-create-local':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionPostCreateLocal,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          provider: event.provider,
+          variant: event.variant,
+          elapsedMs: event.elapsedMs,
+        }),
+      };
+    case 'gmnet-session-pre-first-run':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionPreFirstRun,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          provider: event.provider,
+          tileIndex: event.tileIndex,
+        }),
+      };
+    case 'gmnet-session-post-first-run':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionPostFirstRun,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          provider: event.provider,
+          elapsedMs: event.elapsedMs,
+        }),
+      };
+    case 'gmnet-session-post-warm-idle':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.gmnetSessionPostWarmIdle,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          provider: event.provider,
+          idleMs: event.idleMs,
         }),
       };
   }
