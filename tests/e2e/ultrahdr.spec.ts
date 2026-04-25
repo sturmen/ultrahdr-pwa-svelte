@@ -18,6 +18,7 @@ const EXIF_RICH_IMAGE = path.resolve(__dirname, '../../fixtures/exif_matrix.jpg'
 const GAIN_MAP_JPEG = path.resolve(__dirname, '../../fixtures/test_hdr_jpeg_gainmap.jpg');
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../fixtures/test_hdr_heif_gainmap.HEIC');
 const HDR_INTENT_HIF = path.resolve(__dirname, '../../fixtures/test_hdr_no_gain_map.HIF');
+const PADDED_STRIDE_HEIC = path.resolve(__dirname, '../../fixtures/test_screenshot.heic');
 const UNROTATED_SDR_FIXTURES = [
     path.resolve(__dirname, '../../fixtures/test_sdr.jpg'),
     path.resolve(__dirname, '../../fixtures/test_sdr2.jpg'),
@@ -742,6 +743,27 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             const resultCards = page.locator('.result-card');
             await expect(resultCards).toHaveCount(1);
             await expect(page.locator('.filename')).toContainText(path.parse(SDR_IMAGE).name);
+
+            const jpegData = await downloadFirstResult(page);
+            expect(jpegData[0]).toBe(0xFF);
+            expect(jpegData[1]).toBe(0xD8);
+            expect(hasGainMapXMP(jpegData)).toBe(true);
+        });
+
+        test('HEIC regression: should process decoded rows with padded stride bytes', async ({ page, browserName }) => {
+            test.setTimeout(browserName === 'firefox' || browserName === 'webkit' ? 660_000 : 240_000);
+            await page.goto('/');
+
+            await uploadFiles(page, [PADDED_STRIDE_HEIC]);
+            await waitForProcessing(page, 1, {
+                timeoutMs: browserName === 'firefox' || browserName === 'webkit'
+                    ? SLOW_BROWSER_PROCESSING_TIMEOUT
+                    : PROCESSING_TIMEOUT,
+            });
+
+            const resultCards = page.locator('.result-card');
+            await expect(resultCards).toHaveCount(1);
+            await expect(page.locator('.filename')).toContainText(path.parse(PADDED_STRIDE_HEIC).name);
 
             const jpegData = await downloadFirstResult(page);
             expect(jpegData[0]).toBe(0xFF);

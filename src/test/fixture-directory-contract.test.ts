@@ -26,6 +26,7 @@ const movedFixtureFiles = [
   'test_hdr_no_gain_map.HIF',
   'test_hdr_no_gain_map_270cw.HIF',
   'test_hdr_no_gain_map_90cw.HIF',
+  'test_screenshot.heic',
   'test_sdr.jpg',
   'test_sdr2.jpg',
 ] as const;

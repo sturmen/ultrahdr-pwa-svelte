@@ -645,6 +645,98 @@ describe('processImage UltraHDR preservation path', () => {
         expect(encodeJpegliDataRefs.some((data) => data === gainMapData)).toBe(true);
     });
 
+    it('compacts HEIC preserved RGBA rows when the decoder returns padded stride bytes', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { processHeic } = await import('../heic-processing.js');
+        const { encodeJpegli } = await import('../jpegli-decoder.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const encodedPixelSnapshots: number[][] = [];
+        const snapshotEncodedPixels = async (imageData: ImageData) => {
+            encodedPixelSnapshots.push(Array.from(imageData.data));
+            return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+        };
+        encodeJpegli
+            .mockImplementationOnce(snapshotEncodedPixels)
+            .mockImplementationOnce(snapshotEncodedPixels);
+
+        const sdrData = new Uint8Array([
+            100, 110, 120, 255,
+            130, 140, 150, 255,
+            201, 202, 203, 204,
+            120, 130, 140, 255,
+            140, 150, 160, 255,
+            211, 212, 213, 214,
+        ]);
+        const gainMapData = new Uint8Array([
+            10, 10, 10, 255,
+            1, 2, 3, 4,
+            20, 20, 20, 255,
+            5, 6, 7, 8,
+        ]);
+        processHeic.mockResolvedValueOnce({
+            sdr: {
+                data: sdrData,
+                width: 2,
+                height: 2,
+                strideBytes: 12,
+                pixelFormat: 'rgba8',
+                bitDepth: 8,
+            },
+            gainMap: {
+                data: gainMapData,
+                width: 1,
+                height: 2,
+                strideBytes: 8,
+                pixelFormat: 'rgba8',
+                bitDepth: 8,
+            },
+            gainMapMetadata,
+            name: 'input.heic',
+        });
+        const onProgress = vi.fn();
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'input.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true,
+            onProgress,
+        });
+
+        expect(encodedPixelSnapshots[0]).toEqual([
+            100, 110, 120, 255,
+            130, 140, 150, 255,
+            120, 130, 140, 255,
+            140, 150, 160, 255,
+        ]);
+        expect(encodedPixelSnapshots[1]).toEqual([
+            10, 10, 10, 255,
+            20, 20, 20, 255,
+        ]);
+
+        const wrapEvents = onProgress.mock.calls
+            .map(([event]) => event)
+            .filter((event) => event?.phase === 'decoded-raster-wrapped');
+        expect(wrapEvents).toEqual([
+            expect.objectContaining({
+                substage: 'preserved-heic-sdr',
+                pixelBytes: 24,
+                expectedPixelBytes: 16,
+                strideBytes: 12,
+                compactedStridePadding: true,
+            }),
+            expect.objectContaining({
+                substage: 'preserved-heic-gain-map',
+                pixelBytes: 16,
+                expectedPixelBytes: 8,
+                strideBytes: 8,
+                compactedStridePadding: true,
+            }),
+        ]);
+    });
+
     it('skips gain-map pixel normalization when preserved pixels and metadata are already single-channel', async () => {
         const { processImage } = await import('../processing-core.js');
         const imageUtils = await import('../image-utils.js');

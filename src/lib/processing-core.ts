@@ -125,10 +125,30 @@ function isDecodedRasterInput(input: unknown): input is DecodedRasterImage {
 }
 
 function decodedRasterToImageData(input: DecodedRasterImage): ImageData {
-    const data = input.data instanceof Uint8ClampedArray
+    const rowBytes = input.width * 4;
+    const expectedBytes = rowBytes * input.height;
+    const strideBytes = Number.isFinite(input.strideBytes) && input.strideBytes > 0
+        ? input.strideBytes
+        : rowBytes;
+    const source = input.data instanceof Uint8ClampedArray
         ? input.data
         : new Uint8ClampedArray(input.data);
-    return new ImageData(data, input.width, input.height);
+
+    if (source.byteLength === expectedBytes) {
+        return new ImageData(source, input.width, input.height);
+    }
+
+    if (strideBytes >= rowBytes && source.byteLength >= strideBytes * input.height) {
+        const compacted = new Uint8ClampedArray(expectedBytes);
+        for (let row = 0; row < input.height; row += 1) {
+            const sourceStart = row * strideBytes;
+            const sourceEnd = sourceStart + rowBytes;
+            compacted.set(source.subarray(sourceStart, sourceEnd), row * rowBytes);
+        }
+        return new ImageData(compacted, input.width, input.height);
+    }
+
+    return new ImageData(source, input.width, input.height);
 }
 
 function buildDecodedRasterWrapPayload(
@@ -136,6 +156,11 @@ function buildDecodedRasterWrapPayload(
     input: DecodedRasterImage,
     processingPath: ProcessingPathClassification,
 ): Record<string, unknown> {
+    const rowBytes = input.width * 4;
+    const expectedPixelBytes = rowBytes * input.height;
+    const strideBytes = Number.isFinite(input.strideBytes) && input.strideBytes > 0
+        ? input.strideBytes
+        : rowBytes;
     return {
         stage: 'decode-image-data',
         substage,
@@ -143,6 +168,9 @@ function buildDecodedRasterWrapPayload(
         width: input.width,
         height: input.height,
         pixelBytes: input.data.byteLength,
+        expectedPixelBytes,
+        strideBytes,
+        compactedStridePadding: input.data.byteLength !== expectedPixelBytes && strideBytes > rowBytes,
         wrappedWithoutCopy: input.data instanceof Uint8ClampedArray,
     };
 }

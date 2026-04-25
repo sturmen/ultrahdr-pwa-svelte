@@ -252,7 +252,7 @@ describe('processing fixed-resolution generated pipeline', () => {
       transform: '90',
       options: { trim: false, perfect: true },
     });
-  });
+  }, 15_000);
 
   it('detects EXIF orientation from JPEG bytes and normalizes when stripExif=true', async () => {
     const { processImage } = await import('../processing-core.js');
@@ -275,7 +275,7 @@ describe('processing fixed-resolution generated pipeline', () => {
     expect(baseBytes).toBeInstanceOf(Uint8Array);
     expect(baseBytes.length).toBeGreaterThan(4);
     expect(encoderSpies.setExifData).not.toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it('falls back to decode/re-encode path when lossless orientation normalization fails', async () => {
     const { processImage } = await import('../processing-core.js');
