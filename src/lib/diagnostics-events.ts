@@ -130,6 +130,10 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     jpegliFactoryResolved: 'jpegli-factory-resolved',
     jpegliLoaderReady: 'jpegli-loader-ready',
     jpegliLoaderFailed: 'jpegli-loader-failed',
+    libheifLoaderStarted: 'libheif-loader-started',
+    libheifWasmBinaryFetched: 'libheif-wasm-binary-fetched',
+    libheifLoaderReady: 'libheif-loader-ready',
+    libheifLoaderFailed: 'libheif-loader-failed',
   },
   processingMemory: {
     hdrIntentSourceReleased: 'hdr-intent-source-released',
@@ -442,6 +446,19 @@ export type RuntimeAssetDiagnosticsEvent =
     } & RuntimeAssetBaseEvent)
   | ({
       type: 'jpegli-loader-failed';
+      message: string | null;
+    } & RuntimeAssetBaseEvent)
+  | ({
+      type: 'libheif-loader-started';
+    } & RuntimeAssetBaseEvent)
+  | ({
+      type: 'libheif-wasm-binary-fetched';
+    } & RuntimeAssetBaseEvent)
+  | ({
+      type: 'libheif-loader-ready';
+    } & RuntimeAssetBaseEvent)
+  | ({
+      type: 'libheif-loader-failed';
       message: string | null;
     } & RuntimeAssetBaseEvent);
 
@@ -1368,6 +1385,37 @@ function buildRuntimeAssetDiagnosticsInput(event: RuntimeAssetDiagnosticsEvent):
       return {
         category: 'error',
         name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.jpegliLoaderFailed,
+        severity: 'error',
+        context: {
+          ...baseContext,
+          message: truncateString(event.message),
+        },
+      };
+    case 'libheif-loader-started':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifLoaderStarted,
+        severity: 'info',
+        context: baseContext,
+      };
+    case 'libheif-wasm-binary-fetched':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifWasmBinaryFetched,
+        severity: 'info',
+        context: baseContext,
+      };
+    case 'libheif-loader-ready':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifLoaderReady,
+        severity: 'info',
+        context: baseContext,
+      };
+    case 'libheif-loader-failed':
+      return {
+        category: 'error',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifLoaderFailed,
         severity: 'error',
         context: {
           ...baseContext,

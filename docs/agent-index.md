@@ -37,7 +37,7 @@
 - First-launch-after-update runtime warmup: `src/lib/runtime-post-update-warmup.ts`, `src/App.svelte`, `src/lib/diagnostics-events.ts`
 - Real Safari/Appium file injection under test mode: `src/lib/ImageProcessor.svelte`, `src/lib/image-processor-gate.ts`, `src/lib/diagnostics-events.ts`
 - Offline bundle and caching: `src/sw.ts`, `src/lib/offline-runtime-bundle.ts`, `src/lib/runtime-bundle-asset-map.ts`
-- Shared runtime asset inventory and fetch plumbing: `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`
+- Shared runtime asset inventory and fetch plumbing: `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`; every current and future runtime asset should be declared there and loaded through the shared fetch/cache helpers before any feature-specific loader uses it.
 - Repo fixture inputs: `fixtures/` for test assets, `media/` for README/demo assets only
 
 ## Scan Discipline

@@ -15,6 +15,15 @@
 - Treat breadcrumb assertions as part of the observable contract in tests.
 - Keep payloads bounded, privacy-conscious, and useful for offline debugging.
 
+## Runtime Asset Discipline
+
+- Do not fetch runtime assets directly with raw `fetch(...)` from feature or loader code.
+- Add every WASM, model, worker helper, module wrapper, and processing runtime artifact to `src/lib/runtime-asset-definitions.ts` before using it at runtime.
+- Load runtime assets through `src/lib/runtime-assets.ts` helpers so URL versioning, Cache Storage fallback, cache-name lookup, and diagnostics context remain consistent.
+- Keep `src/lib/runtime-bundle-asset-map.ts`, the offline bundle manifest builder, service-worker classification, and tests aligned with the canonical descriptors.
+- Runtime asset loaders must emit typed breadcrumbs for start, fetch/cache source, success, and failure; tests must assert offline cache fallback and breadcrumb payloads.
+- For future assets, update agent docs and run `npm run build` plus the nearest offline/runtime regression.
+
 ## Validation Sequence
 
 - Run `npm test`.

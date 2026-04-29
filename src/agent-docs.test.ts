@@ -34,6 +34,10 @@ describe('agent context pack', () => {
 
     expect(checklist).toContain('## TDD Workflow');
     expect(checklist).toContain('## Breadcrumb Contract');
+    expect(checklist).toContain('## Runtime Asset Discipline');
+    expect(checklist).toContain('Do not fetch runtime assets directly with raw `fetch(...)`');
+    expect(checklist).toContain('src/lib/runtime-asset-definitions.ts');
+    expect(checklist).toContain('src/lib/runtime-assets.ts');
     expect(checklist).toContain('## Validation Sequence');
     expect(checklist).toContain('## When To Update Agent Docs');
   });

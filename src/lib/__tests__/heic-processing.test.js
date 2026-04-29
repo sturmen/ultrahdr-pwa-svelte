@@ -130,7 +130,60 @@ describe('heic-processing.js', () => {
       });
       expect(result.data).toBeInstanceOf(Uint8Array);
       expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/assets/libheif.wasm?v=')
+        expect.stringContaining('/assets/libheif.wasm?v='),
+        { credentials: 'same-origin' },
+      );
+    });
+
+    it('loads libheif wasm from Cache Storage when offline fetch fails', async () => {
+      const cachedWasm = new Uint8Array([1, 2, 3, 4]).buffer;
+      global.fetch = vi.fn(() => Promise.reject(new TypeError('Load failed')));
+      Object.defineProperty(globalThis, 'caches', {
+        configurable: true,
+        value: {
+          match: vi.fn(async () => new Response(cachedWasm, { status: 200 })),
+        },
+      });
+      const mockFile = new File(['test'], 'offline.heic', { type: 'image/heic' });
+      mockFile.arrayBuffer = vi.fn(() => Promise.resolve(new ArrayBuffer(100)));
+      getImageHandleMock.mockImplementation((_ctx, itemId) => {
+        if (itemId === 1) return { itemId: 1, constructor: { name: 'heif_image_handle' } };
+        return { code: 1, subcode: 0, message: 'mock-error' };
+      });
+
+      const { processHeic } = await import('../heic-processing.js');
+      const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+      const result = await processHeic(mockFile);
+
+      expect(result).toMatchObject({
+        width: 100,
+        height: 100,
+        strideBytes: 400,
+        pixelFormat: 'rgba8',
+        bitDepth: 8,
+      });
+      expect(globalThis.caches.match).toHaveBeenCalledWith(
+        'http://localhost:3000/assets/libheif.wasm?v=test-app-version',
+      );
+      expect(diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifWasmBinaryFetched,
+            context: expect.objectContaining({
+              assetId: 'libheif-wasm-bin',
+              cacheSource: 'cache',
+              byteLength: 4,
+            }),
+          }),
+          expect.objectContaining({
+            name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifLoaderReady,
+            context: expect.objectContaining({
+              assetId: 'libheif-wasm-bin',
+              cacheSource: 'cache',
+            }),
+          }),
+        ]),
       );
     });
 

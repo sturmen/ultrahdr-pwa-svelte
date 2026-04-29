@@ -4,7 +4,18 @@ import {
     parseHdrGainMapMetadataFromBuffer,
 } from './gain-map-metadata.js';
 import { processHeifHdr } from './heif-hdr-processing.js';
+import {
+    recordRuntimeAssetDiagnostics,
+    type RuntimeAssetDiagnosticsEvent,
+} from './diagnostics-events.ts';
 import type { DecodedRasterImage, HdrIntentHeifResult, PreservedHeifResult } from './processing-types.ts';
+import {
+    buildRuntimeAssetDiagnosticsContext,
+    fetchRuntimeAssetBuffer,
+    getRuntimeAssetCacheName,
+    resolveRuntimeAssetUrl,
+} from './runtime-assets.ts';
+import { LIBHEIF_WASM_BINARY_ASSET } from './runtime-asset-definitions.ts';
 
 interface HeifImageHandle {
     constructor?: {
@@ -96,44 +107,96 @@ type GainMapImageData = PreservedHeifResult['gainMap'];
 type HeicProcessResult = DecodedRgbaImageData | HdrIntentHeifResult | PreservedHeifResult;
 
 let libheif: LibHeifModule | null = null;
-const APP_ASSET_VERSION = typeof import.meta.env.VITE_APP_ASSET_VERSION === 'string'
-    ? import.meta.env.VITE_APP_ASSET_VERSION.trim()
-    : '';
 
-function appendVersionQuery(url: string): string {
-    if (!APP_ASSET_VERSION) {
-        return url;
+function normalizeLoaderErrorMessage(error: unknown): string {
+    if (error instanceof Error && typeof error.message === 'string') {
+        return error.message;
     }
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}v=${encodeURIComponent(APP_ASSET_VERSION)}`;
+    if (typeof error === 'string') {
+        return error;
+    }
+    return 'Unknown error';
+}
+
+function classifyLibheifLoaderError(error: unknown): string {
+    const message = normalizeLoaderErrorMessage(error).toLowerCase();
+    if (message.includes('failed to fetch') || message.includes('load failed') || message.includes('offline') || message.includes('network')) {
+        return 'asset-fetch-failed';
+    }
+    if (message.includes('factory')) {
+        return 'factory-load-failed';
+    }
+    return 'unknown';
+}
+
+function buildLibheifAssetContext(
+    extras: Parameters<typeof buildRuntimeAssetDiagnosticsContext>[1] = {},
+): Omit<RuntimeAssetDiagnosticsEvent, 'type' | 'hasGlobalFactory' | 'source' | 'message'> {
+    return {
+        trigger: 'module-load',
+        ...(buildRuntimeAssetDiagnosticsContext(LIBHEIF_WASM_BINARY_ASSET, {
+            cacheName: getRuntimeAssetCacheName(LIBHEIF_WASM_BINARY_ASSET),
+            ...extras,
+        }) as {
+            assetId: string | null;
+            versionKind: 'app' | 'wasm' | 'none' | null;
+            cacheName: string | null;
+            cacheSource: string | null;
+            byteLength: number | null;
+            errorCategory: string | null;
+        }),
+    };
 }
 
 async function initLibHeif(): Promise<LibHeifModule> {
     if (libheif) return libheif;
     console.log('[HEIC] Initializing libheif...');
+    recordRuntimeAssetDiagnostics(globalThis, {
+        type: 'libheif-loader-started',
+        ...buildLibheifAssetContext(),
+    });
 
-    // Manually fetch the WASM binary to avoid sync fetching issues
-    const wasmUrl = appendVersionQuery((import.meta.env.BASE_URL || '/') + 'assets/libheif.wasm');
+    const wasmUrl = resolveRuntimeAssetUrl(LIBHEIF_WASM_BINARY_ASSET);
     console.log('[HEIC] Fetching WASM from:', wasmUrl);
 
-    const response = await fetch(wasmUrl);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch libheif WASM: ${response.statusText}`);
-    }
-    const wasmBinary = await response.arrayBuffer();
+    try {
+        const { asset: wasmBinary, cacheSource } = await fetchRuntimeAssetBuffer(LIBHEIF_WASM_BINARY_ASSET);
+        recordRuntimeAssetDiagnostics(globalThis, {
+            type: 'libheif-wasm-binary-fetched',
+            ...buildLibheifAssetContext({
+                byteLength: wasmBinary.byteLength,
+                cacheSource,
+            }),
+        });
 
-    libheif = await libheifFactory({
-        wasmBinary,
-        // We don't need locateFile if we provide wasmBinary, but keeping it harmless
-        locateFile: (path) => {
-            if (path.endsWith('.wasm')) {
-                return wasmUrl;
+        libheif = await libheifFactory({
+            wasmBinary,
+            // We don't need locateFile if we provide wasmBinary, but keeping it harmless.
+            locateFile: (path) => {
+                if (path.endsWith('.wasm')) {
+                    return wasmUrl;
+                }
+                return path;
             }
-            return path;
-        }
-    }) as LibHeifModule;
-    console.log('[HEIC] libheif initialized');
-    return libheif;
+        }) as LibHeifModule;
+        recordRuntimeAssetDiagnostics(globalThis, {
+            type: 'libheif-loader-ready',
+            ...buildLibheifAssetContext({
+                cacheSource,
+            }),
+        });
+        console.log('[HEIC] libheif initialized');
+        return libheif;
+    } catch (error) {
+        recordRuntimeAssetDiagnostics(globalThis, {
+            type: 'libheif-loader-failed',
+            ...buildLibheifAssetContext({
+                errorCategory: classifyLibheifLoaderError(error),
+            }),
+            message: normalizeLoaderErrorMessage(error),
+        });
+        throw error;
+    }
 }
 
 function findNclxColorInfo(bytes: Uint8Array): { primaries: number; transfer: number } | null {

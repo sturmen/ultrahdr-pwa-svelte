@@ -8,6 +8,7 @@
 
 - Follow strict TDD: write a failing test first, confirm the failure reason, then add the smallest implementation needed.
 - Preserve offline-first behavior. Online-only behavior is degraded or optional.
+- Runtime assets must use the shared descriptor and fetch/cache pipeline in `src/lib/runtime-asset-definitions.ts` and `src/lib/runtime-assets.ts`; do not add direct runtime `fetch(...)` asset loaders.
 - Do not introduce canvas-based rendering unless the user explicitly asks for an exception.
 - Prefer strictly typed TypeScript for app code, tooling, tests, and config.
 - Treat diagnostics breadcrumbs as part of the observable contract for user-visible flows and processing-significant state transitions.
@@ -25,7 +26,7 @@
 - `src/lib/runtime-orchestrator.ts`: compact runtime state-machine orchestrator used for adapter-based initialization and processing.
 - `src/lib/runtime-*.ts`: initialization policy, cache policy, planner, reducer, state machine, capability detection, and runtime contract types.
 - `src/lib/runtime-post-update-warmup.ts`: first-launch-after-asset-version-change runtime warmup for JPEGli/libultrahdr to reduce cold-start processing pressure on iPhone/Safari.
-- `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`: shared offline-first runtime asset descriptors, versioned URL resolution, fetch/cache fallback, and loader diagnostics context for WASM/module assets.
+- `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`: shared offline-first runtime asset descriptors, versioned URL resolution, fetch/cache fallback, and loader diagnostics context for WASM/module assets, including libheif HEIC decoding assets.
 - `src/lib/diagnostics-events.ts`: typed diagnostics breadcrumb helpers and domain event-name source of truth used by UI, runtime init, pipeline telemetry, and runtime asset loaders.
 - `src/lib/processing-*.ts`: route planning, progress, queueing, preferences, runtime reducer, worker protocol, and processing route types.
 - `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`: structured breadcrumb and diagnostics surface.
@@ -43,7 +44,7 @@
 - MobileSafari worker duplicate-delivery investigation: findings are recorded in [investigations/mobile-safari-worker-module-reevaluation.md](./investigations/mobile-safari-worker-module-reevaluation.md); temporary verbose tracing used during that investigation has been removed, but the shared worker-state duplicate-job guard remains in `src/lib/processing-worker.ts`.
 - Adapter orchestration flow: `src/lib/runtime-orchestrator.ts` coordinates initialization and processing through worker and main-thread adapters with explicit fallback behavior.
 - Offline bundle flow: `src/sw.ts` precaches app assets, validates the runtime bundle manifest, repairs corrupted caches, and answers bundle-management messages from the app.
-- Runtime asset loading flow: `src/lib/runtime-assets.ts` and `src/lib/runtime-asset-definitions.ts` provide the canonical runtime asset inventory used by wasm/module loaders, the manifest builder, cache-name resolution, and service-worker bundle classification.
+- Runtime asset loading flow: `src/lib/runtime-assets.ts` and `src/lib/runtime-asset-definitions.ts` provide the canonical runtime asset inventory used by wasm/module loaders, the manifest builder, cache-name resolution, and service-worker bundle classification. New runtime assets must be declared there first, loaded through the shared helpers, included in bundle validation/repair, and covered by offline cache-fallback plus breadcrumb tests.
 - Asset-version runtime warmup flow: `src/lib/runtime-post-update-warmup.ts` detects the first launch of a new app asset version, warms JPEGli and libultrahdr before the editor becomes interactive, persists the warmed asset version marker, and records typed startup breadcrumbs for warmup start/success/failure.
 - Diagnostics emission flow: `src/lib/diagnostics-events.ts` is the canonical breadcrumb factory layer; feature modules should use its typed domain helpers instead of calling `DiagnosticsRecorder.record(...)` directly.
 - Under-test automation flow: `src/lib/ImageProcessor.svelte` exposes `window.__ULTRAHDR_AUTOMATION__.enqueueFiles(...)` only when under-test mode is enabled so real Safari/Appium sessions can inject `File` objects directly into the normal queue and optionally acknowledge the mobile memory warning without using the native picker.
