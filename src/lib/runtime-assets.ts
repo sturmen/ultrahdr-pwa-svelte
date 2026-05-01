@@ -23,19 +23,7 @@ const WASM_ASSET_VERSION = typeof import.meta.env.VITE_WASM_ASSET_VERSION === 's
 
 function resolveRuntimeAssetBaseUrl(): string {
   const baseUrl = import.meta.env.BASE_URL || '/';
-  if (baseUrl !== '/') {
-    return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-  }
-
-  const pathname = globalThis.location?.pathname || '/';
-  if (!pathname || pathname === '/') {
-    return '/';
-  }
-
-  const normalizedPath = pathname.endsWith('/')
-    ? pathname
-    : pathname.replace(/\/[^/]*$/, '/');
-  return normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
+  return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 }
 
 function resolveRuntimeAssetVersion(versionKind: RuntimeAssetVersionKind): string {

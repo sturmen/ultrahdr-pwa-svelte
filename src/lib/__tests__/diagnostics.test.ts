@@ -487,7 +487,7 @@ describe('diagnostics', () => {
     expect(shareMock).toHaveBeenCalledTimes(1);
     expect(shareMock.mock.calls[0][0]).toEqual(
       expect.objectContaining({
-        title: expect.stringContaining('UltraHDR'),
+        title: expect.stringContaining('MakeBetterJPEGs.com'),
         text: expect.stringContaining('"trigger": "manual"'),
       }),
     );

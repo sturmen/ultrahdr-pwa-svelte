@@ -185,7 +185,7 @@ describe('App shell and startup gate', () => {
   it('renders a minimal header and keeps trust messaging on the About page', async () => {
     render(App);
 
-    await screen.findByRole('heading', { name: /UltraHDR Converter/i });
+    await screen.findByRole('heading', { name: /MakeBetterJPEGs\.com/i });
     await screen.findByTestId('tab-convert');
 
     expect(screen.getByTestId('app-shell')).toBeInTheDocument();
@@ -206,7 +206,7 @@ describe('App shell and startup gate', () => {
     await fireEvent.click(screen.getByTestId('app-about-link'));
 
     expect(
-      screen.getByRole('heading', { name: /About UltraHDR Converter/i }),
+      screen.getByRole('heading', { name: /About MakeBetterJPEGs\.com/i }),
     ).toBeInTheDocument();
     expect(screen.getByText(/the app is a progressive web app/i)).toBeInTheDocument();
     expect(screen.queryByText(/share in and share out/i)).not.toBeInTheDocument();

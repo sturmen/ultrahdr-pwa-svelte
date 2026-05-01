@@ -6,27 +6,39 @@ describe('runtime-assets', () => {
     vi.resetModules();
     Object.defineProperty(globalThis, 'location', {
       configurable: true,
-      value: new URL('https://ultrahdr.invalid/ultrahdr-pwa-svelte/'),
+      value: new URL('https://ultrahdr.invalid/'),
     });
     delete (globalThis as typeof globalThis & { caches?: CacheStorage }).caches;
   });
 
-  it('resolves versioned runtime asset URLs under the app base path', async () => {
+  it('resolves versioned runtime asset URLs under the custom-domain site root', async () => {
     const runtimeAssets = await import('../runtime-assets.ts');
     const descriptors = await import('../runtime-asset-definitions.ts');
 
     expect(runtimeAssets.resolveRuntimeAssetUrl(descriptors.ULTRAHDR_WASM_BINARY_ASSET))
-      .toBe('/ultrahdr-pwa-svelte/assets/ultrahdr_wasm.wasm?v=test-wasm-version');
+      .toBe('/assets/ultrahdr_wasm.wasm?v=test-wasm-version');
     expect(runtimeAssets.resolveRuntimeAssetUrl(descriptors.LIBHEIF_WASM_BINARY_ASSET))
-      .toBe('/ultrahdr-pwa-svelte/assets/libheif.wasm?v=test-app-version');
+      .toBe('/assets/libheif.wasm?v=test-app-version');
     expect(runtimeAssets.resolveRuntimeAssetUrl(descriptors.LIBHEIF_BUNDLE_SCRIPT_ASSET))
-      .toBe('/ultrahdr-pwa-svelte/assets/libheif-bundle.mjs?v=test-app-version');
+      .toBe('/assets/libheif-bundle.mjs?v=test-app-version');
     expect(
       runtimeAssets.resolveVersionedRuntimeAssetPath(
         'assets/custom-helper.wasm',
         'wasm',
       ),
-    ).toBe('/ultrahdr-pwa-svelte/assets/custom-helper.wasm?v=test-wasm-version');
+    ).toBe('/assets/custom-helper.wasm?v=test-wasm-version');
+  });
+
+  it('resolves root-deployment runtime assets from the app root when called inside a bundled worker chunk', async () => {
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: new URL('https://ultrahdr.invalid/assets/processing-worker-BR9vD1QA.js'),
+    });
+    const runtimeAssets = await import('../runtime-assets.ts');
+    const descriptors = await import('../runtime-asset-definitions.ts');
+
+    expect(runtimeAssets.resolveRuntimeAssetUrl(descriptors.JPEGLI_WASM_BINARY_ASSET))
+      .toBe('/assets/jpegli_wasm.wasm?v=test-wasm-version');
   });
 
   it('fetches runtime asset buffers from Cache Storage when network fetch fails', async () => {
@@ -49,7 +61,7 @@ describe('runtime-assets', () => {
     expect(result.cacheSource).toBe('cache');
     expect(Array.from(new Uint8Array(result.asset))).toEqual([1, 2, 3, 4]);
     expect(globalThis.caches?.match).toHaveBeenCalledWith(
-      'https://ultrahdr.invalid/ultrahdr-pwa-svelte/assets/jpegli_wasm.wasm?v=test-wasm-version',
+      'https://ultrahdr.invalid/assets/jpegli_wasm.wasm?v=test-wasm-version',
     );
   });
 

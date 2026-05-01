@@ -53,4 +53,23 @@ describe('build warning regressions', () => {
     expect(existsSync(resolve('src/lib/ultrahdr-wasm.ts'))).toBe(true);
     expect(existsSync(resolve('src/lib/ultrahdr-wasm.js'))).toBe(false);
   });
+
+  it('builds production assets and the web manifest from the site root for the custom domain deployment', () => {
+    const viteConfigSource = readFileSync(resolve('vite.config.ts'), 'utf8');
+
+    expect(viteConfigSource).toContain("base: '/'");
+    expect(viteConfigSource).not.toContain("'/ultrahdr-pwa-svelte/'");
+  });
+
+  it('points preview and browser-test configuration at the custom-domain root path', () => {
+    const playwrightConfigSource = readFileSync(resolve('playwright.config.ts'), 'utf8');
+    const androidPlaywrightConfigSource = readFileSync(resolve('playwright.android-real.config.ts'), 'utf8');
+    const androidRealWebgpuSpecSource = readFileSync(resolve('tests/e2e/android-real-webgpu.spec.ts'), 'utf8');
+
+    expect(playwrightConfigSource).not.toContain('/ultrahdr-pwa-svelte/');
+    expect(androidPlaywrightConfigSource).not.toContain('/ultrahdr-pwa-svelte/');
+    expect(androidRealWebgpuSpecSource).not.toContain('/ultrahdr-pwa-svelte/');
+    expect(playwrightConfigSource).toContain("baseURL: 'http://localhost:4173/'");
+    expect(androidPlaywrightConfigSource).toContain("baseURL: 'http://localhost:4173/'");
+  });
 });

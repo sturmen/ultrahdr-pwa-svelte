@@ -115,16 +115,16 @@ export default defineConfig({
   resolve: {
     conditions: ['onnxruntime-web-use-extern-wasm', 'browser', 'module', 'import'],
   },
-  base: process.env.NODE_ENV === 'production' ? '/ultrahdr-pwa-svelte/' : '/',
+  base: '/',
   plugins: [
     svelte(),
     VitePWA({
       registerType: 'prompt',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg', 'models/gmnet-smoke-128.png'],
       manifest: {
-        name: 'UltraHDR Converter',
-        short_name: 'UltraHDR',
-        description: 'Convert images to UltraHDR gain maps offline',
+        name: 'MakeBetterJPEGs',
+        short_name: 'MakeBetterJPEGs',
+        description: 'Convert images to UltraHDR JPEG, offline',
         theme_color: '#ffffff',
         shortcuts: [
           {

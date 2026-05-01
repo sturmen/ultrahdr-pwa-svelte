@@ -124,10 +124,10 @@ Local App Setup For Real MobileSafari
 	•	Use the local preview server, not `vite dev`, unless the task explicitly needs dev-server HMR behavior:
 		`npm run preview -- --host 0.0.0.0`
 	•	Default local preview URL:
-		`http://localhost:4173/ultrahdr-pwa-svelte/`
+		`http://localhost:4173/`
 	•	When the simulator or phone needs to reach the Mac over the LAN instead of localhost, use the preview server’s network URL.
 	•	For automation/debug flows, prefer opening the app in under-test mode:
-		`http://localhost:4173/ultrahdr-pwa-svelte/?under-test=1`
+		`http://localhost:4173/?under-test=1`
 
 Real MobileSafari WebDriver Workflow
 	1.	Start the local preview server.
@@ -154,7 +154,7 @@ Simulator Helper Commands
 	•	List simulators:
 		`xcrun simctl list devices | rg 'iPhone|Booted'`
 	•	Open URL in the booted simulator Safari:
-		`xcrun simctl openurl <SIM_UDID> 'http://localhost:4173/ultrahdr-pwa-svelte/?under-test=1'`
+		`xcrun simctl openurl <SIM_UDID> 'http://localhost:4173/?under-test=1'`
 	•	Terminate MobileSafari if the active tab is wrong:
 		`xcrun simctl terminate <SIM_UDID> com.apple.mobilesafari`
 

@@ -10,13 +10,13 @@ export default defineConfig({
     timeout: 90_000,
 
     use: {
-        baseURL: 'http://localhost:4173/ultrahdr-pwa-svelte/',
+        baseURL: 'http://localhost:4173/',
         trace: 'on-first-retry',
     },
 
     webServer: {
         command: 'npm run build:wasm && npm run build && npm run preview',
-        url: 'http://localhost:4173/ultrahdr-pwa-svelte/',
+        url: 'http://localhost:4173/',
         reuseExistingServer: false,
         timeout: 120_000,
     },

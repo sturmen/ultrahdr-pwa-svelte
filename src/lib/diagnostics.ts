@@ -741,7 +741,7 @@ export async function shareDiagnosticsReport(
   const shareText = serializeDiagnosticsReport(report);
   if (runtime.navigator && typeof runtime.navigator.share === 'function') {
     await runtime.navigator.share({
-      title: 'UltraHDR Diagnostics Report',
+      title: 'MakeBetterJPEGs Diagnostics Report',
       text: shareText,
     });
     return;

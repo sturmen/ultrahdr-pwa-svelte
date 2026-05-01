@@ -4,7 +4,7 @@ A vibe coded PWA for creating HDR Gain Map JPEG images.
 
 ## Instructions
 
-Access the live version here to process your photos: [https://sturmen.github.io/ultrahdr-pwa-svelte/](https://sturmen.github.io/ultrahdr-pwa-svelte/)
+Access the live version here to process your photos: [MakeBetterJPEGs.com](https://makebetterjpegs.com/)
 
 ## What is HDR?
 
@@ -27,129 +27,100 @@ Gain-map generation is handled by [GMNet](https://github.com/qtlark/GMNet).
 ## Processing Pipelines
 
 ```mermaid
-flowchart LR
-    O_ROT{"rotation != 0?"}
-    O_EXIF{"EXIF auto-rotation present?"}
-    O_DISCARD{"discardGainMap=false?"}
-    O_PRESERVE_ZERO{"rotation=0 and no auto-rotation/resize?"}
-    O_PRESERVE_LOSSLESS{"Lossless preserved-component rotation eligible?"}
-    O_HEIC_ZERO{"rotation=0?"}
-    O_RESIZE{"Resize/constrain needed?"}
-
-    subgraph C1["Input Classification Stage"]
+flowchart TB
+    subgraph S["Startup and runtime readiness"]
         direction TB
-        A["Input file"] --> B{"Effective input class"}
-        B --> J1["Standard JPEG without gain map"]
-        B --> J2["UltraHDR JPEG with embedded gain map"]
-        B --> H1["HEIC/HEIF with native gain map"]
-        B --> H2["HEIC/HEIF raw HDR intent without native gain map"]
-        B --> H3["HEIC/HEIF without gain map"]
-        B --> H4["HIF HDR-intent input"]
-        B --> T1["TIFF"]
-        B --> O1["Other raster inputs (PNG/WebP/etc.)"]
+        S0["App boot"] --> S1["processingRuntime.initialize"]
+        S1 --> S2{"Runtime bundle ready?"}
+        S2 -->|"online"| S3["Validate, prepare, or repair versioned runtime bundle"]
+        S2 -->|"offline with ready record"| S4["Service-worker validation or cached-ready fallback"]
+        S2 -->|"offline without ready record"| S5["Block startup with diagnostics"]
+        S3 --> S6{"Worker runtime available?"}
+        S4 --> S6
+        S6 -->|"yes"| S7["Worker runtime with ONNX + WASM assets"]
+        S6 -->|"offline iPhone, unsupported worker, or allowed fallback"| S8["Main-thread WASM compatibility runtime"]
+        S7 --> S9["Post-update warmup: JPEGli + libultrahdr"]
+        S8 --> S9
+        S9 --> S10["Lazy-load ImageProcessor UI"]
     end
 
-    subgraph C2["Image Decode Stage"]
+    subgraph Q["Queue, storage, and duplicate guards"]
         direction TB
-        D1["Decode SDR pixels"]
-        D2["Convert TIFF to PNG-like SDR decode"]
-        D3["Convert HEIC/HEIF SDR image to PNG-like SDR decode"]
-        D4["preserved: use decoded SDR + native gain map components"]
-        D5["hdr-intent: decode raw HDR intent to linear RGBAF16"]
-        D6["hdr-intent: decode HIF HDR intent"]
-        D7["Decode preserved components, align/resize, rotate, re-encode"]
-        D8["Extract base JPEG and force generated path"]
+        Q0["Files from picker, drop, share target, or under-test automation"] --> Q1["Intake classification and mobile memory gate"]
+        Q1 --> Q2["Persist input artifacts, previews, and queue snapshot"]
+        Q2 --> Q3["workflow-state claims next queued item"]
+        Q3 --> Q4{"Tab lock and queue launch lease acquired?"}
+        Q4 -->|"no"| Q5["Suppress or requeue duplicate launch"]
+        Q4 -->|"yes"| Q6["runtime.process with queue-scoped request key"]
+        Q6 --> Q7{"Same queue request already active?"}
+        Q7 -->|"yes"| Q8["Join existing process promise"]
+        Q7 -->|"no"| Q9{"Runtime execution path"}
+        Q9 -->|"worker"| Q10["processing-worker runs processing-core"]
+        Q10 -->|"compat error before pipeline-start"| Q11["Main-thread fallback runs processing-core"]
+        Q10 -->|"pipeline-start reached, then error"| Q12["Surface worker error without second full attempt"]
+        Q9 -->|"main thread"| Q11
+        Q8 --> Q13["Persist output, preview, and queue state"]
+        Q12 --> Q13
     end
 
-    subgraph C3["Rotation Normalization Stage"]
+    subgraph P["processing-core routes"]
         direction TB
-        R3["Attempt lossless JPEG rotation"]
-        R4["Lossless EXIF normalization"]
-        R5["Lossless JPEG SDR bypass"]
-        R6["Decode, rotate, re-encode SDR"]
-        R9["preserve-with-rotation"]
-        R11["Rotate preserved base + gain map JPEGs losslessly, then rebuild"]
-        R13["Rotate preserved components before re-encoding"]
+        P0["processImage: telemetry, libultrahdr load, source EXIF, orientation"] --> P1{"Preprocess by input type"}
+        P1 -->|"HIF or raw HDR HEIF"| P2["Decode PQ/HLG HDR-intent payload"]
+        P1 -->|"HEIC/HEIF native gain map and discardGainMap=false"| P3["Decode SDR + preserved gain map + source metadata"]
+        P1 -->|"HEIC/HEIF without native gain map, or discardGainMap=true"| P4["Decode SDR raster"]
+        P1 -->|"TIFF"| P4
+        P1 -->|"JPEG, PNG, WebP, or other browser raster"| P5["Use source file or browser-safe SDR decode"]
+        P5 --> P6{"JPEG with embedded UltraHDR gain map?"}
+        P6 -->|"yes, preserve"| P7{"No rotation, no auto-orientation, within max edge?"}
+        P7 -->|"yes"| P8["Extract compressed base + gain map, rebuild ISO UltraHDR"]
+        P7 -->|"no"| P9["Rotate or resize preserved components; try lossless bitstream first"]
+        P6 -->|"yes, discard"| P10["Extract base JPEG bytes for generated path"]
+        P6 -->|"no or non-JPEG"| P11["Decode, constrain, and rotate SDR pixels"]
+        P4 --> P11
+        P10 --> P11
+        P3 --> P12["Encode SDR + preserved gain map with preserved metadata"]
+        P2 --> P13["libultrahdr API-0 HDR-intent encode"]
+        P11 --> P14["GMNet tiled gain-map inference with checkpointing"]
+        P14 --> P15{"Gain map valid?"}
+        P15 -->|"WebGPU/WebGL error, parity failure, or near-flat output"| P16["Retry fallback providers: WebGL, then WASM"]
+        P16 --> P15
+        P15 -->|"yes"| P17{"Generated SDR base strategy"}
+        P17 -->|"eligible source JPEG"| P18["Bypass SDR re-encode"]
+        P17 -->|"eligible 90/180/270 rotation"| P19["Lossless-rotate SDR JPEG"]
+        P17 -->|"otherwise"| P20["JPEGli re-encode SDR"]
+        P18 --> P21["JPEGli encode gain map, set compressed payloads, libultrahdr compose"]
+        P19 --> P21
+        P20 --> P21
+        P8 --> P22["Final UltraHDR JPEG Blob"]
+        P9 --> P22
+        P12 --> P22
+        P13 --> P22
+        P21 --> P22
     end
 
-    subgraph C4["Gain Map Decision Stage"]
+    subgraph X["Cross-cutting contracts"]
         direction TB
-        G1["GMNet generation path"]
-        G2["generated path"]
-        G4["Constrain SDR image before encoding"]
-        G5["Keep decoded dimensions"]
-        G6["HDR-intent HEIF API-0 encode path"]
+        X1["Runtime assets load through shared descriptors and cache/fetch helpers"]
+        X2["Typed diagnostics breadcrumbs cover startup, queue, worker, pipeline, assets, memory release, and failures"]
     end
 
-    subgraph C5["Final Encode Stage"]
-        direction TB
-        F1["Encode SDR base + generated gain map"]
-        F2["preserved: rebuild UltraHDR from compressed base + gain map"]
-        F3["Rebuild UltraHDR with preserved source metadata"]
-        Z["Final UltraHDR JPEG output"]
-    end
-
-    J1 --> O_ROT
-    O_ROT -->|"no"| O_EXIF
-    O_ROT -->|"yes"| R3
-    R3 -->|"eligible"| R5
-    R3 -->|"fallback"| R6
-    O_EXIF -->|"yes"| R4
-    O_EXIF -->|"no"| R5
-    R4 -->|"success"| R5
-    R4 -->|"fallback"| R6
-    R5 --> G1
-    R6 --> G1
-
-    J2 --> O_DISCARD
-    O_DISCARD -->|"no"| D8
-    O_DISCARD -->|"yes"| O_PRESERVE_ZERO
-    O_PRESERVE_ZERO -->|"yes"| F2
-    O_PRESERVE_ZERO -->|"no"| R9
-    R9 --> O_PRESERVE_LOSSLESS
-    O_PRESERVE_LOSSLESS -->|"yes"| R11
-    O_PRESERVE_LOSSLESS -->|"no"| D7
-
-    H1 --> O_DISCARD
-    O_DISCARD -->|"yes"| D4
-    D4 --> O_HEIC_ZERO
-    O_HEIC_ZERO -->|"yes"| F3
-    O_HEIC_ZERO -->|"no"| R13
-
-    H2 --> D5
-    D5 --> G6
-
-    H3 --> D3
-    D3 --> G1
-
-    H4 --> D6
-    D6 --> G6
-
-    T1 --> D2
-    D2 --> G1
-
-    O1 --> D1
-    D1 --> G1
-
-    D8 --> G2
-    G1 --> G2
-    G2 --> O_RESIZE
-    O_RESIZE -->|"yes"| G4
-    O_RESIZE -->|"no"| G5
-    G4 --> F1
-    G5 --> F1
-    R5 --> F1
-
-    F1 --> Z
-    F2 --> Z
-    R11 --> Z
-    D7 --> Z
-    F3 --> Z
-    R13 --> Z
-    G6 --> Z
+    S10 --> Q0
+    Q10 --> P0
+    Q11 --> P0
+    P22 --> Q13
+    Q13 --> Q3
+    S3 -.-> X1
+    S7 -.-> X1
+    P0 -.-> X2
+    Q3 -.-> X2
+    P13 -.-> X2
+    P21 -.-> X2
 ```
 
-`quality`, `stripExif`, and `maxContentBoost` primarily affect encoding quality and metadata, not the top-level route through `generated`, `preserved`, or `hdr-intent`. Preserved gain maps keep their source metadata unless `discardGainMap=true` forces regeneration. The `preserve-with-rotation` branch covers preserved inputs that still need auto-rotation, explicit rotation, or preserved-component resize/alignment work before the final rebuild. Every branch ends in an UltraHDR JPEG output.
+The runtime path is part of processing: startup validates or repairs the offline runtime bundle before the converter UI loads, then chooses worker execution or main-thread WASM compatibility mode. Queue execution is single-claim per item, guarded by a tab lock, queue launch lease, and queue-scoped process-request dedupe.
+
+`discardGainMap` is the main option that changes the top-level route: preserved gain maps stay on the preserved path when possible, while discarded or missing gain maps route through GMNet generation. `quality`, `stripExif`, and `maxContentBoost` primarily affect encoding and metadata, not whether the item is `generated`, `preserved`, or `hdr-intent`. Every successful branch ends in an UltraHDR JPEG output and emits structured diagnostics breadcrumbs for offline debugging.
 
 ## Testing
 

@@ -99,7 +99,7 @@
 >
   <h2>Initializing Runtime</h2>
   <p class="description">
-    Startup checks must pass before UltraHDR conversion can begin.
+    Startup checks must pass before conversion can begin.
   </p>
 
   {#if state !== "failed"}

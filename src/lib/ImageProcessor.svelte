@@ -3104,7 +3104,7 @@
         await navigator.share({
           files: filesToShare,
           title: "UltraHDR Images",
-          text: "Processed with UltraHDR Converter",
+          text: "Processed with MakeBetterJPEGs.com",
         });
         closeSheet();
         return;
@@ -3124,7 +3124,7 @@
           await navigator.share({
             files: [zipFile],
             title: "UltraHDR Images",
-            text: "Processed with UltraHDR Converter",
+            text: "Processed with MakeBetterJPEGs.com",
           });
           closeSheet();
           return;

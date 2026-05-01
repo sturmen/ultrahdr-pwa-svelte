@@ -13,7 +13,7 @@ test('requires real Android Chromium WebGPU runtime', async ({}, testInfo) => {
     try {
         const context = browser.contexts()[0] || await browser.newContext();
         const page = context.pages()[0] || await context.newPage();
-        const baseUrl = testInfo.project.use.baseURL || 'http://localhost:4173/ultrahdr-pwa-svelte/';
+        const baseUrl = testInfo.project.use.baseURL || 'http://localhost:4173/';
         await page.goto(String(baseUrl));
 
         const ready = await ensureRuntimeGateReady(page, testInfo, {

@@ -522,7 +522,7 @@
   data-runtime-init-state={runtimeInitState}
 >
   <header class="app-header" data-testid="app-topbar">
-    <h1>UltraHDR Converter</h1>
+    <h1>MakeBetterJPEGs</h1>
     {#if runtimeInitState === "ready"}
       <button
         class="topbar-link"
@@ -559,9 +559,9 @@
       />
     {:else if activeView === "about"}
       <article class="about-page" data-testid="about-page">
-        <h2>About UltraHDR Converter</h2>
+        <h2>About MakeBetterJPEGs</h2>
         <p>
-          UltraHDR Converter turns your existing photos into UltraHDR images
+          MakeBetterJPEGs converts your existing photos into UltraHDR images
           directly in your browser. Your files stay on your device, and output
           images are generated locally.
         </p>

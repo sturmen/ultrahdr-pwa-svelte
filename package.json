@@ -1,8 +1,8 @@
 {
-  "name": "ultrahdr-pwa-svelte",
+  "name": "makebetterjpegs",
   "version": "5.7.7",
-  "description": "A progressive webapp to encode UltraHDR images.",
-  "homepage": "https://sturmen.github.io/ultrahdr-pwa-svelte",
+  "description": "A progressive webapp to encode UltraHDR JPEG files.",
+  "homepage": "https://makebetterjpegs.com",
   "main": "index.js",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,7 @@
     "build:runtime-bundle-manifest": "node scripts/build-runtime-bundle-manifest.ts",
     "build:wasm": "node scripts/build-wasm.js",
     "preview": "vite preview",
-    "deploy": "npm run build:wasm && npm run build && gh-pages -d dist",
+    "deploy": "npm run build:wasm && npm run build && gh-pages -d dist --cname makebetterjpegs.com",
     "test": "vitest run --config vite.config.test.ts",
     "typecheck": "tsc -p tsconfig.pipeline.json --noEmit && npx svelte-check --tsconfig ./tsconfig.pipeline.json",
     "test:integration:heic-real": "vitest run --config vite.config.heic-real.ts",
