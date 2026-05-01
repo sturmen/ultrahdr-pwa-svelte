@@ -1,10 +1,10 @@
 {
-  "bundleVersion": "5.7.7|9111abbf1b5973c0|449648f903dfe2a3",
-  "generatedAt": "2026-05-01T00:51:43.613Z",
+  "bundleVersion": "5.7.7|ea87b4a46636935e|5264824f3eb75f4f",
+  "generatedAt": "2026-05-01T17:18:05.240Z",
   "requiredAssets": [
     {
       "id": "gmnet-realworld-global",
-      "url": "models/gmnet-realworld-global.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-realworld-global.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 107070,
@@ -12,7 +12,7 @@
     },
     {
       "id": "gmnet-realworld-global-data",
-      "url": "models/gmnet-realworld-global.onnx.data?v=9111abbf1b5973c0",
+      "url": "models/gmnet-realworld-global.onnx.data?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2127104,
@@ -20,7 +20,7 @@
     },
     {
       "id": "gmnet-realworld-local",
-      "url": "models/gmnet-realworld-local.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-realworld-local.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 165334,
@@ -28,7 +28,7 @@
     },
     {
       "id": "gmnet-realworld-local-data",
-      "url": "models/gmnet-realworld-local.onnx.data?v=9111abbf1b5973c0",
+      "url": "models/gmnet-realworld-local.onnx.data?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5615872,
@@ -36,7 +36,7 @@
     },
     {
       "id": "gmnet-realworld-global-inline",
-      "url": "models/gmnet-realworld-global-inline.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-realworld-global-inline.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2263917,
@@ -44,7 +44,7 @@
     },
     {
       "id": "gmnet-realworld-local-inline-webgl",
-      "url": "models/gmnet-realworld-local-inline-webgl.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-realworld-local-inline-webgl.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5764004,
@@ -52,7 +52,7 @@
     },
     {
       "id": "gmnet-synthetic-global",
-      "url": "models/gmnet-synthetic-global.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-synthetic-global.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 107070,
@@ -60,7 +60,7 @@
     },
     {
       "id": "gmnet-synthetic-global-data",
-      "url": "models/gmnet-synthetic-global.onnx.data?v=9111abbf1b5973c0",
+      "url": "models/gmnet-synthetic-global.onnx.data?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2127104,
@@ -68,7 +68,7 @@
     },
     {
       "id": "gmnet-synthetic-local",
-      "url": "models/gmnet-synthetic-local.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-synthetic-local.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 165334,
@@ -76,7 +76,7 @@
     },
     {
       "id": "gmnet-synthetic-local-data",
-      "url": "models/gmnet-synthetic-local.onnx.data?v=9111abbf1b5973c0",
+      "url": "models/gmnet-synthetic-local.onnx.data?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5615872,
@@ -84,7 +84,7 @@
     },
     {
       "id": "gmnet-synthetic-global-inline",
-      "url": "models/gmnet-synthetic-global-inline.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-synthetic-global-inline.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 2263917,
@@ -92,7 +92,7 @@
     },
     {
       "id": "gmnet-synthetic-local-inline-webgl",
-      "url": "models/gmnet-synthetic-local-inline-webgl.onnx?v=9111abbf1b5973c0",
+      "url": "models/gmnet-synthetic-local-inline-webgl.onnx?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "model",
       "byteLength": 5764004,
@@ -100,7 +100,7 @@
     },
     {
       "id": "gmnet-smoke-asset",
-      "url": "models/gmnet-smoke-128.png?v=9111abbf1b5973c0",
+      "url": "models/gmnet-smoke-128.png?v=ea87b4a46636935e",
       "cacheName": "uhdr-ai-models-runtime-bundle",
       "kind": "smoke",
       "byteLength": 622,
@@ -108,23 +108,23 @@
     },
     {
       "id": "ultrahdr-wasm-js",
-      "url": "assets/ultrahdr_wasm.js?v=449648f903dfe2a3",
+      "url": "assets/ultrahdr_wasm.js?v=5264824f3eb75f4f",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "runtime-script",
-      "byteLength": 66158,
-      "sha256": "cb94c54a4098747e63d119883366ad0fb55c33abfed4d8fad6bcce9fb3d33119"
+      "byteLength": 66421,
+      "sha256": "1cb02ba12bca9c900bbce7f4cc385c1743bd9b93869905b78eaa45f7276f8e6d"
     },
     {
       "id": "ultrahdr-wasm-bin",
-      "url": "assets/ultrahdr_wasm.wasm?v=449648f903dfe2a3",
+      "url": "assets/ultrahdr_wasm.wasm?v=5264824f3eb75f4f",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
-      "byteLength": 816035,
-      "sha256": "9041d39bcea6c7285a1a47bed0044083df49bec8d648b058661f2187cd2f4355"
+      "byteLength": 816552,
+      "sha256": "62179b1ad8090190dfe70e5160419d64a946b6db22538f29788ea143d2269d80"
     },
     {
       "id": "jpegli-wasm-js",
-      "url": "assets/jpegli_wasm.js?v=449648f903dfe2a3",
+      "url": "assets/jpegli_wasm.js?v=5264824f3eb75f4f",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "runtime-script",
       "byteLength": 15604,
@@ -132,15 +132,15 @@
     },
     {
       "id": "jpegli-wasm-bin",
-      "url": "assets/jpegli_wasm.wasm?v=449648f903dfe2a3",
+      "url": "assets/jpegli_wasm.wasm?v=5264824f3eb75f4f",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
-      "byteLength": 243454,
-      "sha256": "9e96a01c528a7ab0260b9499238f713d1005b29e5ec8e5d6e6053882bf1f4dc0"
+      "byteLength": 243316,
+      "sha256": "a91c1510c029e54650f8e171fef6e101d3fe1f7fa0d8b239a3faa806001e7b21"
     },
     {
       "id": "jpegtran-wasm-js",
-      "url": "assets/jpegtran_wasm.js?v=449648f903dfe2a3",
+      "url": "assets/jpegtran_wasm.js?v=5264824f3eb75f4f",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "runtime-script",
       "byteLength": 15046,
@@ -148,15 +148,15 @@
     },
     {
       "id": "jpegtran-wasm-bin",
-      "url": "assets/jpegtran_wasm.wasm?v=449648f903dfe2a3",
+      "url": "assets/jpegtran_wasm.wasm?v=5264824f3eb75f4f",
       "cacheName": "uhdr-wasm-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 368944,
-      "sha256": "116d4dd4b7fbf1d237ae6b7822343d398d5914c7b289c66000c208a4bb3142e2"
+      "sha256": "ba67bb9de298fb9e42bc5c71afe4ec3f7158692efbb170b5ae72427cfba9ff3c"
     },
     {
       "id": "libheif-bundle-mjs",
-      "url": "assets/libheif-bundle.mjs?v=9111abbf1b5973c0",
+      "url": "assets/libheif-bundle.mjs?v=ea87b4a46636935e",
       "cacheName": "uhdr-libheif-assets-runtime-bundle",
       "kind": "runtime-script",
       "byteLength": 1461926,
@@ -164,7 +164,7 @@
     },
     {
       "id": "libheif-wasm-bin",
-      "url": "assets/libheif.wasm?v=9111abbf1b5973c0",
+      "url": "assets/libheif.wasm?v=ea87b4a46636935e",
       "cacheName": "uhdr-libheif-assets-runtime-bundle",
       "kind": "wasm",
       "byteLength": 1034305,
