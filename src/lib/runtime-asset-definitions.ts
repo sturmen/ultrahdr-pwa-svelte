@@ -105,6 +105,18 @@ export const LIBHEIF_WASM_BINARY_ASSET = createRuntimeAssetDescriptor({
   manifestRequired: true,
 });
 
+export const LIBHEIF_BUNDLE_SCRIPT_ASSET = createRuntimeAssetDescriptor({
+  id: 'libheif-bundle-mjs',
+  path: 'assets/libheif-bundle.mjs',
+  sourcePath: 'node_modules/libheif-js/libheif-wasm/libheif-bundle.mjs',
+  bundleCacheName: 'uhdr-libheif-assets-runtime-bundle',
+  cacheKey: 'libheifAssets',
+  kind: 'runtime-script',
+  versionKind: 'app',
+  responseKind: 'text',
+  manifestRequired: true,
+});
+
 export const ORT_WASM_SIMD_THREADED_MJS_ASSET = createRuntimeAssetDescriptor({
   id: 'ort-wasm-simd-threaded-mjs',
   path: 'assets/ort-wasm-simd-threaded.mjs',
@@ -208,6 +220,7 @@ export const REQUIRED_RUNTIME_ASSET_DESCRIPTORS: readonly RuntimeAssetDescriptor
   JPEGLI_WASM_BINARY_ASSET,
   JPEGTRAN_WASM_SCRIPT_ASSET,
   JPEGTRAN_WASM_BINARY_ASSET,
+  LIBHEIF_BUNDLE_SCRIPT_ASSET,
   LIBHEIF_WASM_BINARY_ASSET,
   ORT_WASM_SIMD_THREADED_MJS_ASSET,
   ORT_WASM_SIMD_THREADED_ASYNCIFY_MJS_ASSET,

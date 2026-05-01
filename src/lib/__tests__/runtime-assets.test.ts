@@ -19,6 +19,8 @@ describe('runtime-assets', () => {
       .toBe('/ultrahdr-pwa-svelte/assets/ultrahdr_wasm.wasm?v=test-wasm-version');
     expect(runtimeAssets.resolveRuntimeAssetUrl(descriptors.LIBHEIF_WASM_BINARY_ASSET))
       .toBe('/ultrahdr-pwa-svelte/assets/libheif.wasm?v=test-app-version');
+    expect(runtimeAssets.resolveRuntimeAssetUrl(descriptors.LIBHEIF_BUNDLE_SCRIPT_ASSET))
+      .toBe('/ultrahdr-pwa-svelte/assets/libheif-bundle.mjs?v=test-app-version');
     expect(
       runtimeAssets.resolveVersionedRuntimeAssetPath(
         'assets/custom-helper.wasm',
@@ -59,6 +61,8 @@ describe('runtime-assets', () => {
     expect(runtimeAssets.getRuntimeAssetCacheName(descriptors.JPEGLI_WASM_BINARY_ASSET, cacheNames))
       .toBe(cacheNames.wasmAssets);
     expect(runtimeAssets.getRuntimeAssetCacheName(descriptors.LIBHEIF_WASM_BINARY_ASSET, cacheNames))
+      .toBe(cacheNames.libheifAssets);
+    expect(runtimeAssets.getRuntimeAssetCacheName(descriptors.LIBHEIF_BUNDLE_SCRIPT_ASSET, cacheNames))
       .toBe(cacheNames.libheifAssets);
     expect(runtimeAssets.getRuntimeAssetCacheName(descriptors.ORT_WASM_SIMD_THREADED_MJS_ASSET, cacheNames))
       .toBe(cacheNames.onnxWasmAssets);

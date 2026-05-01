@@ -127,10 +127,12 @@ describe('build-runtime-bundle-manifest', () => {
     expect(requiredAssetIds.has('ort-wasm-simd-threaded-jspi-mjs')).toBe(true);
   });
 
-  it('uses the dedicated libheif cache name in the default bundle spec', () => {
-    const libheifAsset = DEFAULT_REQUIRED_ASSET_SPECS.find((asset) => asset.id === 'libheif-wasm-bin');
+  it('includes libheif runtime assets in the dedicated cache in the default bundle spec', () => {
+    const libheifWasmAsset = DEFAULT_REQUIRED_ASSET_SPECS.find((asset) => asset.id === 'libheif-wasm-bin');
+    const libheifBundleAsset = DEFAULT_REQUIRED_ASSET_SPECS.find((asset) => asset.id === 'libheif-bundle-mjs');
 
-    expect(libheifAsset?.cacheName).toBe('uhdr-libheif-assets-runtime-bundle');
+    expect(libheifWasmAsset?.cacheName).toBe('uhdr-libheif-assets-runtime-bundle');
+    expect(libheifBundleAsset?.cacheName).toBe('uhdr-libheif-assets-runtime-bundle');
   });
 
   it('includes both jpegli runtime assets in the default offline bundle spec', () => {

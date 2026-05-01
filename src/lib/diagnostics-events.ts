@@ -131,6 +131,7 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     jpegliLoaderReady: 'jpegli-loader-ready',
     jpegliLoaderFailed: 'jpegli-loader-failed',
     libheifLoaderStarted: 'libheif-loader-started',
+    libheifBundleModuleFetched: 'libheif-bundle-module-fetched',
     libheifWasmBinaryFetched: 'libheif-wasm-binary-fetched',
     libheifLoaderReady: 'libheif-loader-ready',
     libheifLoaderFailed: 'libheif-loader-failed',
@@ -450,6 +451,9 @@ export type RuntimeAssetDiagnosticsEvent =
     } & RuntimeAssetBaseEvent)
   | ({
       type: 'libheif-loader-started';
+    } & RuntimeAssetBaseEvent)
+  | ({
+      type: 'libheif-bundle-module-fetched';
     } & RuntimeAssetBaseEvent)
   | ({
       type: 'libheif-wasm-binary-fetched';
@@ -1395,6 +1399,13 @@ function buildRuntimeAssetDiagnosticsInput(event: RuntimeAssetDiagnosticsEvent):
       return {
         category: 'runtime',
         name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifLoaderStarted,
+        severity: 'info',
+        context: baseContext,
+      };
+    case 'libheif-bundle-module-fetched':
+      return {
+        category: 'runtime',
+        name: DIAGNOSTICS_EVENT_NAMES.runtimeAsset.libheifBundleModuleFetched,
         severity: 'info',
         context: baseContext,
       };

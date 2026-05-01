@@ -7,7 +7,7 @@ describe('build warning regressions', () => {
   it('uses browser-safe HEIF adapter imports in production modules', () => {
     const heicProcessing = readFileSync(resolve('src/lib/heic-processing.ts'), 'utf8');
     const heifHdrProcessing = readFileSync(resolve('src/lib/heif-hdr-processing.ts'), 'utf8');
-    const libheifBrowser = readFileSync(resolve('src/lib/libheif-browser.js'), 'utf8');
+    const libheifBrowser = readFileSync(resolve('src/lib/libheif-browser.ts'), 'utf8');
     const viteConfigSource = readFileSync(resolve('vite.config.ts'), 'utf8');
 
     expect(heicProcessing).toContain("import libheifFactory from './libheif-browser.js'");
@@ -15,6 +15,7 @@ describe('build warning regressions', () => {
     expect(heicProcessing).not.toContain("libheif-js/libheif-wasm/libheif.js");
     expect(heifHdrProcessing).not.toContain("libheif-js/libheif-wasm/libheif.js");
     expect(libheifBrowser).not.toContain("import libheifBundleModule from 'libheif-js/wasm-bundle.js'");
+    expect(existsSync(resolve('src/lib/libheif-browser.js'))).toBe(false);
     expect(viteConfigSource).toContain('libheif-bundle.mjs');
   });
 
