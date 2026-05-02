@@ -24,6 +24,7 @@
 - Queue-scoped runtime process dedupe: `src/lib/processing.ts`, `src/lib/ImageProcessor.svelte`, `src/lib/diagnostics-events.ts`
 - Worker fallback skip after pipeline start: `src/lib/processing.ts`, `src/lib/worker-job-protocol.ts`, `src/lib/diagnostics-events.ts`
 - Verbose duplicate-processing trace breadcrumbs: `src/lib/processing.ts`, `src/lib/processing-core.ts`, `src/lib/diagnostics-events.ts`
+- Legacy gain-map import vs strict UltraHDR metadata: `src/lib/gain-map-metadata.ts`, `src/lib/processing-core.ts`, `src/lib/__tests__/gain-map-metadata.test.ts`, `src/lib/__tests__/processing-preservation.test.ts`
 - MobileSafari worker re-evaluation investigation note: `docs/investigations/mobile-safari-worker-module-reevaluation.md`
 - Runtime orchestration and fallback: `src/lib/processing.ts`, `src/lib/runtime-orchestrator.ts`
 - Diagnostics and telemetry: `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`

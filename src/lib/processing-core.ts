@@ -96,6 +96,12 @@ type ExtractedPreservedComponents = {
     gainMapMetadata: GainMapMetadata;
     baseDimensions?: JpegDimensions | null;
 };
+type GContainerItem = {
+    semantic: string | null;
+    mime: string | null;
+    length: number | null;
+    padding: number;
+};
 type GainMapGenerationResult = {
     gainMapImageData: ImageData;
     metadata: GainMapMetadata;
@@ -244,6 +250,21 @@ function formatAutoRotationForLog(autoRotation: number): string {
         return String(autoRotation);
     }
     return 'non-rotational';
+}
+
+function classifyPreservationFallbackReason(error: unknown): string | null {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+    if (normalized.includes('invalid gain-map metadata')) {
+        return 'invalid-gain-map-metadata';
+    }
+    if (normalized.includes('invalid gain-map container')) {
+        return 'invalid-gain-map-container';
+    }
+    if (normalized.includes('unsupported base rendition')) {
+        return 'unsupported-base-rendition';
+    }
+    return null;
 }
 
 function rotationToJpegTransform(rotation: number): JpegTransform | null {
@@ -553,6 +574,108 @@ function extractEmbeddedJpegStreams(fileBuffer: Uint8Array): EmbeddedJpegStream[
     return Array.from(deduped.values());
 }
 
+function decodeLatin1(bytes: Uint8Array): string {
+    try {
+        return new TextDecoder('latin1').decode(bytes);
+    } catch {
+        let text = '';
+        for (let index = 0; index < bytes.length; index += 1) {
+            text += String.fromCharCode(bytes[index] ?? 0);
+        }
+        return text;
+    }
+}
+
+function readContainerAttribute(itemXml: string, name: string): string | null {
+    const regex = new RegExp(`Item:${name}=["']([^"']+)["']`, 'i');
+    const match = itemXml.match(regex);
+    return match ? (match[1] ?? '').trim() : null;
+}
+
+function parsePositiveIntegerAttribute(itemXml: string, name: string): number | null {
+    const raw = readContainerAttribute(itemXml, name);
+    if (raw === null) {
+        return null;
+    }
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function parseOptionalPaddingAttribute(itemXml: string): number {
+    const raw = readContainerAttribute(itemXml, 'Padding');
+    if (raw === null) {
+        return 0;
+    }
+    const value = Number(raw);
+    return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+function parseGContainerItems(fileBuffer: Uint8Array): GContainerItem[] {
+    const decoded = decodeLatin1(fileBuffer);
+    if (!decoded.includes('Container:Directory') || !decoded.includes('Container:Item')) {
+        return [];
+    }
+
+    const itemMatches = Array.from(decoded.matchAll(/<Container:Item\b[^>]*>/gi));
+    return itemMatches.map((match) => {
+        const itemXml = match[0] ?? '';
+        return {
+            semantic: readContainerAttribute(itemXml, 'Semantic'),
+            mime: readContainerAttribute(itemXml, 'Mime'),
+            length: parsePositiveIntegerAttribute(itemXml, 'Length'),
+            padding: parseOptionalPaddingAttribute(itemXml),
+        };
+    });
+}
+
+function extractComponentsFromGContainer(
+    fileBuffer: Uint8Array,
+    gainMapMetadata: GainMapMetadata,
+): ExtractedPreservedComponents | null {
+    const items = parseGContainerItems(fileBuffer);
+    if (items.length < 2) {
+        return null;
+    }
+    const primaryItem = items[0];
+    if (primaryItem?.semantic !== 'Primary' || primaryItem.mime !== 'image/jpeg') {
+        throw new Error('Invalid gain-map container: first GContainer item is not the primary JPEG');
+    }
+
+    const primaryEndOffset = parseJpegEndOffset(fileBuffer, 0);
+    if (primaryEndOffset === null) {
+        throw new Error('Invalid gain-map container: unable to locate primary JPEG end');
+    }
+
+    let cursor = primaryEndOffset + primaryItem.padding;
+    let gainMapBytes: Uint8Array | null = null;
+    for (let index = 1; index < items.length; index += 1) {
+        const item = items[index];
+        if (!item || item.mime !== 'image/jpeg' || item.length === null) {
+            throw new Error('Invalid gain-map container: secondary JPEG item is missing required fields');
+        }
+        const end = cursor + item.length;
+        if (end > fileBuffer.length) {
+            throw new Error('Invalid gain-map container: secondary JPEG item exceeds file length');
+        }
+        if (item.semantic === 'GainMap') {
+            gainMapBytes = fileBuffer.slice(cursor, end);
+            break;
+        }
+        cursor = end + item.padding;
+    }
+
+    if (!(gainMapBytes instanceof Uint8Array) || gainMapBytes.length === 0) {
+        throw new Error('Invalid gain-map container: missing GainMap item');
+    }
+
+    return {
+        baseJpegBytes: fileBuffer.slice(0, primaryEndOffset),
+        gainMapJpegBytes: gainMapBytes,
+        gainMapMetadata,
+        baseDimensions: parseJpegDimensions(fileBuffer.slice(0, primaryEndOffset)),
+    };
+}
+
 export function parseHdrGainMapMetadataFromXmp(fileBuffer: Uint8Array): GainMapMetadata | null {
     return parseHdrGainMapMetadataFromBuffer(fileBuffer);
 }
@@ -568,25 +691,27 @@ export function extractPreservedJpegComponentsFromMarkers(fileBuffer: Uint8Array
         throw new Error('Unable to locate separate base and gain-map JPEG streams in source image');
     }
 
-    const rankedStreams = [...streams].sort((left, right) => {
-        const leftDimensions = left.dimensions ?? { width: 0, height: 0 };
-        const rightDimensions = right.dimensions ?? { width: 0, height: 0 };
-        const leftArea = leftDimensions.width * leftDimensions.height;
-        const rightArea = rightDimensions.width * rightDimensions.height;
-        return rightArea - leftArea;
-    });
-
-    const baseStream = rankedStreams[0];
-    const gainMapStream = rankedStreams.find((entry) => entry.offset !== baseStream.offset);
-    if (!gainMapStream) {
-        throw new Error('Unable to identify gain-map JPEG stream from marker extraction');
+    const parsedMetadata = parseHdrGainMapMetadataFromXmp(fileBuffer);
+    if (!parsedMetadata) {
+        throw new Error('Invalid gain-map metadata in source image');
     }
 
-    const parsedMetadata = parseHdrGainMapMetadataFromXmp(fileBuffer);
+    const gcontainerComponents = extractComponentsFromGContainer(fileBuffer, parsedMetadata);
+    if (gcontainerComponents) {
+        return gcontainerComponents;
+    }
+
+    if (streams.length !== 2) {
+        throw new Error('Invalid gain-map container: legacy marker fallback requires exactly two JPEG streams');
+    }
+
+    const baseStream = streams[0];
+    const gainMapStream = streams[1];
     return {
         baseJpegBytes: baseStream.bytes,
         gainMapJpegBytes: gainMapStream.bytes,
-        gainMapMetadata: parsedMetadata || buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST),
+        gainMapMetadata: parsedMetadata,
+        baseDimensions: baseStream.dimensions,
     };
 }
 
@@ -868,7 +993,8 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                     }
                 }
             } catch (e) {
-                if (preserveDecisionMade) {
+                const preservationFallbackReason = classifyPreservationFallbackReason(e);
+                if (preserveDecisionMade && preservationFallbackReason === null) {
                     console.error(
                         '[Process] Gain-map preservation failed after preserve decision; refusing GMNet regeneration.',
                         e
@@ -878,6 +1004,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                 console.warn('[Process] UltraHDR detection/preservation failed, proceeding with normal processing:', e);
                 telemetry.emit('preservation-fallback', {
                     stage: 'detect-ultrahdr',
+                    reason: preservationFallbackReason ?? 'detection-or-preservation-failed',
                     warning: e instanceof Error ? e.message : String(e)
                 });
             }
@@ -1189,16 +1316,6 @@ async function rebuildUhdrFromCompressed(
         const activeMetadata: GainMapMetadata = gainMapMetadata && typeof gainMapMetadata === 'object'
             ? { ...gainMapMetadata } as GainMapMetadata
             : buildGainMapMetadata(DEFAULT_MAX_CONTENT_BOOST);
-        const shouldOverrideHeadroom =
-            options?.__hasExplicitMaxContentBoost === true
-            && Number.isFinite(Number(options?.maxContentBoost));
-        if (shouldOverrideHeadroom) {
-            const overrideHeadroom = Number(options.maxContentBoost);
-            console.log(`[Rebuild] Adjusting headroom metadata to: ${overrideHeadroom}`);
-            activeMetadata.hdrCapacityMax = overrideHeadroom;
-            // Also update gainMapMax if it was tied to headroom (standard linear gain map)
-            activeMetadata.gainMapMax = [overrideHeadroom, overrideHeadroom, overrideHeadroom];
-        }
         const encoderGainMapMetadata: GainMapMetadata = isSingleChannelGainMapMetadata(activeMetadata)
             ? activeMetadata
             : toSingleChannelGainMapMetadata(activeMetadata) ?? activeMetadata;

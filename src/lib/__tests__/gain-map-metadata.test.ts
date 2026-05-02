@@ -3,14 +3,17 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { parseHdrGainMapMetadataFromText } from '../gain-map-metadata.js';
+import {
+  parseHdrGainMapMetadataFromText,
+  parseStrictUltraHdrV1GainMapMetadataFromText,
+} from '../gain-map-metadata.js';
 
-function wrapXmp(descriptionAttributes: string, body = ''): string {
+function wrapXmp(descriptionAttributes: string, body = '', version = '1'): string {
   return [
     '<?xpacket begin=""?>',
     '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
     '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
-    `<rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1" ${descriptionAttributes}>`,
+    `<rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="${version}" ${descriptionAttributes}>`,
     body,
     '</rdf:Description>',
     '</rdf:RDF>',
@@ -101,6 +104,51 @@ describe('gain-map metadata XMP parsing', () => {
   it('returns null when a present numeric gain-map metadata field is invalid', () => {
     const metadata = parseHdrGainMapMetadataFromText(wrapXmp(
       'hdrgm:GainMapMin="not-a-number" hdrgm:GainMapMax="3" hdrgm:HDRCapacityMin="0" hdrgm:HDRCapacityMax="3"',
+    ));
+
+    expect(metadata).toBeNull();
+  });
+
+  it('accepts legacy-import Version="1" but rejects it in the strict UltraHDR v1 parser', () => {
+    const legacyXmp = wrapXmp(
+      'hdrgm:GainMapMax="3" hdrgm:HDRCapacityMax="3"',
+    );
+
+    expect(parseHdrGainMapMetadataFromText(legacyXmp)).not.toBeNull();
+    expect(parseStrictUltraHdrV1GainMapMetadataFromText(legacyXmp)).toBeNull();
+  });
+
+  it('accepts strict UltraHDR v1 metadata when Version is 1.0 and required fields are present', () => {
+    const strictXmp = wrapXmp(
+      'hdrgm:GainMapMax="3" hdrgm:HDRCapacityMax="3" hdrgm:BaseRenditionIsHDR="False"',
+      '',
+      '1.0',
+    );
+
+    expect(parseStrictUltraHdrV1GainMapMetadataFromText(strictXmp)).not.toBeNull();
+  });
+
+  it('rejects legacy-import metadata when required interpretive fields are missing', () => {
+    expect(parseHdrGainMapMetadataFromText(wrapXmp('hdrgm:HDRCapacityMax="3"'))).toBeNull();
+    expect(parseHdrGainMapMetadataFromText(wrapXmp('hdrgm:GainMapMax="3"'))).toBeNull();
+  });
+
+  it('rejects hdrgm metadata that does not declare a supported version', () => {
+    const xmpWithoutVersion = [
+      '<?xpacket begin=""?>',
+      '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+      '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+      '<rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:GainMapMax="3" hdrgm:HDRCapacityMax="3"/>',
+      '</rdf:RDF>',
+      '</x:xmpmeta>',
+    ].join('');
+
+    expect(parseHdrGainMapMetadataFromText(xmpWithoutVersion)).toBeNull();
+  });
+
+  it('rejects preserved gain-map imports whose base rendition is HDR', () => {
+    const metadata = parseHdrGainMapMetadataFromText(wrapXmp(
+      'hdrgm:GainMapMax="3" hdrgm:HDRCapacityMax="3" hdrgm:BaseRenditionIsHDR="True"',
     ));
 
     expect(metadata).toBeNull();

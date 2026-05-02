@@ -27,6 +27,8 @@ type TripleReadResult =
   | { present: false; value: null }
   | { present: true; value: Triple | null };
 
+type MetadataParseProfile = 'legacy-import' | 'strict-ultrahdr-v1';
+
 function decodeLatin1(bytes: Uint8Array): string {
   if (!(bytes instanceof Uint8Array)) {
     return '';
@@ -142,6 +144,15 @@ function readScalarAttribute(decoded: string, name: string): NumericReadResult {
   };
 }
 
+function readTextAttribute(decoded: string, name: string): string | null {
+  const regex = new RegExp(`hdrgm:${name}=["']([^"']+)["']`, 'i');
+  const match = decoded.match(regex);
+  if (!match) {
+    return null;
+  }
+  return (match[1] ?? '').trim();
+}
+
 function readTripleSequence(decoded: string, name: string): TripleReadResult {
   const sectionRegex = new RegExp(
     `<hdrgm:${name}>[\\s\\S]*?<rdf:Seq>([\\s\\S]*?)<\\/rdf:Seq>[\\s\\S]*?<\\/hdrgm:${name}>`,
@@ -233,6 +244,17 @@ function applyLog2ScalarField(
 }
 
 export function parseHdrGainMapMetadataFromText(decoded: string): GainMapMetadata | null {
+  return parseGainMapMetadataFromText(decoded, 'legacy-import');
+}
+
+export function parseStrictUltraHdrV1GainMapMetadataFromText(decoded: string): GainMapMetadata | null {
+  return parseGainMapMetadataFromText(decoded, 'strict-ultrahdr-v1');
+}
+
+function parseGainMapMetadataFromText(
+  decoded: string,
+  profile: MetadataParseProfile,
+): GainMapMetadata | null {
   const hasHdrGainMapMarkers = decoded
     && (
       decoded.includes('hdrgm:Version')
@@ -243,6 +265,20 @@ export function parseHdrGainMapMetadataFromText(decoded: string): GainMapMetadat
       || decoded.includes('hdrgm:HDRCapacityMax=')
     );
   if (!hasHdrGainMapMarkers) {
+    return null;
+  }
+
+  const version = readTextAttribute(decoded, 'Version');
+  if (profile === 'strict-ultrahdr-v1') {
+    if (version !== '1.0') {
+      return null;
+    }
+  } else if (version !== '1' && version !== '1.0') {
+    return null;
+  }
+
+  const baseRenditionIsHdr = readTextAttribute(decoded, 'BaseRenditionIsHDR');
+  if (baseRenditionIsHdr !== null && baseRenditionIsHdr.toLowerCase() !== 'false') {
     return null;
   }
 
@@ -262,6 +298,7 @@ export function parseHdrGainMapMetadataFromText(decoded: string): GainMapMetadat
   };
 
   let parsedGainMapMaxFromSource = false;
+  let parsedHdrCapacityMaxFromSource = false;
   const parsedSuccessfully = [
     applyLog2TripleField(decoded, 'GainMapMin', (linear, parsed) => {
       metadata.gainMapMin = linear;
@@ -291,6 +328,7 @@ export function parseHdrGainMapMetadataFromText(decoded: string): GainMapMetadat
     applyLog2ScalarField(decoded, 'HDRCapacityMax', (linear, parsed) => {
       metadata.hdrCapacityMax = linear;
       metadata.parsedHdrCapacityMax = parsed;
+      parsedHdrCapacityMaxFromSource = true;
       if (!parsedGainMapMaxFromSource) {
         metadata.gainMapMax = toTriple(linear);
         metadata.parsedGainMapMax = toTriple(parsed);
@@ -298,7 +336,12 @@ export function parseHdrGainMapMetadataFromText(decoded: string): GainMapMetadat
     }),
   ].every(Boolean);
 
-  if (!parsedSuccessfully || !isValidLinearMetadata(metadata)) {
+  if (
+    !parsedSuccessfully
+    || !parsedGainMapMaxFromSource
+    || !parsedHdrCapacityMaxFromSource
+    || !isValidLinearMetadata(metadata)
+  ) {
     return null;
   }
 

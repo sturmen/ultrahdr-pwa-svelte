@@ -117,6 +117,55 @@ function loadJpegFixture(filename) {
   return new File([bytes], filename, { type: 'image/jpeg' });
 }
 
+function asciiBytes(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function fakeJpeg(width: number, height: number, app1Payload: Uint8Array | null = null): Uint8Array {
+  const segments: Uint8Array[] = [new Uint8Array([0xff, 0xd8])];
+  if (app1Payload) {
+    const length = app1Payload.length + 2;
+    segments.push(new Uint8Array([0xff, 0xe1, (length >> 8) & 0xff, length & 0xff]));
+    segments.push(app1Payload);
+  }
+  segments.push(new Uint8Array([
+    0xff, 0xc0, 0x00, 0x11,
+    0x08,
+    (height >> 8) & 0xff, height & 0xff,
+    (width >> 8) & 0xff, width & 0xff,
+    0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    0xff, 0xd9,
+  ]));
+  return concatBytes(...segments);
+}
+
+function malformedGainMapXmp(gainMapLength: number): Uint8Array {
+  return asciiBytes([
+    'http://ns.adobe.com/xap/1.0/\0',
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+    '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+    '<rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/" hdrgm:Version="1" hdrgm:HDRCapacityMax="3">',
+    '<Container:Directory><rdf:Seq>',
+    '<rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="Primary" Item:Mime="image/jpeg"/></rdf:li>',
+    `<rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="GainMap" Item:Mime="image/jpeg" Item:Length="${gainMapLength}"/></rdf:li>`,
+    '</rdf:Seq></Container:Directory>',
+    '</rdf:Description>',
+    '</rdf:RDF>',
+    '</x:xmpmeta>',
+  ].join(''));
+}
+
 function extractStages(onProgressSpy) {
   return onProgressSpy.mock.calls
     .map(([event]) => event?.stage)
@@ -196,6 +245,30 @@ describe('processImage gain map decision (fixture driven)', () => {
     expect(extractStages(onProgress)).not.toContain('generate-gain-map');
     expect(gmnetCalls).toHaveLength(0);
     expect(extractCompletionMode(onProgress)).toBe('preserve-with-rotation');
+  });
+
+  it('regenerates instead of preserving marker-detected gain maps with invalid metadata', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const gainMapBytes = fakeJpeg(20, 20);
+    const baseBytes = fakeJpeg(10, 10, malformedGainMapXmp(gainMapBytes.length));
+    const fileBytes = concatBytes(baseBytes, gainMapBytes);
+    const file = new File([fileBytes], 'malformed-legacy-gainmap.jpg', { type: 'image/jpeg' });
+    file.arrayBuffer = vi.fn(async () => fileBytes.buffer.slice(0));
+    const onProgress = vi.fn();
+
+    await processImage(file, {
+      discardGainMap: false,
+      stripExif: true,
+      onProgress,
+    });
+
+    expect(extractCompletionMode(onProgress)).toBe('generated');
+    expect(extractStages(onProgress)).toContain('generate-gain-map');
+    expect(gmnetCalls.length).toBeGreaterThan(0);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'preservation-fallback',
+      reason: 'invalid-gain-map-metadata',
+    }));
   });
 
   if (bfFixtures.length === 0) {

@@ -101,6 +101,57 @@ const extractedExifPayloadOrientation6 = new Uint8Array([
     0x00, 0x00, 0x00, 0x00,
 ]);
 
+function asciiBytes(value: string): Uint8Array {
+    return new TextEncoder().encode(value);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+    }
+    return out;
+}
+
+function fakeJpeg(width: number, height: number, app1Payload: Uint8Array | null = null): Uint8Array {
+    const segments: Uint8Array[] = [
+        new Uint8Array([0xff, 0xd8]),
+    ];
+    if (app1Payload) {
+        const length = app1Payload.length + 2;
+        segments.push(new Uint8Array([0xff, 0xe1, (length >> 8) & 0xff, length & 0xff]));
+        segments.push(app1Payload);
+    }
+    segments.push(new Uint8Array([
+        0xff, 0xc0, 0x00, 0x11,
+        0x08,
+        (height >> 8) & 0xff, height & 0xff,
+        (width >> 8) & 0xff, width & 0xff,
+        0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+        0xff, 0xd9,
+    ]));
+    return concatBytes(...segments);
+}
+
+function gcontainerXmp(gainMapLength: number, metadataAttributes = 'hdrgm:Version="1" hdrgm:GainMapMax="3" hdrgm:HDRCapacityMax="3"'): Uint8Array {
+    return asciiBytes([
+        'http://ns.adobe.com/xap/1.0/\0',
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+        `<rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/" ${metadataAttributes}>`,
+        '<Container:Directory><rdf:Seq>',
+        '<rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="Primary" Item:Mime="image/jpeg"/></rdf:li>',
+        `<rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="GainMap" Item:Mime="image/jpeg" Item:Length="${gainMapLength}"/></rdf:li>`,
+        '</rdf:Seq></Container:Directory>',
+        '</rdf:Description>',
+        '</rdf:RDF>',
+        '</x:xmpmeta>',
+    ].join(''));
+}
+
 const decoderInstance = {
     init: vi.fn(async () => { }),
     setImage: vi.fn(),
@@ -871,7 +922,7 @@ describe('processImage UltraHDR preservation path', () => {
         expect(encoderInstance.encode).toHaveBeenCalled();
     });
 
-    it('allows adjusting headroom metadata during UltraHDR JPEG preservation', async () => {
+    it('keeps preserved UltraHDR JPEG metadata unchanged even when maxContentBoost is explicit', async () => {
         const { processImage } = await import('../processing-core.js');
         const { isUhdrImage } = await import('../ultrahdr-wasm.js');
         isUhdrImage.mockResolvedValue(true);
@@ -890,11 +941,30 @@ describe('processImage UltraHDR preservation path', () => {
 
         expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
             expect.any(Uint8Array),
-            expect.objectContaining({
-                hdrCapacityMax: targetBoost,
-                gainMapMax: [targetBoost, targetBoost, targetBoost]
-            })
+            expect.objectContaining(gainMapMetadata)
         );
+    });
+
+    it('extracts marker fallback components using GContainer GainMap length instead of area ranking', async () => {
+        const { extractPreservedJpegComponentsFromMarkers } = await import('../processing-core.js');
+        const gainMapBytes = fakeJpeg(20, 20);
+        const baseBytes = fakeJpeg(10, 10, gcontainerXmp(gainMapBytes.length));
+        const fileBytes = concatBytes(baseBytes, gainMapBytes);
+
+        const components = extractPreservedJpegComponentsFromMarkers(fileBytes);
+
+        expect(Array.from(components.baseJpegBytes)).toEqual(Array.from(baseBytes));
+        expect(Array.from(components.gainMapJpegBytes)).toEqual(Array.from(gainMapBytes));
+        expect(components.gainMapMetadata.hdrCapacityMax).toBeCloseTo(8, 8);
+    });
+
+    it('rejects marker fallback instead of preserving two JPEG streams with malformed gain-map metadata', async () => {
+        const { extractPreservedJpegComponentsFromMarkers } = await import('../processing-core.js');
+        const gainMapBytes = fakeJpeg(20, 20);
+        const baseBytes = fakeJpeg(10, 10, gcontainerXmp(gainMapBytes.length, 'hdrgm:Version="1" hdrgm:HDRCapacityMax="3"'));
+        const fileBytes = concatBytes(baseBytes, gainMapBytes);
+
+        expect(() => extractPreservedJpegComponentsFromMarkers(fileBytes)).toThrow(/invalid gain-map metadata/i);
     });
 
     it('forces re-encode and downsampling if an existing UltraHDR JPEG exceeds IMAGE_MAX_LONG_EDGE', async () => {
