@@ -29,6 +29,7 @@
 - `src/lib/runtime-assets.ts`, `src/lib/runtime-asset-definitions.ts`: shared offline-first runtime asset descriptors, versioned URL resolution, fetch/cache fallback, and loader diagnostics context for WASM/module assets, including libheif HEIC decoding assets.
 - `src/lib/diagnostics-events.ts`: typed diagnostics breadcrumb helpers and domain event-name source of truth used by UI, runtime init, pipeline telemetry, and runtime asset loaders.
 - `src/lib/processing-*.ts`: route planning, progress, queueing, preferences, runtime reducer, worker protocol, and processing route types.
+- `src/lib/gain-map-metadata.ts`: strictly typed gain-map metadata construction and imported XMP parsing; imported UltraHDR XMP gain/capacity fields are log2-encoded and normalized to libultrahdr's linear metadata contract before preservation encoding.
 - `src/lib/diagnostics.ts`, `src/lib/pipeline-telemetry.ts`, `src/lib/storage-diagnostics.ts`: structured breadcrumb and diagnostics surface.
 - `src/sw.ts`: Workbox service worker, offline runtime bundle validation, repair, and cache management.
 - `fixtures/`: repo-owned test fixtures for unit, integration, and e2e coverage.

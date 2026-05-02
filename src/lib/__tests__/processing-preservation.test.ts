@@ -267,6 +267,67 @@ describe('processImage UltraHDR preservation path', () => {
         );
     });
 
+    it('forwards preserved Sigma-style XMP metadata as positive linear libultrahdr values', async () => {
+        const { processImage } = await import('../processing-core.js');
+        const { processHeic } = await import('../heic-processing.js');
+        const { parseHdrGainMapMetadataFromText } = await import('../gain-map-metadata.js');
+        const { isUhdrImage } = await import('../ultrahdr-wasm.js');
+        isUhdrImage.mockResolvedValue(false);
+
+        const sigmaLikeXmp = [
+            '<?xpacket begin=""?>',
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+            '<rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"',
+            ' hdrgm:Version="1"',
+            ' hdrgm:GainMapMin="-0.000026"',
+            ' hdrgm:GainMapMax="3"',
+            ' hdrgm:Gamma="1"',
+            ' hdrgm:OffsetSDR="0.015625"',
+            ' hdrgm:OffsetHDR="0.015625"',
+            ' hdrgm:HDRCapacityMin="0"',
+            ' hdrgm:HDRCapacityMax="3"',
+            '/>',
+            '</rdf:RDF>',
+            '</x:xmpmeta>',
+        ].join('');
+        const parsedMetadata = parseHdrGainMapMetadataFromText(sigmaLikeXmp);
+        expect(parsedMetadata).not.toBeNull();
+
+        processHeic.mockResolvedValueOnce({
+            sdr: makeSdrImageData(),
+            gainMap: makeGainMapImageData(),
+            gainMapMetadata: parsedMetadata,
+            name: 'sigma.heic'
+        });
+
+        const file = new File([new Uint8Array([0, 1, 2, 3])], 'sigma.heic', { type: 'image/heic' });
+
+        await processImage(file, {
+            quality: 0.95,
+            discardGainMap: false,
+            stripExif: true
+        });
+
+        expect(encoderInstance.setCompressedGainMapImage).toHaveBeenCalledWith(
+            expect.any(Uint8Array),
+            expect.objectContaining({
+                gainMapMin: [
+                    expect.closeTo(Math.pow(2, -0.000026), 8),
+                    expect.closeTo(Math.pow(2, -0.000026), 8),
+                    expect.closeTo(Math.pow(2, -0.000026), 8),
+                ],
+                gainMapMax: [
+                    expect.closeTo(8, 8),
+                    expect.closeTo(8, 8),
+                    expect.closeTo(8, 8),
+                ],
+                hdrCapacityMin: 1,
+                hdrCapacityMax: expect.closeTo(8, 8),
+            })
+        );
+    });
+
     it('uses HEIC gainMapHeadroom when explicit gain-map metadata is unavailable and rotation is applied', async () => {
         const { processImage } = await import('../processing-core.js');
         const { processHeic } = await import('../heic-processing.js');

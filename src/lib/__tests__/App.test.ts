@@ -185,7 +185,7 @@ describe('App shell and startup gate', () => {
   it('renders a minimal header and keeps trust messaging on the About page', async () => {
     render(App);
 
-    await screen.findByRole('heading', { name: /MakeBetterJPEGs\.com/i });
+    await screen.findByRole('heading', { name: /^MakeBetterJPEGs$/i });
     await screen.findByTestId('tab-convert');
 
     expect(screen.getByTestId('app-shell')).toBeInTheDocument();
@@ -196,7 +196,8 @@ describe('App shell and startup gate', () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/private processing/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/works offline/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/no cloud upload/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/no cloud upload/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /MakeBetterJPEGs\.com/i })).not.toBeInTheDocument();
   });
 
   it('opens About page from the compact top bar and moves Back to Converter into the header', async () => {
@@ -206,8 +207,11 @@ describe('App shell and startup gate', () => {
     await fireEvent.click(screen.getByTestId('app-about-link'));
 
     expect(
-      screen.getByRole('heading', { name: /About MakeBetterJPEGs\.com/i }),
+      screen.getByRole('heading', { name: /About MakeBetterJPEGs$/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /About MakeBetterJPEGs\.com/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/the app is a progressive web app/i)).toBeInTheDocument();
     expect(screen.queryByText(/share in and share out/i)).not.toBeInTheDocument();
     expect(
