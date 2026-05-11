@@ -292,7 +292,7 @@ const DEFAULT_PROCESS_OPTIONS: ProcessOptions = {
 };
 let gainMapGenerator: GmnetGainMapGenerator | null = null;
 let processHeicProcessor: ((file: File, options?: { quality?: number; discardGainMap?: boolean }) => Promise<DecodedRasterImage | HdrIntentHeifResult | PreservedHeifResult>) | null = null;
-let processHeifHdrProcessor: ((file: File) => Promise<HdrIntentHeifResult>) | null = null;
+let processHeifHdrProcessor: ((file: File, options?: { targetPeakLinear?: number }) => Promise<HdrIntentHeifResult>) | null = null;
 let processTiffProcessor: ((file: Blob) => Promise<DecodedRasterImage>) | null = null;
 
 async function getProcessHeic(): Promise<(file: File, options?: { quality?: number; discardGainMap?: boolean }) => Promise<DecodedRasterImage | HdrIntentHeifResult | PreservedHeifResult>> {
@@ -303,7 +303,7 @@ async function getProcessHeic(): Promise<(file: File, options?: { quality?: numb
     return processHeicProcessor;
 }
 
-async function getProcessHeifHdr(): Promise<(file: File) => Promise<HdrIntentHeifResult>> {
+async function getProcessHeifHdr(): Promise<(file: File, options?: { targetPeakLinear?: number }) => Promise<HdrIntentHeifResult>> {
     if (!processHeifHdrProcessor) {
         const module = await import('./heif-hdr-processing.js');
         processHeifHdrProcessor = module.processHeifHdr;
@@ -1600,7 +1600,9 @@ async function preprocessFile(
         console.log('[Process] Detected HIF, decoding HDR intent...');
         try {
             const processHeifHdr = await getProcessHeifHdr();
-            return await processHeifHdr(file);
+            return await processHeifHdr(file, {
+                targetPeakLinear: options.maxContentBoost ?? DEFAULT_MAX_CONTENT_BOOST,
+            });
         } catch (e) {
             console.error('[Process] HIF HDR-intent decode failed:', e);
             throw e;

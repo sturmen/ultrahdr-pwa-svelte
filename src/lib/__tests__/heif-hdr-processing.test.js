@@ -508,4 +508,215 @@ describe('heif-hdr-processing.js', () => {
 
     await expect(processHeifHdr(file)).rejects.toThrow(/HDR HEIF input/);
   });
+
+  describe('inverse OETF helpers (round-trip)', () => {
+    it('linearToPq is the inverse of pqToLinear within tolerance', async () => {
+      const mod = await import('../heif-hdr-processing.js');
+      const samples = [0.001, 0.05, 0.5, 1.0, 2.0, 5.0, 10.0, 25.0, 49.0];
+      for (const linear of samples) {
+        const ePrime = mod.linearToPq(linear);
+        expect(ePrime).toBeGreaterThanOrEqual(0);
+        expect(ePrime).toBeLessThanOrEqual(1);
+        const decoded = pqEotfFromNormalized(ePrime);
+        expect(decoded).toBeCloseTo(linear, 3);
+      }
+    });
+
+    it('linearToHlg is the inverse of hlgToLinear within tolerance for in-range scene values', async () => {
+      const mod = await import('../heif-hdr-processing.js');
+      const samples = [0.001, 0.01, 0.05, 0.1, 0.5, 0.99];
+      for (const linear of samples) {
+        const ePrime = mod.linearToHlg(linear);
+        expect(ePrime).toBeGreaterThanOrEqual(0);
+        expect(ePrime).toBeLessThanOrEqual(1);
+        const a = 0.17883277;
+        const b = 1 - 4 * a;
+        const c = 0.5 - a * Math.log(4 * a);
+        const decoded = ePrime <= 0.5
+          ? (ePrime * ePrime) / 3
+          : (Math.exp((ePrime - c) / a) + b) / 12;
+        expect(decoded).toBeCloseTo(linear, 4);
+      }
+    });
+
+    it('linearToPq clamps inputs to [0, LIBULTRAHDR_MAX_LINEAR]', async () => {
+      const mod = await import('../heif-hdr-processing.js');
+      expect(mod.linearToPq(-1)).toBe(0);
+      expect(mod.linearToPq(0)).toBe(0);
+      const max = 10000 / 203;
+      const top = mod.linearToPq(max);
+      const beyond = mod.linearToPq(max * 10);
+      expect(beyond).toBeCloseTo(top, 6);
+    });
+  });
+
+  describe('peak normalization (targetPeakLinear)', () => {
+    it('rescales Float16 RGB so observed peak channel lands at targetPeakLinear', async () => {
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'dim_hdr.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      const lowPqCode = 8192;
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[lowPqCode, lowPqCode, lowPqCode, 65535]]),
+      );
+
+      const targetPeakLinear = 8.0;
+      const result = await processHeifHdr(file, { targetPeakLinear });
+
+      const observed = pqEotfFromCode(lowPqCode);
+      const expectedScale = targetPeakLinear / observed;
+      const expectedChannel = Math.min(10000 / 203, observed * expectedScale);
+      const pixel = readHalfFloatPixel(result.hdrIntent.data);
+      expect(pixel.r).toBeCloseTo(expectedChannel, 2);
+      expect(pixel.g).toBeCloseTo(expectedChannel, 2);
+      expect(pixel.b).toBeCloseTo(expectedChannel, 2);
+    });
+
+    it('Float16 output clamps at LIBULTRAHDR_MAX_LINEAR after scale', async () => {
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'bright_hdr.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[16384, 16384, 16384, 65535]]),
+      );
+
+      const result = await processHeifHdr(file, { targetPeakLinear: 1000 });
+      const pixel = readHalfFloatPixel(result.hdrIntent.data);
+      const max = 10000 / 203;
+      expect(pixel.r).toBeCloseTo(max, 1);
+      expect(pixel.g).toBeCloseTo(max, 1);
+      expect(pixel.b).toBeCloseTo(max, 1);
+    });
+
+    it('skips normalization when observed peak is zero (all-black input)', async () => {
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'black_hdr.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[0, 0, 0, 65535]]),
+      );
+
+      const result = await processHeifHdr(file, { targetPeakLinear: 8 });
+      const pixel = readHalfFloatPixel(result.hdrIntent.data);
+      expect(pixel.r).toBeCloseTo(0, 3);
+      expect(pixel.g).toBeCloseTo(0, 3);
+      expect(pixel.b).toBeCloseTo(0, 3);
+    });
+
+    it('uses scale of 1.0 when targetPeakLinear is not provided (regression guard)', async () => {
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'unboosted_hdr.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      const pqCode = 32768;
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[pqCode, pqCode, pqCode, 65535]]),
+      );
+
+      const result = await processHeifHdr(file);
+      const pixel = readHalfFloatPixel(result.hdrIntent.data);
+      const expected = Math.min((10000 / 203), pqEotfFromCode(pqCode));
+      expect(pixel.r).toBeCloseTo(expected, 3);
+    });
+
+    it('rescales 1010102 packed channels so brightest pixel decodes near targetPeakLinear', async () => {
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'low_mem_hdr.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      const dimCode10Bit = 256;
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[dimCode10Bit, dimCode10Bit, dimCode10Bit, 1023]], { bitsPerPixel: 10 }),
+      );
+
+      const targetPeakLinear = 8.0;
+      const result = await processHeifHdr(file, { targetPeakLinear });
+      expect(result.hdrIntent.format).toBe('rgba1010102');
+
+      const pixel = readPackedRgba1010102Pixel(result.hdrIntent.data);
+      const decodedLinear = pqEotfFromNormalized(pixel.r / 1023);
+      expect(decodedLinear).toBeCloseTo(targetPeakLinear, 1);
+      expect(pixel.g).toBe(pixel.r);
+      expect(pixel.b).toBe(pixel.r);
+    });
+  });
+
+  describe('peak-normalization diagnostics', () => {
+    it('records hdr-intent-peak-normalized breadcrumb on rgbaf16 branch', async () => {
+      delete globalThis.__ultrahdrDiagnosticsRecorder;
+      const diagnosticsEvents = await import('../diagnostics-events.ts');
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'normalize_probe.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[8192, 8192, 8192, 65535]]),
+      );
+
+      await processHeifHdr(file, { targetPeakLinear: 8.0 });
+
+      const events = diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis);
+      const normalized = events.find((e) => e.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentPeakNormalized);
+      expect(normalized).toBeTruthy();
+      expect(normalized.context).toMatchObject({
+        format: 'rgbaf16',
+        targetPeak: 8.0,
+      });
+      expect(typeof normalized.context.observedPeak).toBe('number');
+      expect(typeof normalized.context.scale).toBe('number');
+    });
+
+    it('records hdr-intent-peak-normalize-skipped with reason=no-signal on zero-luminance input', async () => {
+      delete globalThis.__ultrahdrDiagnosticsRecorder;
+      const diagnosticsEvents = await import('../diagnostics-events.ts');
+      const { processHeifHdr } = await import('../heif-hdr-processing.js');
+      const source = makeHdrNclxBuffer({ transfer: 16 });
+      const file = new File([source], 'normalize_skip.HIF', { type: 'image/heif' });
+      file.arrayBuffer = vi.fn(async () => source.buffer.slice(0));
+
+      decodeMock.mockReturnValueOnce([
+        { get_width: () => 1, get_height: () => 1, handle: { id: 1 } },
+      ]);
+      decodeMock.mockReturnValueOnce(
+        makeInterleaved16BitRgba(1, 1, [[0, 0, 0, 65535]]),
+      );
+
+      await processHeifHdr(file, { targetPeakLinear: 8.0 });
+
+      const events = diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis);
+      const skipped = events.find((e) => e.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentPeakNormalizeSkipped);
+      expect(skipped).toBeTruthy();
+      expect(skipped.context).toMatchObject({
+        reason: 'no-signal',
+        format: 'rgbaf16',
+      });
+    });
+  });
 });

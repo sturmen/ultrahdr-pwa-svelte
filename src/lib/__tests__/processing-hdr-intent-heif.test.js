@@ -200,6 +200,36 @@ describe('processImage HDR-intent HEIF branch', () => {
     }));
   });
 
+  it('forwards maxContentBoost from ProcessOptions as targetPeakLinear to processHeifHdr', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'test_hdr_no_gain_map.HIF', { type: 'image/heif' });
+    processHeifHdrMock.mockResolvedValue({
+      kind: 'hdr-intent-heif',
+      hdrIntent: {
+        data: new Uint8Array([0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c]),
+        width: 1,
+        height: 1,
+        strideBytes: 8,
+        format: 'rgbaf16',
+        cg: 'bt2100',
+        ct: 'linear',
+        range: 'full',
+      },
+      sourceExifBytes: null,
+    });
+
+    await processImage(file, {
+      stripExif: true,
+      discardGainMap: false,
+      maxContentBoost: 8,
+    });
+
+    expect(processHeifHdrMock).toHaveBeenCalledTimes(1);
+    const lastCall = processHeifHdrMock.mock.calls[0];
+    expect(lastCall[0]).toBeInstanceOf(File);
+    expect(lastCall[1]).toMatchObject({ targetPeakLinear: 8 });
+  });
+
   it('fails fast when runtime HDR-intent decode is unavailable', async () => {
     const { processImage } = await import('../processing-core.js');
     const file = new File([new Uint8Array([1, 2, 3, 4])], 'test_hdr_no_gain_map.HIF', { type: 'image/heif' });

@@ -139,6 +139,8 @@ export const DIAGNOSTICS_EVENT_NAMES = {
   processingMemory: {
     hdrIntentSourceReleased: 'hdr-intent-source-released',
     hdrIntentFormatDowngraded: 'hdr-intent-format-downgraded',
+    hdrIntentPeakNormalized: 'hdr-intent-peak-normalized',
+    hdrIntentPeakNormalizeSkipped: 'hdr-intent-peak-normalize-skipped',
     gmnetSourceImageReleased: 'gmnet-source-image-released',
     sdrPixelSourceReleased: 'sdr-pixel-source-released',
     compressedPayloadReleased: 'compressed-payload-released',
@@ -503,6 +505,19 @@ export type ProcessingMemoryDiagnosticsEvent =
       bitsPerPixel: number | null;
     }
   | {
+      type: 'hdr-intent-peak-normalized';
+      observedPeak: number;
+      targetPeak: number;
+      scale: number;
+      stops: number;
+      format: string;
+    }
+  | {
+      type: 'hdr-intent-peak-normalize-skipped';
+      reason: string;
+      format: string;
+    }
+  | {
       type: 'gmnet-source-image-released';
       trigger: string | null;
       sourceBytes: number | null;
@@ -620,6 +635,29 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
           reason: event.reason,
           memoryTier: event.memoryTier,
           bitsPerPixel: event.bitsPerPixel,
+        }),
+      };
+    case 'hdr-intent-peak-normalized':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentPeakNormalized,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          observedPeak: event.observedPeak,
+          targetPeak: event.targetPeak,
+          scale: event.scale,
+          stops: event.stops,
+          format: event.format,
+        }),
+      };
+    case 'hdr-intent-peak-normalize-skipped':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentPeakNormalizeSkipped,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          reason: event.reason,
+          format: event.format,
         }),
       };
     case 'gmnet-source-image-released':

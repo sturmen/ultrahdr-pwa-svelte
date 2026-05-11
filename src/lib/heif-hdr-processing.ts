@@ -214,7 +214,6 @@ function parseHeifContainerTransformInfo(bytes: Uint8Array): ContainerTransformI
 
 const HEIF_TRANSFER_PQ = 16;
 const HEIF_TRANSFER_HLG = 18;
-const HDR_LINEAR_EXPOSURE_SCALE = 1.0;
 const LIBULTRAHDR_MAX_LINEAR = 10000 / 203;
 
 function isSupportedHdrInfo(info: HdrNclxInfo | null): info is HdrNclxInfo {
@@ -292,6 +291,51 @@ function decodeHdrChannelToLinear(codeValue: number, transfer: number, codeMax: 
         return hlgToLinear(normalized);
     }
     throw new Error(`Unsupported HDR transfer: ${transfer}`);
+}
+
+export function linearToPq(linear: number): number {
+    const clamped = Math.max(0, Math.min(LIBULTRAHDR_MAX_LINEAR, linear));
+    if (clamped <= 0) {
+        return 0;
+    }
+    const m1 = 2610 / 16384;
+    const m2 = 2523 / 32;
+    const c1 = 3424 / 4096;
+    const c2 = 2413 / 128;
+    const c3 = 2392 / 128;
+    const y = (clamped * 203) / 10000;
+    const yPowM1 = y ** m1;
+    const numerator = c1 + c2 * yPowM1;
+    const denominator = 1 + c3 * yPowM1;
+    return (numerator / denominator) ** m2;
+}
+
+export function linearToHlg(linear: number): number {
+    const clamped = Math.max(0, Math.min(LIBULTRAHDR_MAX_LINEAR, linear));
+    if (clamped <= 0) {
+        return 0;
+    }
+    const a = 0.17883277;
+    const b = 1 - 4 * a;
+    const c = 0.5 - a * Math.log(4 * a);
+    if (clamped <= 1 / 12) {
+        return Math.sqrt(3 * clamped);
+    }
+    return a * Math.log(12 * clamped - b) + c;
+}
+
+function encodeLinearToHdrChannel(linear: number, transfer: number, codeMax: number): number {
+    const clamped = Math.max(0, Math.min(LIBULTRAHDR_MAX_LINEAR, linear));
+    let ePrime: number;
+    if (transfer === HEIF_TRANSFER_PQ) {
+        ePrime = linearToPq(clamped);
+    } else if (transfer === HEIF_TRANSFER_HLG) {
+        ePrime = linearToHlg(clamped);
+    } else {
+        throw new Error(`Unsupported HDR transfer: ${transfer}`);
+    }
+    const normalized = Math.max(0, Math.min(1, ePrime));
+    return Math.max(0, Math.min(codeMax, Math.round(normalized * codeMax)));
 }
 
 function resolveChannelCodeMax(interleavedChannel: HeifInterleavedChannel): number {
@@ -388,10 +432,25 @@ async function initLibHeif(): Promise<LibHeifModule> {
     return libheif;
 }
 
+export type PeakNormalizationOutcome =
+    | {
+        kind: 'applied';
+        observedPeak: number;
+        targetPeak: number;
+        scale: number;
+        format: 'rgbaf16' | 'rgba1010102';
+    }
+    | {
+        kind: 'skipped';
+        reason: string;
+        format: 'rgbaf16' | 'rgba1010102';
+    };
+
 export interface DecodePrimaryToHdrIntentResult {
     image: DecodedHdrIntentImage;
     formatResolution: HdrIntentFormatResolution;
     bitsPerPixel: number;
+    peakNormalization: PeakNormalizationOutcome | null;
 }
 
 function decodePrimaryToHdrIntent(
@@ -399,7 +458,7 @@ function decodePrimaryToHdrIntent(
     primaryImage: HeifPrimaryImage,
     nclx: HdrNclxInfo,
     orientation: number,
-    options: { memoryTier?: HdrIntentMemoryTier } = {},
+    options: { memoryTier?: HdrIntentMemoryTier; targetPeakLinear?: number } = {},
 ): DecodePrimaryToHdrIntentResult {
     const width = primaryImage.get_width();
     const height = primaryImage.get_height();
@@ -435,6 +494,46 @@ function decodePrimaryToHdrIntent(
         memoryTier: options.memoryTier ?? 'mid',
     });
     const shouldPack1010102 = formatResolution.format === 'rgba1010102';
+    const targetPeakLinear = options.targetPeakLinear;
+    const peakNormalizeRequested = typeof targetPeakLinear === 'number' && Number.isFinite(targetPeakLinear) && targetPeakLinear > 0;
+
+    let observedPeakLinear = 0;
+    let peakNormalization: PeakNormalizationOutcome | null = null;
+    if (peakNormalizeRequested) {
+        for (let y = 0; y < outHeight; y++) {
+            for (let x = 0; x < outWidth; x++) {
+                const srcCoord = mapOrientedPixelToSource(x, y, width, height, orientation);
+                const srcOffset = srcCoord.y * strideBytes + srcCoord.x * 8;
+                const r = Math.min(LIBULTRAHDR_MAX_LINEAR, decodeHdrChannelToLinear(srcView.getUint16(srcOffset, true), nclx.transfer, channelCodeMax));
+                const g = Math.min(LIBULTRAHDR_MAX_LINEAR, decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 2, true), nclx.transfer, channelCodeMax));
+                const b = Math.min(LIBULTRAHDR_MAX_LINEAR, decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 4, true), nclx.transfer, channelCodeMax));
+                if (r > observedPeakLinear) observedPeakLinear = r;
+                if (g > observedPeakLinear) observedPeakLinear = g;
+                if (b > observedPeakLinear) observedPeakLinear = b;
+            }
+        }
+    }
+
+    const targetFormat: 'rgbaf16' | 'rgba1010102' = shouldPack1010102 ? 'rgba1010102' : 'rgbaf16';
+    let scale = 1.0;
+    if (peakNormalizeRequested) {
+        if (observedPeakLinear > 0 && Number.isFinite(observedPeakLinear)) {
+            scale = (targetPeakLinear as number) / observedPeakLinear;
+            peakNormalization = {
+                kind: 'applied',
+                observedPeak: observedPeakLinear,
+                targetPeak: targetPeakLinear as number,
+                scale,
+                format: targetFormat,
+            };
+        } else {
+            peakNormalization = {
+                kind: 'skipped',
+                reason: 'no-signal',
+                format: targetFormat,
+            };
+        }
+    }
 
     if (shouldPack1010102) {
         emitHeifProbe('heif-pre-pack1010102-alloc');
@@ -442,14 +541,27 @@ function decodePrimaryToHdrIntent(
         const packedView = new DataView(packedBytes.buffer);
         emitHeifProbe('heif-post-pack1010102-alloc');
 
+        const transfer = nclx.transfer;
         for (let y = 0; y < outHeight; y++) {
             for (let x = 0; x < outWidth; x++) {
                 const srcCoord = mapOrientedPixelToSource(x, y, width, height, orientation);
                 const srcOffset = srcCoord.y * strideBytes + srcCoord.x * 8;
                 const dstIndex = y * outWidth + x;
-                const r = scaleChannelTo10Bit(srcView.getUint16(srcOffset, true), channelCodeMax);
-                const g = scaleChannelTo10Bit(srcView.getUint16(srcOffset + 2, true), channelCodeMax);
-                const b = scaleChannelTo10Bit(srcView.getUint16(srcOffset + 4, true), channelCodeMax);
+                let r: number;
+                let g: number;
+                let b: number;
+                if (peakNormalizeRequested && scale !== 1.0) {
+                    const linR = decodeHdrChannelToLinear(srcView.getUint16(srcOffset, true), transfer, channelCodeMax) * scale;
+                    const linG = decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 2, true), transfer, channelCodeMax) * scale;
+                    const linB = decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 4, true), transfer, channelCodeMax) * scale;
+                    r = encodeLinearToHdrChannel(linR, transfer, 1023);
+                    g = encodeLinearToHdrChannel(linG, transfer, 1023);
+                    b = encodeLinearToHdrChannel(linB, transfer, 1023);
+                } else {
+                    r = scaleChannelTo10Bit(srcView.getUint16(srcOffset, true), channelCodeMax);
+                    g = scaleChannelTo10Bit(srcView.getUint16(srcOffset + 2, true), channelCodeMax);
+                    b = scaleChannelTo10Bit(srcView.getUint16(srcOffset + 4, true), channelCodeMax);
+                }
                 const a = scaleAlphaTo2Bit(srcView.getUint16(srcOffset + 6, true), channelCodeMax);
                 const packedPixel = (r & 0x3ff)
                     | ((g & 0x3ff) << 10)
@@ -476,6 +588,7 @@ function decodePrimaryToHdrIntent(
             },
             formatResolution,
             bitsPerPixel,
+            peakNormalization,
         };
     }
 
@@ -492,15 +605,15 @@ function decodePrimaryToHdrIntent(
 
             const r = Math.min(
                 LIBULTRAHDR_MAX_LINEAR,
-                decodeHdrChannelToLinear(srcView.getUint16(srcOffset, true), nclx.transfer, channelCodeMax) * HDR_LINEAR_EXPOSURE_SCALE
+                decodeHdrChannelToLinear(srcView.getUint16(srcOffset, true), nclx.transfer, channelCodeMax) * scale
             );
             const g = Math.min(
                 LIBULTRAHDR_MAX_LINEAR,
-                decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 2, true), nclx.transfer, channelCodeMax) * HDR_LINEAR_EXPOSURE_SCALE
+                decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 2, true), nclx.transfer, channelCodeMax) * scale
             );
             const b = Math.min(
                 LIBULTRAHDR_MAX_LINEAR,
-                decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 4, true), nclx.transfer, channelCodeMax) * HDR_LINEAR_EXPOSURE_SCALE
+                decodeHdrChannelToLinear(srcView.getUint16(srcOffset + 4, true), nclx.transfer, channelCodeMax) * scale
             );
             const a = Math.max(0, Math.min(1, srcView.getUint16(srcOffset + 6, true) / channelCodeMax));
 
@@ -528,10 +641,14 @@ function decodePrimaryToHdrIntent(
         },
         formatResolution,
         bitsPerPixel,
+        peakNormalization,
     };
 }
 
-export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
+export async function processHeifHdr(
+    file: File,
+    options: { targetPeakLinear?: number } = {},
+): Promise<HdrIntentHeifResult> {
     emitHeifProbe('heif-start');
     const heif = await initLibHeif();
     emitHeifProbe('heif-module-ready');
@@ -565,7 +682,10 @@ export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
         const primary = images[0];
         const memoryTier = getProcessingProfile().memoryTier;
         emitHeifProbe('heif-pre-decode-primary');
-        const decodeResult = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation, { memoryTier });
+        const decodeResult = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation, {
+            memoryTier,
+            targetPeakLinear: options.targetPeakLinear,
+        });
         emitHeifProbe('heif-post-decode-primary');
         const hdrIntentImage = decodeResult.image;
         if (decodeResult.formatResolution.downgraded) {
@@ -577,6 +697,25 @@ export async function processHeifHdr(file: File): Promise<HdrIntentHeifResult> {
                 memoryTier,
                 bitsPerPixel: decodeResult.bitsPerPixel,
             });
+        }
+        if (decodeResult.peakNormalization) {
+            const outcome = decodeResult.peakNormalization;
+            if (outcome.kind === 'applied') {
+                recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+                    type: 'hdr-intent-peak-normalized',
+                    observedPeak: outcome.observedPeak,
+                    targetPeak: outcome.targetPeak,
+                    scale: outcome.scale,
+                    stops: Math.log2(outcome.targetPeak),
+                    format: outcome.format,
+                });
+            } else {
+                recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+                    type: 'hdr-intent-peak-normalize-skipped',
+                    reason: outcome.reason,
+                    format: outcome.format,
+                });
+            }
         }
         const hdrIntent: HdrIntentPayload = hdrIntentImage.format === 'rgba1010102'
             ? {

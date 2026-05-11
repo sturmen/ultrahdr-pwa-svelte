@@ -300,6 +300,56 @@ describe('diagnostics-events', () => {
     });
   });
 
+  it('records HDR-intent peak-normalized breadcrumbs with bounded payload', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'hdr-intent-peak-normalized',
+      observedPeak: 2.0,
+      targetPeak: 8.0,
+      scale: 4.0,
+      stops: 3,
+      format: 'rgbaf16',
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentPeakNormalized,
+      severity: 'info',
+      context: {
+        observedPeak: 2.0,
+        targetPeak: 8.0,
+        scale: 4.0,
+        stops: 3,
+        format: 'rgbaf16',
+      },
+    });
+  });
+
+  it('records HDR-intent peak-normalize-skipped breadcrumbs with reason', async () => {
+    const runtime = createRuntime();
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+
+    diagnosticsEvents.recordProcessingMemoryDiagnostics(runtime, {
+      type: 'hdr-intent-peak-normalize-skipped',
+      reason: 'no-signal',
+      format: 'rgbaf16',
+    });
+
+    const event = diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)[0];
+    expect(event).toMatchObject({
+      category: 'memory',
+      name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentPeakNormalizeSkipped,
+      severity: 'info',
+      context: {
+        reason: 'no-signal',
+        format: 'rgbaf16',
+      },
+    });
+  });
+
   it('records GMNet source-image-released breadcrumbs after last tile step', async () => {
     const runtime = createRuntime();
     const diagnosticsEvents = await import('../diagnostics-events.ts');
