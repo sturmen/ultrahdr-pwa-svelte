@@ -1,6 +1,6 @@
 {
   "name": "makebetterjpegs",
-  "version": "6.0.1",
+  "version": "6.1.0",
   "description": "A progressive webapp to encode UltraHDR JPEG files.",
   "homepage": "https://makebetterjpegs.com",
   "main": "index.js",
