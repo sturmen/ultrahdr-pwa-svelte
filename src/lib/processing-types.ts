@@ -34,6 +34,14 @@ export interface HdrIntentHeifResult {
   sourceExifBytes: Uint8Array | null;
 }
 
+export interface HdrIntentJpegResult {
+  kind: 'hdr-intent-jpeg';
+  hdrIntent: HdrIntentPayload;
+  sourceExifBytes: Uint8Array | null;
+}
+
+export type HdrIntentResult = HdrIntentHeifResult | HdrIntentJpegResult;
+
 export interface DecodedRasterImage {
   data: Uint8Array | Uint8ClampedArray<ArrayBuffer>;
   width: number;

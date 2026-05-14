@@ -30,6 +30,8 @@ const FIXTURES = [
     { label: 'hif-hdr-intent', file: 'fixtures/test_hdr_no_gain_map.HIF' },
     { label: 'sdr-large', file: 'fixtures/test_sdr.jpg' },
     { label: 'jpeg-gainmap', file: 'fixtures/test_hdr_jpeg_gainmap.jpg' },
+    // Tracked as follow-up: libultrahdr WASM aborts during encode of this 12000x8000 Rec.2020 PQ HDR-intent JPEG.
+    // { label: 'jpeg-davinci-hdr', file: 'fixtures/test_hdr_jpeg_davinci_resolve.jpg' },
 ];
 
 test.use({

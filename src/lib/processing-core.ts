@@ -43,10 +43,13 @@ import type { JpegliEncodeOptions } from './jpegli-decoder.js';
 import type {
     DecodedRasterImage,
     HdrIntentHeifResult,
+    HdrIntentJpegResult,
     HdrIntentPayload,
+    HdrIntentResult,
     PreservedHeifResult,
     ProcessingPathClassification,
 } from './processing-types.ts';
+import { parseJpegCicpFromApp2, isJpegHdrInputCicp, processJpegHdr } from './jpeg-hdr-processing.ts';
 
 type GMNetModelVariant = 'realworld' | 'synthetic';
 type GmnetCheckpointingMode = 'off' | 'auto' | 'force';
@@ -76,7 +79,7 @@ type ResolvedProcessOptions = ProcessOptions & {
     __hasExplicitMaxContentBoost: boolean;
 };
 
-type PreprocessedInput = File | HdrIntentHeifResult | PreservedHeifResult | DecodedRasterImage;
+type PreprocessedInput = File | HdrIntentHeifResult | HdrIntentJpegResult | PreservedHeifResult | DecodedRasterImage;
 type EncodedUltraHdrPayload = { sdr: Uint8Array; gainMap: Uint8Array };
 type OrientationDecision = {
     orientation: number;
@@ -113,6 +116,18 @@ function isHdrIntentHeifInput(input: unknown): input is HdrIntentHeifResult {
         && 'kind' in input
         && input.kind === 'hdr-intent-heif'
         && 'hdrIntent' in input;
+}
+
+function isHdrIntentJpegInput(input: unknown): input is HdrIntentJpegResult {
+    return !!input
+        && typeof input === 'object'
+        && 'kind' in input
+        && input.kind === 'hdr-intent-jpeg'
+        && 'hdrIntent' in input;
+}
+
+function isHdrIntentInput(input: unknown): input is HdrIntentResult {
+    return isHdrIntentHeifInput(input) || isHdrIntentJpegInput(input);
 }
 
 function isPreservedHeifInput(input: unknown): input is PreservedHeifResult {
@@ -871,19 +886,20 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
 
         // Check if JPEG already has a gain map (UltraHDR) or is a standard JPEG suitable for lossless SDR preservation
         if (workingFile instanceof File) {
+            const sourceFile: File = workingFile;
             let preserveDecisionMade = false;
             try {
                 const fileBuffer = await telemetry.runStage('read-source-buffer', async () =>
-                    sourceInputBytes && workingFile === sourceInputFile
+                    sourceInputBytes && sourceFile === sourceInputFile
                         ? sourceInputBytes
-                        : new Uint8Array(await workingFile.arrayBuffer())
+                        : new Uint8Array(await sourceFile.arrayBuffer())
                 );
                 throwIfAborted(mergedOptions.abortSignal);
 
                 const isJpeg =
-                    workingFile.type === 'image/jpeg'
-                    || workingFile.name.toLowerCase().endsWith('.jpg')
-                    || workingFile.name.toLowerCase().endsWith('.jpeg');
+                    sourceFile.type === 'image/jpeg'
+                    || sourceFile.name.toLowerCase().endsWith('.jpg')
+                    || sourceFile.name.toLowerCase().endsWith('.jpeg');
 
                 if (isJpeg) {
                     let orientationDecisionExif = sourceExifBytes;
@@ -987,9 +1003,17 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                     }
                 } else {
                     if (isJpeg) {
-                        console.log('[Process] Standard JPEG input. Retaining original bytes for lossless SDR preservation.');
-                        originalSdrJpegBytes = fileBuffer;
-                        originalSdrJpegSource = 'standard-jpeg';
+                        const jpegCicp = parseJpegCicpFromApp2(fileBuffer);
+                        if (isJpegHdrInputCicp(jpegCicp)) {
+                            console.log(
+                                `[Process] HDR JPEG input detected (primaries=${jpegCicp.primaries}, transfer=${jpegCicp.transfer}). Routing through raw HDR intent pipeline.`
+                            );
+                            workingFile = await processJpegHdr(sourceFile);
+                        } else {
+                            console.log('[Process] Standard JPEG input. Retaining original bytes for lossless SDR preservation.');
+                            originalSdrJpegBytes = fileBuffer;
+                            originalSdrJpegSource = 'standard-jpeg';
+                        }
                     }
                 }
             } catch (e) {
@@ -1010,7 +1034,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             }
         }
 
-        if (!(workingFile instanceof File) && !(workingFile instanceof Blob) && isHdrIntentHeifInput(workingFile)) {
+        if (!(workingFile instanceof File) && !(workingFile instanceof Blob) && isHdrIntentInput(workingFile)) {
             setProcessingPath('generated');
             const exifForEncode = workingFile.sourceExifBytes instanceof Uint8Array ? workingFile.sourceExifBytes : sourceExifBytes;
             const { sdr } = await telemetry.runStage(

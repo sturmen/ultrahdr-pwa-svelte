@@ -458,7 +458,7 @@ function decodePrimaryToHdrIntent(
     primaryImage: HeifPrimaryImage,
     nclx: HdrNclxInfo,
     orientation: number,
-    options: { memoryTier?: HdrIntentMemoryTier; targetPeakLinear?: number } = {},
+    options: { memoryTier?: HdrIntentMemoryTier; targetPeakLinear?: number; filename?: string } = {},
 ): DecodePrimaryToHdrIntentResult {
     const width = primaryImage.get_width();
     const height = primaryImage.get_height();
@@ -470,7 +470,34 @@ function decodePrimaryToHdrIntent(
     );
     emitHeifProbe('heif-post-decode-image2');
     if (!decoded || decoded.code) {
-        throw new Error('HEIF HDR primary image decode failed');
+        const code = decoded && typeof decoded.code === 'number' ? decoded.code : null;
+        const firstChannel = decoded?.channels?.[0];
+        const bppRaw = firstChannel ? Number(firstChannel.bits_per_pixel) : NaN;
+        const bitsPerPixel = Number.isFinite(bppRaw) ? bppRaw : null;
+        const filename = typeof options.filename === 'string' ? options.filename : null;
+        recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+            type: 'hdr-intent-decode-failed',
+            source: 'heif',
+            code,
+            bitsPerPixel,
+            primaries: nclx.primaries,
+            transfer: nclx.transfer,
+            width,
+            height,
+            filename,
+        });
+        console.error('[HEIF HDR] primary image decode failed', {
+            code,
+            bitsPerPixel,
+            primaries: nclx.primaries,
+            transfer: nclx.transfer,
+            width,
+            height,
+            filename,
+        });
+        throw new Error(
+            `HEIF HDR primary image decode failed (code=${code ?? 'unknown'}, bpp=${bitsPerPixel ?? 'unknown'}, primaries=${nclx.primaries}, transfer=${nclx.transfer}, ${width}x${height})`,
+        );
     }
 
     const interleavedChannel = decoded.channels?.find((channel: HeifInterleavedChannel) => channel.id === heif.heif_channel.heif_channel_interleaved)
@@ -685,6 +712,7 @@ export async function processHeifHdr(
         const decodeResult = decodePrimaryToHdrIntent(heif, primary, supportedNclx, orientation, {
             memoryTier,
             targetPeakLinear: options.targetPeakLinear,
+            filename: file.name || undefined,
         });
         emitHeifProbe('heif-post-decode-primary');
         const hdrIntentImage = decodeResult.image;

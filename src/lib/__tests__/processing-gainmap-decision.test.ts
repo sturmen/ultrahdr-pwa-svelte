@@ -14,6 +14,7 @@ const {
     init: vi.fn(async () => {}),
     setCompressedBaseImage: vi.fn(),
     setCompressedGainMapImage: vi.fn(),
+    setHDRIntentImage: vi.fn(),
     setExifData: vi.fn(),
     encode: vi.fn(),
     getEncodedData: vi.fn(() => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
@@ -206,6 +207,25 @@ describe('processImage gain map decision (fixture driven)', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(
       '[Process] Gain map decision: generating new gain map with GMNet'
     );
+    consoleLogSpy.mockRestore();
+  });
+
+  it('routes test_hdr_jpeg_davinci_resolve.jpg through the HDR-intent-only path', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const file = loadJpegFixture('test_hdr_jpeg_davinci_resolve.jpg');
+    const onProgress = vi.fn();
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await processImage(file, {
+      discardGainMap: false,
+      stripExif: true,
+      onProgress,
+    });
+
+    expect(extractCompletionMode(onProgress)).toBe('hdr-intent-only');
+    expect(extractStages(onProgress)).toContain('encode-set-hdr-intent-image');
+    expect(extractStages(onProgress)).not.toContain('generate-gain-map');
+    expect(gmnetCalls).toHaveLength(0);
     consoleLogSpy.mockRestore();
   });
 

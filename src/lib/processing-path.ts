@@ -1,7 +1,9 @@
 import { probeHeifProcessingPathFromHeaders } from './input-exif.js';
+import { parseJpegCicpFromApp2, isJpegHdrInputCicp } from './jpeg-hdr-processing.ts';
 import type {
   DecodedRasterImage,
   HdrIntentHeifResult,
+  HdrIntentJpegResult,
   PreservedHeifResult,
   ProcessingPathClassification,
 } from './processing-types.ts';
@@ -20,6 +22,7 @@ type ClassifiedInput =
   | Blob
   | DecodedRasterImage
   | HdrIntentHeifResult
+  | HdrIntentJpegResult
   | PreservedHeifResult
   | {
       kind?: string;
@@ -33,6 +36,14 @@ function isHdrIntentHeifResult(file: ClassifiedInput): file is HdrIntentHeifResu
     && typeof file === 'object'
     && 'kind' in file
     && file.kind === 'hdr-intent-heif'
+    && 'hdrIntent' in file;
+}
+
+function isHdrIntentJpegResult(file: ClassifiedInput): file is HdrIntentJpegResult {
+  return !!file
+    && typeof file === 'object'
+    && 'kind' in file
+    && file.kind === 'hdr-intent-jpeg'
     && 'hdrIntent' in file;
 }
 
@@ -71,19 +82,42 @@ function isHeifFamilyFile(file: HeifFamilyBlob): boolean {
   );
 }
 
+function isJpegFamilyFile(file: HeifFamilyBlob): boolean {
+  const fileName = String(file?.name || '').toLowerCase();
+  return (
+    file?.type === 'image/jpeg' ||
+    fileName.endsWith('.jpg') ||
+    fileName.endsWith('.jpeg')
+  );
+}
+
 export async function probeInputProcessingPathFromHeaders(file: Blob): Promise<ProcessingPathClassification> {
-  if (!(file instanceof Blob) || !isHeifFamilyFile(file)) {
+  if (!(file instanceof Blob)) {
     return 'unknown';
   }
 
-  const headerBytes = new Uint8Array(
-    await file.slice(0, 256 * 1024).arrayBuffer(),
-  );
-  return probeHeifProcessingPathFromHeaders(
-    headerBytes,
-    file instanceof File ? file.name : '',
-    file.type || '',
-  );
+  if (isHeifFamilyFile(file)) {
+    const headerBytes = new Uint8Array(
+      await file.slice(0, 256 * 1024).arrayBuffer(),
+    );
+    return probeHeifProcessingPathFromHeaders(
+      headerBytes,
+      file instanceof File ? file.name : '',
+      file.type || '',
+    );
+  }
+
+  if (isJpegFamilyFile(file)) {
+    const headerBytes = new Uint8Array(
+      await file.slice(0, 256 * 1024).arrayBuffer(),
+    );
+    if (isJpegHdrInputCicp(parseJpegCicpFromApp2(headerBytes))) {
+      return 'hdr-intent';
+    }
+    return 'unknown';
+  }
+
+  return 'unknown';
 }
 
 export async function classifyInputProcessingPath(
@@ -91,7 +125,7 @@ export async function classifyInputProcessingPath(
   options: HeicProcessOptions = {},
 ): Promise<ProcessingPathClassification> {
   if (!(file instanceof Blob)) {
-    if (isHdrIntentHeifResult(file)) {
+    if (isHdrIntentHeifResult(file) || isHdrIntentJpegResult(file)) {
       return 'hdr-intent';
     }
     if (isPreservedHeifResult(file)) {
@@ -133,9 +167,13 @@ export async function classifyInputProcessingPath(
     || fileName.endsWith('.jpeg');
   if (isJpeg) {
     const fileBuffer = new Uint8Array(await file.arrayBuffer());
-    return (await isUhdrImageWithDecoderFallback(fileBuffer))
-      ? 'preserved'
-      : 'generated';
+    if (await isUhdrImageWithDecoderFallback(fileBuffer)) {
+      return 'preserved';
+    }
+    if (isJpegHdrInputCicp(parseJpegCicpFromApp2(fileBuffer))) {
+      return 'hdr-intent';
+    }
+    return 'generated';
   }
 
   return 'generated';

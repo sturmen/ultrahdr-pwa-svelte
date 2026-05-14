@@ -141,6 +141,8 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     hdrIntentFormatDowngraded: 'hdr-intent-format-downgraded',
     hdrIntentPeakNormalized: 'hdr-intent-peak-normalized',
     hdrIntentPeakNormalizeSkipped: 'hdr-intent-peak-normalize-skipped',
+    hdrIntentDecodeFailed: 'hdr-intent-decode-failed',
+    hdrIntentJpegClassified: 'hdr-intent-jpeg-classified',
     gmnetSourceImageReleased: 'gmnet-source-image-released',
     sdrPixelSourceReleased: 'sdr-pixel-source-released',
     compressedPayloadReleased: 'compressed-payload-released',
@@ -518,6 +520,28 @@ export type ProcessingMemoryDiagnosticsEvent =
       format: string;
     }
   | {
+      type: 'hdr-intent-decode-failed';
+      source: 'heif' | 'jpeg';
+      code: number | null;
+      bitsPerPixel: number | null;
+      primaries: number | null;
+      transfer: number | null;
+      width: number | null;
+      height: number | null;
+      filename: string | null;
+    }
+  | {
+      type: 'hdr-intent-jpeg-classified';
+      primaries: number;
+      transfer: number;
+      matrix: number;
+      fullRange: boolean;
+      width: number;
+      height: number;
+      format: string;
+      ct: 'pq' | 'hlg';
+    }
+  | {
       type: 'gmnet-source-image-released';
       trigger: string | null;
       sourceBytes: number | null;
@@ -658,6 +682,38 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
         context: mergeNormalizedContext({}, {
           reason: event.reason,
           format: event.format,
+        }),
+      };
+    case 'hdr-intent-decode-failed':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentDecodeFailed,
+        severity: 'error',
+        context: mergeNormalizedContext({}, {
+          source: event.source,
+          code: event.code,
+          bitsPerPixel: event.bitsPerPixel,
+          primaries: event.primaries,
+          transfer: event.transfer,
+          width: event.width,
+          height: event.height,
+          filename: event.filename,
+        }),
+      };
+    case 'hdr-intent-jpeg-classified':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentJpegClassified,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          primaries: event.primaries,
+          transfer: event.transfer,
+          matrix: event.matrix,
+          fullRange: event.fullRange,
+          width: event.width,
+          height: event.height,
+          format: event.format,
+          ct: event.ct,
         }),
       };
     case 'gmnet-source-image-released':

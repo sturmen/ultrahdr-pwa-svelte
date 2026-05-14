@@ -33,18 +33,31 @@ type HeicFixtureProbe = {
   logLines: string[];
 };
 
-type HdrIntentFixtureProbe = {
-  kind: 'hdr-intent';
-  format: 'rgba1010102' | 'rgbaf16';
-  ct: 'pq' | 'hlg' | 'linear';
-  width: number;
-  height: number;
-  strideBytes: number;
-  dataByteLength: number;
-  bitsPerPixel: number | null;
-  diagnosticsEventNames: string[];
-  logLines: string[];
-};
+type HdrIntentFixtureProbe =
+  | {
+      kind: 'hdr-intent';
+      format: 'rgba1010102' | 'rgbaf16';
+      ct: 'pq' | 'hlg' | 'linear';
+      width: number;
+      height: number;
+      strideBytes: number;
+      dataByteLength: number;
+      bitsPerPixel: number | null;
+      diagnosticsEventNames: string[];
+      logLines: string[];
+    }
+  | {
+      kind: 'hdr-intent-failed';
+      message: string;
+      code: number | null;
+      bitsPerPixel: number | null;
+      primaries: number | null;
+      transfer: number | null;
+      width: number | null;
+      height: number | null;
+      diagnosticsEventNames: string[];
+      logLines: string[];
+    };
 
 export function installRealFixtureConsoleSpies() {
   const originalLog = global.console.log;
@@ -66,7 +79,8 @@ export function installLibheifFetchMock() {
   const originalFetch = global.fetch;
 
   global.fetch = vi.fn(async (url: URL | string) => {
-    if (url.toString().includes('libheif.wasm')) {
+    const urlString = url.toString();
+    if (urlString.includes('libheif.wasm')) {
       const wasmPath = path.resolve(process.cwd(), 'node_modules/libheif-js/libheif-wasm/libheif.wasm');
       const assetsWasm = path.resolve(process.cwd(), 'assets', 'libheif.wasm');
       let buffer: Buffer;
@@ -83,11 +97,31 @@ export function installLibheifFetchMock() {
         ok: true,
         status: 200,
         arrayBuffer: () => Promise.resolve(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)),
+        text: () => Promise.resolve(''),
       } as Response;
     }
 
+    if (urlString.includes('libheif-bundle.mjs')) {
+      const candidates = [
+        path.resolve(process.cwd(), 'node_modules/libheif-js/libheif-wasm/libheif-bundle.mjs'),
+        path.resolve(process.cwd(), 'assets', 'libheif-bundle.mjs'),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          const text = fs.readFileSync(candidate, 'utf8');
+          return {
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(text),
+            arrayBuffer: () => Promise.resolve(new TextEncoder().encode(text).buffer),
+          } as Response;
+        }
+      }
+      throw new Error(`Could not find libheif-bundle.mjs in any of: ${candidates.join(', ')}`);
+    }
+
     if (!originalFetch) {
-      throw new Error(`Unexpected fetch without original implementation: ${String(url)}`);
+      throw new Error(`Unexpected fetch without original implementation: ${urlString}`);
     }
 
     return originalFetch(url);
@@ -415,22 +449,40 @@ try {
   const interleavedChannel = decoded?.channels?.find((channel) => channel.id === heif.heif_channel.heif_channel_interleaved)
     || decoded?.channels?.[0]
     || null;
-  const result = await processHeifHdr(file);
-  const events = diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis);
-  const downgradeEvent = events.find((event) => event.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentFormatDowngraded) || null;
+  try {
+    const result = await processHeifHdr(file);
+    const events = diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis);
+    const downgradeEvent = events.find((event) => event.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentFormatDowngraded) || null;
 
-  console.log(JSON.stringify({
-    kind: 'hdr-intent',
-    format: result.hdrIntent.format,
-    ct: result.hdrIntent.ct,
-    width: result.hdrIntent.width,
-    height: result.hdrIntent.height,
-    strideBytes: result.hdrIntent.strideBytes,
-    dataByteLength: result.hdrIntent.data.byteLength,
-    bitsPerPixel: Number(interleavedChannel?.bits_per_pixel ?? downgradeEvent?.context?.bitsPerPixel ?? NaN) || null,
-    diagnosticsEventNames: events.map((event) => event.name),
-    logLines: logs,
-  }));
+    console.log(JSON.stringify({
+      kind: 'hdr-intent',
+      format: result.hdrIntent.format,
+      ct: result.hdrIntent.ct,
+      width: result.hdrIntent.width,
+      height: result.hdrIntent.height,
+      strideBytes: result.hdrIntent.strideBytes,
+      dataByteLength: result.hdrIntent.data.byteLength,
+      bitsPerPixel: Number(interleavedChannel?.bits_per_pixel ?? downgradeEvent?.context?.bitsPerPixel ?? NaN) || null,
+      diagnosticsEventNames: events.map((event) => event.name),
+      logLines: logs,
+    }));
+  } catch (err) {
+    const events = diagnosticsEvents.getRecordedDiagnosticsEvents(globalThis);
+    const failureEvent = events.find((event) => event.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentDecodeFailed) || null;
+    const failureContext = failureEvent?.context || {};
+    console.log(JSON.stringify({
+      kind: 'hdr-intent-failed',
+      message: err instanceof Error ? err.message : String(err),
+      code: typeof failureContext.code === 'number' ? failureContext.code : null,
+      bitsPerPixel: typeof failureContext.bitsPerPixel === 'number' ? failureContext.bitsPerPixel : null,
+      primaries: typeof failureContext.primaries === 'number' ? failureContext.primaries : null,
+      transfer: typeof failureContext.transfer === 'number' ? failureContext.transfer : null,
+      width: typeof failureContext.width === 'number' ? failureContext.width : null,
+      height: typeof failureContext.height === 'number' ? failureContext.height : null,
+      diagnosticsEventNames: events.map((event) => event.name),
+      logLines: logs,
+    }));
+  }
 } finally {
   global.fetch = originalFetch;
   Object.defineProperty(globalThis, 'navigator', {

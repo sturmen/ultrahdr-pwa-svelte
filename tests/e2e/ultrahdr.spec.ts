@@ -19,6 +19,8 @@ const GAIN_MAP_JPEG = path.resolve(__dirname, '../../fixtures/test_hdr_jpeg_gain
 const GAIN_MAP_HEIC = path.resolve(__dirname, '../../fixtures/test_hdr_heif_gainmap.HEIC');
 const HDR_INTENT_HIF = path.resolve(__dirname, '../../fixtures/test_hdr_no_gain_map.HIF');
 const PADDED_STRIDE_HEIC = path.resolve(__dirname, '../../fixtures/test_screenshot.heic');
+const DAVINCI_HDR_JPEG = path.resolve(__dirname, '../../fixtures/test_hdr_jpeg_davinci_resolve.jpg');
+const DAVINCI_HDR_HEIC = path.resolve(__dirname, '../../fixtures/test_hdr_heif_davinci_resolve.heic');
 const UNROTATED_SDR_FIXTURES = [
     path.resolve(__dirname, '../../fixtures/test_sdr.jpg'),
     path.resolve(__dirname, '../../fixtures/test_sdr2.jpg'),
@@ -1053,6 +1055,47 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(result[0]).toBe(0xFF);
             expect(result[1]).toBe(0xD8);
             expect(hasGainMapXMP(result)).toBe(true);
+        });
+
+        test.fixme('should encode DaVinci Resolve Rec.2020 PQ JPEG via the HDR-intent path', async ({ page }) => {
+            // libultrahdr WASM aborts ("Aborted()") during encode of this 12000x8000 (96MP)
+            // Rec.2020 PQ JPEG. The HDR-intent classification + decode wiring is verified by the
+            // unit and integration probes; the residual failure is in-WASM memory for the
+            // gain-map synthesis step at high resolutions. Tracked as follow-up.
+            await page.goto('/');
+            await uploadFiles(page, [DAVINCI_HDR_JPEG]);
+            await waitForProcessing(page);
+
+            const resultCards = page.locator('.result-card');
+            await expect(resultCards).toHaveCount(1);
+            await expect(page.locator('.filename')).toContainText('test_hdr_jpeg_davinci_resolve');
+
+            const result = await downloadFirstResult(page);
+            expect(result[0]).toBe(0xFF);
+            expect(result[1]).toBe(0xD8);
+            expect(hasGainMapXMP(result)).toBe(true);
+        });
+
+        test('should surface a verbose decode failure for DaVinci Resolve HDR HEIC', async ({ page }) => {
+            await page.goto('/');
+            await uploadFiles(page, [DAVINCI_HDR_HEIC]);
+
+            const startedAt = Date.now();
+            let errorText: string | null = null;
+            while (Date.now() - startedAt < PROCESSING_TIMEOUT) {
+                errorText = await page.evaluate(() => {
+                    const error = document.querySelector('.error p');
+                    return error ? error.textContent : null;
+                });
+                if (errorText) {
+                    break;
+                }
+                await page.waitForTimeout(POLL_INTERVAL);
+            }
+            expect(errorText, 'expected the DaVinci HEIC to surface an error to the UI').toBeTruthy();
+            expect(errorText).toMatch(/HEIF HDR primary image decode failed/);
+            expect(errorText).toMatch(/primaries=9/);
+            expect(errorText).toMatch(/transfer=(16|18)/);
         });
 
         test('should keep HEIC gain map bitmap close to source after processing', async ({ page, browserName }) => {
