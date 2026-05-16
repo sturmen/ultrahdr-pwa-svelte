@@ -65,4 +65,5 @@ describe('JPEG HDR Intent Extraction (Real Files) - DaVinci Resolve', () => {
         });
         expect(isJpegHdrInputCicp(cicp)).toBe(true);
     });
+
 });

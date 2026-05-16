@@ -2,7 +2,8 @@
  * @vitest-environment jsdom
  */
 import { describe, expect, it } from 'vitest';
-import { parseJpegCicpFromApp2 } from '../jpeg-hdr-processing.ts';
+import { parseJpegCicpFromApp2, constrainHdrIntentDimensions } from '../jpeg-hdr-processing.ts';
+import { HDR_INTENT_MAX_LONG_EDGE } from '../constants.ts';
 
 const ICC_HEADER_BYTES = 128;
 
@@ -168,5 +169,36 @@ describe('parseJpegCicpFromApp2', () => {
     it('returns null for empty or truncated buffers', () => {
         expect(parseJpegCicpFromApp2(new Uint8Array([]))).toBeNull();
         expect(parseJpegCicpFromApp2(new Uint8Array([0xff, 0xd8]))).toBeNull();
+    });
+});
+
+describe('constrainHdrIntentDimensions', () => {
+    it('returns identity for images under the long-edge cap', () => {
+        expect(constrainHdrIntentDimensions(4000, 3000, HDR_INTENT_MAX_LONG_EDGE)).toEqual({
+            width: 4000,
+            height: 3000,
+            changed: false,
+        });
+    });
+
+    it('clamps landscape 12000x8000 to long-edge 8192 preserving aspect ratio', () => {
+        const result = constrainHdrIntentDimensions(12000, 8000, HDR_INTENT_MAX_LONG_EDGE);
+        expect(result.changed).toBe(true);
+        expect(result.width).toBe(8192);
+        expect(result.height).toBe(Math.round(8000 * (8192 / 12000)));
+        expect(result.width / result.height).toBeCloseTo(12000 / 8000, 2);
+    });
+
+    it('clamps portrait 8000x12000 to long-edge 8192 preserving aspect ratio', () => {
+        const result = constrainHdrIntentDimensions(8000, 12000, HDR_INTENT_MAX_LONG_EDGE);
+        expect(result.changed).toBe(true);
+        expect(result.height).toBe(8192);
+        expect(result.width).toBe(Math.round(8000 * (8192 / 12000)));
+    });
+
+    it('never returns dimensions below 1', () => {
+        const result = constrainHdrIntentDimensions(2, 1, 1);
+        expect(result.width).toBeGreaterThanOrEqual(1);
+        expect(result.height).toBeGreaterThanOrEqual(1);
     });
 });

@@ -1057,11 +1057,7 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             expect(hasGainMapXMP(result)).toBe(true);
         });
 
-        test.fixme('should encode DaVinci Resolve Rec.2020 PQ JPEG via the HDR-intent path', async ({ page }) => {
-            // libultrahdr WASM aborts ("Aborted()") during encode of this 12000x8000 (96MP)
-            // Rec.2020 PQ JPEG. The HDR-intent classification + decode wiring is verified by the
-            // unit and integration probes; the residual failure is in-WASM memory for the
-            // gain-map synthesis step at high resolutions. Tracked as follow-up.
+        test('should encode DaVinci Resolve Rec.2020 PQ JPEG via the HDR-intent path', async ({ page }) => {
             await page.goto('/');
             await uploadFiles(page, [DAVINCI_HDR_JPEG]);
             await waitForProcessing(page);

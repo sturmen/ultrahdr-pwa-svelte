@@ -19,10 +19,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # libultrahdr source directory (sibling submodule)
 set(LIBULTRAHDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../libultrahdr)
 
-# Add global compiler flags for SIMD and optimizations to ensure they apply to the libultrahdr submodule
+# Add global compiler flags for SIMD and optimizations to ensure they apply to the libultrahdr submodule.
+# -fexceptions converts std::bad_alloc (and other C++ throws) into proper unwinds so
+# uhdr_encode returns UHDR_CODEC_MEM_ERROR on out-of-memory instead of calling abort()
+# and killing the WASM instance.
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -msimd128 -flto -DNDEBUG")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -msimd128 -flto -DNDEBUG -frtti")
-add_link_options(-O3 -msimd128 -flto)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -msimd128 -flto -DNDEBUG -frtti -fexceptions")
+add_link_options(-O3 -msimd128 -flto -fexceptions)
 
 # Add libultrahdr as a subdirectory
 # This will build it with Emscripten toolchain

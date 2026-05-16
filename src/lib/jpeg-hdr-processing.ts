@@ -1,6 +1,8 @@
 import { decodeJpegli } from './jpegli-decoder.js';
 import { extractExifApp1PayloadFromInput } from './input-exif.js';
 import { recordProcessingMemoryDiagnostics } from './diagnostics-events.ts';
+import { resizeRasterImageSync } from './raster-image.ts';
+import { HDR_INTENT_MAX_LONG_EDGE } from './constants.ts';
 import type { HdrIntentJpegResult, PackedHdrIntentPayload } from './processing-types.ts';
 
 const APP2_MARKER_HIGH = 0xff;
@@ -182,6 +184,31 @@ export function isJpegHdrInputCicp(info: JpegCicpInfo | null): info is JpegCicpI
     return info.primaries === 9 && (info.transfer === 16 || info.transfer === 18);
 }
 
+export interface ConstrainedDimensions {
+    width: number;
+    height: number;
+    changed: boolean;
+}
+
+/**
+ * Cap a raster's long edge to {@param maxLongEdge}, preserving aspect ratio.
+ * Returns `changed: false` when the source already fits.
+ */
+export function constrainHdrIntentDimensions(
+    sourceWidth: number,
+    sourceHeight: number,
+    maxLongEdge: number,
+): ConstrainedDimensions {
+    const longEdge = Math.max(sourceWidth, sourceHeight);
+    if (longEdge <= maxLongEdge) {
+        return { width: sourceWidth, height: sourceHeight, changed: false };
+    }
+    const scale = maxLongEdge / longEdge;
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+    return { width, height, changed: true };
+}
+
 function expand8To10(value: number): number {
     return ((value << 2) | (value >> 6)) & 0x3ff;
 }
@@ -216,6 +243,30 @@ export async function processJpegHdr(file: File): Promise<HdrIntentJpegResult> {
     let decoded: { width: number; height: number; data: Uint8ClampedArray } | null = await decodeJpegli(buffer);
     buffer = null;
     const ct: 'pq' | 'hlg' = cicp.transfer === 16 ? 'pq' : 'hlg';
+    const sourceWidth = decoded.width;
+    const sourceHeight = decoded.height;
+    const constrained = constrainHdrIntentDimensions(sourceWidth, sourceHeight, HDR_INTENT_MAX_LONG_EDGE);
+    if (constrained.changed) {
+        const resized = resizeRasterImageSync(
+            {
+                width: sourceWidth,
+                height: sourceHeight,
+                data: decoded.data,
+            },
+            constrained.width,
+            constrained.height,
+        );
+        decoded = { width: resized.width, height: resized.height, data: resized.data };
+        recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+            type: 'hdr-intent-downscaled',
+            source: 'jpeg',
+            sourceWidth,
+            sourceHeight,
+            targetWidth: constrained.width,
+            targetHeight: constrained.height,
+            longEdgeCap: HDR_INTENT_MAX_LONG_EDGE,
+        });
+    }
     const packed = pack1010102InPlaceFromRgba8(decoded.data, decoded.width, decoded.height);
     const width = decoded.width;
     const height = decoded.height;

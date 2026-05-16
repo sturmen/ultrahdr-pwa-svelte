@@ -8,6 +8,7 @@ import {
 import { LIBHEIF_WASM_BINARY_ASSET } from './runtime-asset-definitions.ts';
 import { getProcessingProfile } from './capabilities.ts';
 import { recordProcessingMemoryDiagnostics } from './diagnostics-events.ts';
+import { HDR_INTENT_MAX_LONG_EDGE } from './constants.ts';
 import type {
     FloatHdrIntentPayload,
     HdrIntentHeifResult,
@@ -402,6 +403,60 @@ export function resolveHdrIntentFormat(input: {
     return { format: 'rgbaf16', downgraded: false, reason: null };
 }
 
+/**
+ * Bilinear downscale of an interleaved 16-bit RGBA buffer (libheif
+ * `heif_chroma_interleaved_RRGGBBAA_LE` output) into a new tightly-packed
+ * buffer of dst dimensions. Used to cap HDR-intent input dimensions before
+ * libultrahdr encode to avoid wasm32 `std::bad_alloc` aborts on high-MP
+ * inputs.
+ */
+export function downscale16BitInterleavedRgba(
+    src: Uint8Array,
+    srcWidth: number,
+    srcHeight: number,
+    srcStrideBytes: number,
+    dstWidth: number,
+    dstHeight: number,
+): { data: Uint8Array; strideBytes: number } {
+    const dst = new Uint8Array(dstWidth * dstHeight * 8);
+    const srcView = new DataView(src.buffer, src.byteOffset, src.byteLength);
+    const dstView = new DataView(dst.buffer);
+    const scaleX = srcWidth / dstWidth;
+    const scaleY = srcHeight / dstHeight;
+    const maxX = srcWidth - 1;
+    const maxY = srcHeight - 1;
+    for (let y = 0; y < dstHeight; y++) {
+        const sy = (y + 0.5) * scaleY - 0.5;
+        const y0 = Math.max(0, Math.floor(sy));
+        const y1 = Math.min(maxY, y0 + 1);
+        const wy = Math.max(0, Math.min(1, sy - y0));
+        const inv_wy = 1 - wy;
+        for (let x = 0; x < dstWidth; x++) {
+            const sx = (x + 0.5) * scaleX - 0.5;
+            const x0 = Math.max(0, Math.floor(sx));
+            const x1 = Math.min(maxX, x0 + 1);
+            const wx = Math.max(0, Math.min(1, sx - x0));
+            const inv_wx = 1 - wx;
+            const off00 = y0 * srcStrideBytes + x0 * 8;
+            const off01 = y0 * srcStrideBytes + x1 * 8;
+            const off10 = y1 * srcStrideBytes + x0 * 8;
+            const off11 = y1 * srcStrideBytes + x1 * 8;
+            const dstOffset = (y * dstWidth + x) * 8;
+            for (let c = 0; c < 4; c++) {
+                const p00 = srcView.getUint16(off00 + c * 2, true);
+                const p01 = srcView.getUint16(off01 + c * 2, true);
+                const p10 = srcView.getUint16(off10 + c * 2, true);
+                const p11 = srcView.getUint16(off11 + c * 2, true);
+                const top = p00 * inv_wx + p01 * wx;
+                const bot = p10 * inv_wx + p11 * wx;
+                const val = Math.round(top * inv_wy + bot * wy);
+                dstView.setUint16(dstOffset + c * 2, Math.max(0, Math.min(65535, val)), true);
+            }
+        }
+    }
+    return { data: dst, strideBytes: dstWidth * 8 };
+}
+
 function scaleChannelTo10Bit(codeValue: number, codeMax: number): number {
     const normalized = Math.max(0, Math.min(codeMax, codeValue));
     if (codeMax === 1023) {
@@ -460,8 +515,8 @@ function decodePrimaryToHdrIntent(
     orientation: number,
     options: { memoryTier?: HdrIntentMemoryTier; targetPeakLinear?: number; filename?: string } = {},
 ): DecodePrimaryToHdrIntentResult {
-    const width = primaryImage.get_width();
-    const height = primaryImage.get_height();
+    let width = primaryImage.get_width();
+    let height = primaryImage.get_height();
     emitHeifProbe('heif-pre-decode-image2');
     const decoded = heif.heif_js_decode_image2(
         primaryImage.handle,
@@ -507,13 +562,44 @@ function decodePrimaryToHdrIntent(
     }
     emitHeifProbe('heif-interleaved-channel-found');
 
+    let effectiveSrcBytes: Uint8Array = interleavedChannel.data;
+    let effectiveSrcStride = interleavedChannel.stride || (width * 8);
+    const longEdgeCap = HDR_INTENT_MAX_LONG_EDGE;
+    const sourceLongEdge = Math.max(width, height);
+    if (sourceLongEdge > longEdgeCap) {
+        const scale = longEdgeCap / sourceLongEdge;
+        const dstWidth = Math.max(1, Math.round(width * scale));
+        const dstHeight = Math.max(1, Math.round(height * scale));
+        const downscaled = downscale16BitInterleavedRgba(
+            effectiveSrcBytes,
+            width,
+            height,
+            effectiveSrcStride,
+            dstWidth,
+            dstHeight,
+        );
+        recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
+            type: 'hdr-intent-downscaled',
+            source: 'heif',
+            sourceWidth: width,
+            sourceHeight: height,
+            targetWidth: dstWidth,
+            targetHeight: dstHeight,
+            longEdgeCap,
+        });
+        effectiveSrcBytes = downscaled.data;
+        effectiveSrcStride = downscaled.strideBytes;
+        width = dstWidth;
+        height = dstHeight;
+    }
+
     const { width: outWidth, height: outHeight } = getOrientedDimensions(width, height, orientation);
     const srcView = new DataView(
-        interleavedChannel.data.buffer,
-        interleavedChannel.data.byteOffset,
-        interleavedChannel.data.byteLength
+        effectiveSrcBytes.buffer,
+        effectiveSrcBytes.byteOffset,
+        effectiveSrcBytes.byteLength
     );
-    const strideBytes = interleavedChannel.stride || (width * 8);
+    const strideBytes = effectiveSrcStride;
     const channelCodeMax = resolveChannelCodeMax(interleavedChannel);
     const bitsPerPixel = Number(interleavedChannel.bits_per_pixel);
     const formatResolution = resolveHdrIntentFormat({

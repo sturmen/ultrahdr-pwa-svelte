@@ -143,6 +143,7 @@ export const DIAGNOSTICS_EVENT_NAMES = {
     hdrIntentPeakNormalizeSkipped: 'hdr-intent-peak-normalize-skipped',
     hdrIntentDecodeFailed: 'hdr-intent-decode-failed',
     hdrIntentJpegClassified: 'hdr-intent-jpeg-classified',
+    hdrIntentDownscaled: 'hdr-intent-downscaled',
     gmnetSourceImageReleased: 'gmnet-source-image-released',
     sdrPixelSourceReleased: 'sdr-pixel-source-released',
     compressedPayloadReleased: 'compressed-payload-released',
@@ -542,6 +543,15 @@ export type ProcessingMemoryDiagnosticsEvent =
       ct: 'pq' | 'hlg';
     }
   | {
+      type: 'hdr-intent-downscaled';
+      source: 'heif' | 'jpeg';
+      sourceWidth: number;
+      sourceHeight: number;
+      targetWidth: number;
+      targetHeight: number;
+      longEdgeCap: number;
+    }
+  | {
       type: 'gmnet-source-image-released';
       trigger: string | null;
       sourceBytes: number | null;
@@ -714,6 +724,20 @@ function buildProcessingMemoryDiagnosticsInput(event: ProcessingMemoryDiagnostic
           height: event.height,
           format: event.format,
           ct: event.ct,
+        }),
+      };
+    case 'hdr-intent-downscaled':
+      return {
+        category: 'memory',
+        name: DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentDownscaled,
+        severity: 'info',
+        context: mergeNormalizedContext({}, {
+          source: event.source,
+          sourceWidth: event.sourceWidth,
+          sourceHeight: event.sourceHeight,
+          targetWidth: event.targetWidth,
+          targetHeight: event.targetHeight,
+          longEdgeCap: event.longEdgeCap,
         }),
       };
     case 'gmnet-source-image-released':
