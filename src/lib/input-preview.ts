@@ -4,6 +4,7 @@ import {
   resizeImageData,
   type ImageDataLike,
 } from './image-utils.js';
+import { isHeifFamilyBlob } from './image-family.ts';
 import { probeInputProcessingPathFromHeaders } from './processing-path.js';
 import type { DecodedRasterImage } from './processing-types.ts';
 
@@ -35,20 +36,6 @@ export type InputPreviewTask =
       status: 'pending';
       promise: Promise<Blob>;
     };
-
-function isHeifFamilyFile(file: Blob): file is File {
-  if (!(file instanceof File)) {
-    return false;
-  }
-  const fileName = file.name.toLowerCase();
-  return (
-    file.type === 'image/heic'
-    || file.type === 'image/heif'
-    || fileName.endsWith('.heic')
-    || fileName.endsWith('.heif')
-    || fileName.endsWith('.hif')
-  );
-}
 
 function isTiffFile(file: Blob): boolean {
   if (!(file instanceof File)) {
@@ -103,7 +90,7 @@ async function createHeifPreview(file: File): Promise<Blob> {
 
 export async function createInputPreviewTask(file: File): Promise<InputPreviewTask | null> {
   emitPreviewProbe('preview-task-entry');
-  if (isHeifFamilyFile(file)) {
+  if (isHeifFamilyBlob(file)) {
     const processingPath = await probeInputProcessingPathFromHeaders(file);
     if (processingPath === 'hdr-intent') {
       return null;

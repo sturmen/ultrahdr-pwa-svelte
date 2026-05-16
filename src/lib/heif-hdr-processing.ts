@@ -9,6 +9,7 @@ import { LIBHEIF_WASM_BINARY_ASSET } from './runtime-asset-definitions.ts';
 import { getProcessingProfile } from './capabilities.ts';
 import { recordProcessingMemoryDiagnostics } from './diagnostics-events.ts';
 import { HDR_INTENT_MAX_LONG_EDGE } from './constants.ts';
+import { constrainHdrIntentDimensions } from './hdr-intent-dimensions.ts';
 import type {
     FloatHdrIntentPayload,
     HdrIntentHeifResult,
@@ -565,32 +566,29 @@ function decodePrimaryToHdrIntent(
     let effectiveSrcBytes: Uint8Array = interleavedChannel.data;
     let effectiveSrcStride = interleavedChannel.stride || (width * 8);
     const longEdgeCap = HDR_INTENT_MAX_LONG_EDGE;
-    const sourceLongEdge = Math.max(width, height);
-    if (sourceLongEdge > longEdgeCap) {
-        const scale = longEdgeCap / sourceLongEdge;
-        const dstWidth = Math.max(1, Math.round(width * scale));
-        const dstHeight = Math.max(1, Math.round(height * scale));
+    const constrained = constrainHdrIntentDimensions(width, height, longEdgeCap);
+    if (constrained.changed) {
         const downscaled = downscale16BitInterleavedRgba(
             effectiveSrcBytes,
             width,
             height,
             effectiveSrcStride,
-            dstWidth,
-            dstHeight,
+            constrained.width,
+            constrained.height,
         );
         recordProcessingMemoryDiagnostics(globalThis as typeof globalThis, {
             type: 'hdr-intent-downscaled',
             source: 'heif',
             sourceWidth: width,
             sourceHeight: height,
-            targetWidth: dstWidth,
-            targetHeight: dstHeight,
+            targetWidth: constrained.width,
+            targetHeight: constrained.height,
             longEdgeCap,
         });
         effectiveSrcBytes = downscaled.data;
         effectiveSrcStride = downscaled.strideBytes;
-        width = dstWidth;
-        height = dstHeight;
+        width = constrained.width;
+        height = constrained.height;
     }
 
     const { width: outWidth, height: outHeight } = getOrientedDimensions(width, height, orientation);

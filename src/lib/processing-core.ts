@@ -45,11 +45,12 @@ import type {
     HdrIntentHeifResult,
     HdrIntentJpegResult,
     HdrIntentPayload,
-    HdrIntentResult,
     PreservedHeifResult,
     ProcessingPathClassification,
 } from './processing-types.ts';
 import { parseJpegCicpFromApp2, isJpegHdrInputCicp, processJpegHdr } from './jpeg-hdr-processing.ts';
+import { isJpegFamilyBlob } from './image-family.ts';
+import { isHdrIntentResult } from './processing-type-guards.ts';
 
 type GMNetModelVariant = 'realworld' | 'synthetic';
 type GmnetCheckpointingMode = 'off' | 'auto' | 'force';
@@ -109,26 +110,6 @@ type GainMapGenerationResult = {
     gainMapImageData: ImageData;
     metadata: GainMapMetadata;
 };
-
-function isHdrIntentHeifInput(input: unknown): input is HdrIntentHeifResult {
-    return !!input
-        && typeof input === 'object'
-        && 'kind' in input
-        && input.kind === 'hdr-intent-heif'
-        && 'hdrIntent' in input;
-}
-
-function isHdrIntentJpegInput(input: unknown): input is HdrIntentJpegResult {
-    return !!input
-        && typeof input === 'object'
-        && 'kind' in input
-        && input.kind === 'hdr-intent-jpeg'
-        && 'hdrIntent' in input;
-}
-
-function isHdrIntentInput(input: unknown): input is HdrIntentResult {
-    return isHdrIntentHeifInput(input) || isHdrIntentJpegInput(input);
-}
 
 function isPreservedHeifInput(input: unknown): input is PreservedHeifResult {
     return !!input && typeof input === 'object' && 'sdr' in input;
@@ -896,10 +877,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                 );
                 throwIfAborted(mergedOptions.abortSignal);
 
-                const isJpeg =
-                    sourceFile.type === 'image/jpeg'
-                    || sourceFile.name.toLowerCase().endsWith('.jpg')
-                    || sourceFile.name.toLowerCase().endsWith('.jpeg');
+                const isJpeg = isJpegFamilyBlob(sourceFile);
 
                 if (isJpeg) {
                     let orientationDecisionExif = sourceExifBytes;
@@ -1008,7 +986,10 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
                             console.log(
                                 `[Process] HDR JPEG input detected (primaries=${jpegCicp.primaries}, transfer=${jpegCicp.transfer}). Routing through raw HDR intent pipeline.`
                             );
-                            workingFile = await processJpegHdr(sourceFile);
+                            workingFile = await processJpegHdr(sourceFile, {
+                                sourceBytes: fileBuffer,
+                                cicp: jpegCicp,
+                            });
                         } else {
                             console.log('[Process] Standard JPEG input. Retaining original bytes for lossless SDR preservation.');
                             originalSdrJpegBytes = fileBuffer;
@@ -1034,7 +1015,7 @@ export async function processImage(file: File, options: ProcessOptions = {}): Pr
             }
         }
 
-        if (!(workingFile instanceof File) && !(workingFile instanceof Blob) && isHdrIntentInput(workingFile)) {
+        if (!(workingFile instanceof File) && !(workingFile instanceof Blob) && isHdrIntentResult(workingFile)) {
             setProcessingPath('generated');
             const exifForEncode = workingFile.sourceExifBytes instanceof Uint8Array ? workingFile.sourceExifBytes : sourceExifBytes;
             const { sdr } = await telemetry.runStage(

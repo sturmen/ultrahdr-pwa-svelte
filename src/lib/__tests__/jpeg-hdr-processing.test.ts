@@ -2,7 +2,8 @@
  * @vitest-environment jsdom
  */
 import { describe, expect, it } from 'vitest';
-import { parseJpegCicpFromApp2, constrainHdrIntentDimensions } from '../jpeg-hdr-processing.ts';
+import { parseJpegCicpFromApp2 } from '../jpeg-hdr-processing.ts';
+import { constrainHdrIntentDimensions } from '../hdr-intent-dimensions.ts';
 import { HDR_INTENT_MAX_LONG_EDGE } from '../constants.ts';
 
 const ICC_HEADER_BYTES = 128;

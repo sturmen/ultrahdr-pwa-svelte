@@ -3,9 +3,9 @@ import { extractExifApp1PayloadFromInput } from './input-exif.js';
 import { recordProcessingMemoryDiagnostics } from './diagnostics-events.ts';
 import { resizeRasterImageSync } from './raster-image.ts';
 import { HDR_INTENT_MAX_LONG_EDGE } from './constants.ts';
+import { constrainHdrIntentDimensions } from './hdr-intent-dimensions.ts';
 import type { HdrIntentJpegResult, PackedHdrIntentPayload } from './processing-types.ts';
 
-const APP2_MARKER_HIGH = 0xff;
 const APP2_MARKER_LOW = 0xe2;
 const ICC_SIGNATURE = 'ICC_PROFILE\0';
 const ICC_TAG_TABLE_OFFSET = 128;
@@ -184,31 +184,6 @@ export function isJpegHdrInputCicp(info: JpegCicpInfo | null): info is JpegCicpI
     return info.primaries === 9 && (info.transfer === 16 || info.transfer === 18);
 }
 
-export interface ConstrainedDimensions {
-    width: number;
-    height: number;
-    changed: boolean;
-}
-
-/**
- * Cap a raster's long edge to {@param maxLongEdge}, preserving aspect ratio.
- * Returns `changed: false` when the source already fits.
- */
-export function constrainHdrIntentDimensions(
-    sourceWidth: number,
-    sourceHeight: number,
-    maxLongEdge: number,
-): ConstrainedDimensions {
-    const longEdge = Math.max(sourceWidth, sourceHeight);
-    if (longEdge <= maxLongEdge) {
-        return { width: sourceWidth, height: sourceHeight, changed: false };
-    }
-    const scale = maxLongEdge / longEdge;
-    const width = Math.max(1, Math.round(sourceWidth * scale));
-    const height = Math.max(1, Math.round(sourceHeight * scale));
-    return { width, height, changed: true };
-}
-
 function expand8To10(value: number): number {
     return ((value << 2) | (value >> 6)) & 0x3ff;
 }
@@ -228,9 +203,14 @@ function pack1010102InPlaceFromRgba8(rgba: Uint8ClampedArray, width: number, hei
     return out;
 }
 
-export async function processJpegHdr(file: File): Promise<HdrIntentJpegResult> {
-    let buffer: Uint8Array | null = new Uint8Array(await file.arrayBuffer());
-    const cicp = parseJpegCicpFromApp2(buffer);
+export interface ProcessJpegHdrOptions {
+    sourceBytes?: Uint8Array;
+    cicp?: JpegCicpInfo;
+}
+
+export async function processJpegHdr(file: File, options: ProcessJpegHdrOptions = {}): Promise<HdrIntentJpegResult> {
+    let buffer: Uint8Array | null = options.sourceBytes ?? new Uint8Array(await file.arrayBuffer());
+    const cicp = options.cicp ?? parseJpegCicpFromApp2(buffer);
     if (!isJpegHdrInputCicp(cicp)) {
         throw new Error('JPEG is not an HDR PQ/HLG input (missing or non-HDR CICP)');
     }

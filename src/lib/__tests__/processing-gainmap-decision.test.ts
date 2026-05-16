@@ -118,6 +118,15 @@ function loadJpegFixture(filename) {
   return new File([bytes], filename, { type: 'image/jpeg' });
 }
 
+function loadJpegFixtureWithArrayBufferSpy(filename) {
+  const fixturePath = path.resolve(process.cwd(), 'fixtures', filename);
+  const bytes = fs.readFileSync(fixturePath);
+  const file = new File([bytes], filename, { type: 'image/jpeg' });
+  const arrayBufferSpy = vi.fn(async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  file.arrayBuffer = arrayBufferSpy;
+  return { file, arrayBufferSpy };
+}
+
 function asciiBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
@@ -226,6 +235,21 @@ describe('processImage gain map decision (fixture driven)', () => {
     expect(extractStages(onProgress)).toContain('encode-set-hdr-intent-image');
     expect(extractStages(onProgress)).not.toContain('generate-gain-map');
     expect(gmnetCalls).toHaveLength(0);
+    consoleLogSpy.mockRestore();
+  });
+
+  it('reuses the already-read JPEG source bytes when decoding HDR-intent JPEGs', async () => {
+    const { processImage } = await import('../processing-core.js');
+    const { file, arrayBufferSpy } = loadJpegFixtureWithArrayBufferSpy('test_hdr_jpeg_davinci_resolve.jpg');
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await processImage(file, {
+      discardGainMap: false,
+      stripExif: true,
+      onProgress: vi.fn(),
+    });
+
+    expect(arrayBufferSpy).toHaveBeenCalledTimes(1);
     consoleLogSpy.mockRestore();
   });
 
