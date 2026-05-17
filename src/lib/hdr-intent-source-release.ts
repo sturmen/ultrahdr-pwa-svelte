@@ -1,5 +1,5 @@
 import type { HdrIntentPayload } from './processing-types.ts';
-import { releaseByteSource } from './byte-source-release.ts';
+import { createByteSourceReleaser } from './byte-source-release.ts';
 
 export function releaseHdrIntentSource(
   hdrIntent: HdrIntentPayload,
@@ -7,10 +7,10 @@ export function releaseHdrIntentSource(
   trigger: string,
 ): void {
   const format = hdrIntent.format;
-  releaseByteSource(hdrIntent, runtime, (sourceBytes) => ({
+  createByteSourceReleaser((releaseTrigger, sourceBytes) => ({
     type: 'hdr-intent-source-released',
-    trigger,
+    trigger: releaseTrigger,
     sourceBytes,
     format,
-  }));
+  }))(hdrIntent, runtime, trigger);
 }

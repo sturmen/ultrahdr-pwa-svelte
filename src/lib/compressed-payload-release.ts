@@ -1,4 +1,4 @@
-import { recordProcessingMemoryDiagnostics } from './diagnostics-events.ts';
+import { releaseByteSourceFields } from './byte-source-release.ts';
 
 export interface CompressedPayloadBag {
   sdrJpeg?: Uint8Array | null;
@@ -21,17 +21,10 @@ export function releaseCompressedPayloadBag(
   runtime: typeof globalThis = globalThis,
   trigger: string,
 ): void {
-  for (const field of FIELD_ORDER) {
-    const buffer = bag[field];
-    if (!buffer || buffer.byteLength === 0) {
-      continue;
-    }
-    recordProcessingMemoryDiagnostics(runtime, {
-      type: 'compressed-payload-released',
-      trigger,
-      kind: FIELD_TO_KIND[field],
-      sourceBytes: buffer.byteLength,
-    });
-    bag[field] = new Uint8Array(0);
-  }
+  releaseByteSourceFields(bag, FIELD_ORDER, runtime, (field, sourceBytes) => ({
+    type: 'compressed-payload-released',
+    trigger,
+    kind: FIELD_TO_KIND[field],
+    sourceBytes,
+  }));
 }

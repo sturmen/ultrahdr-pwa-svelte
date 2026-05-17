@@ -115,4 +115,63 @@ describe('releaseByteSource', () => {
     expect(source.data.byteLength).toBe(0);
     expect(originalAlias.byteLength).toBe(0);
   });
+
+  it('creates typed trigger-based byte-source releasers for feature-specific wrappers', async () => {
+    const runtime = createRuntime();
+    const { createByteSourceReleaser } = await import('../byte-source-release.ts');
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+    const source = { data: new Uint8Array(123) };
+
+    const releaseExampleSource = createByteSourceReleaser((trigger, sourceBytes) => ({
+      type: 'hdr-intent-source-released',
+      trigger,
+      sourceBytes,
+      format: 'rgba1010102',
+    }));
+
+    releaseExampleSource(source, runtime, 'post-copy');
+
+    expect(source.data.byteLength).toBe(0);
+    expect(diagnosticsEvents.getRecordedDiagnosticsEvents(runtime)).toEqual([
+      expect.objectContaining({
+        name: diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.hdrIntentSourceReleased,
+        context: expect.objectContaining({
+          trigger: 'post-copy',
+          sourceBytes: 123,
+          format: 'rgba1010102',
+        }),
+      }),
+    ]);
+  });
+
+  it('releases named byte fields with per-field diagnostics and empty-field skipping', async () => {
+    const runtime = createRuntime();
+    const { releaseByteSourceFields } = await import('../byte-source-release.ts');
+    const diagnosticsEvents = await import('../diagnostics-events.ts');
+    const bag = {
+      baseJpeg: new Uint8Array(12),
+      gainMapJpeg: new Uint8Array(0),
+      exif: new Uint8Array(34),
+    };
+
+    releaseByteSourceFields(
+      bag,
+      ['baseJpeg', 'gainMapJpeg', 'exif'] as const,
+      runtime,
+      (field, sourceBytes) => ({
+        type: 'compressed-payload-released',
+        trigger: 'post-set-compressed-payloads',
+        kind: field === 'baseJpeg' ? 'base-jpeg' : field,
+        sourceBytes,
+      }),
+    );
+
+    expect(bag.baseJpeg.byteLength).toBe(0);
+    expect(bag.gainMapJpeg.byteLength).toBe(0);
+    expect(bag.exif.byteLength).toBe(0);
+    const events = diagnosticsEvents
+      .getRecordedDiagnosticsEvents(runtime)
+      .filter((event) => event.name === diagnosticsEvents.DIAGNOSTICS_EVENT_NAMES.processingMemory.compressedPayloadReleased);
+    expect(events.map((event) => event.context?.kind)).toEqual(['base-jpeg', 'exif']);
+  });
 });

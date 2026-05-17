@@ -1,20 +1,22 @@
-import { releaseByteSource } from './byte-source-release.ts';
+import { createByteSourceReleaser } from './byte-source-release.ts';
 
 export interface GmnetGainMapImageLike {
   data: Uint8ClampedArray | Uint8Array;
 }
+
+const releaseGmnetGainMapBytes = createByteSourceReleaser((trigger, sourceBytes) => ({
+  type: 'gmnet-gain-map-source-released',
+  trigger,
+  sourceBytes,
+}), {
+  detachBuffer: true,
+  createEmptyData: () => new Uint8ClampedArray(0),
+});
 
 export function releaseGmnetGainMapSource(
   image: GmnetGainMapImageLike,
   runtime: typeof globalThis = globalThis,
   trigger: string,
 ): void {
-  releaseByteSource(image, runtime, (sourceBytes) => ({
-    type: 'gmnet-gain-map-source-released',
-    trigger,
-    sourceBytes,
-  }), {
-    detachBuffer: true,
-    createEmptyData: () => new Uint8ClampedArray(0),
-  });
+  releaseGmnetGainMapBytes(image, runtime, trigger);
 }
