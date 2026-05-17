@@ -1079,10 +1079,13 @@ test.describe('UltraHDR PWA E2E Tests', () => {
             const startedAt = Date.now();
             let errorText: string | null = null;
             while (Date.now() - startedAt < PROCESSING_TIMEOUT) {
-                errorText = await page.evaluate(() => {
-                    const error = document.querySelector('.error p');
-                    return error ? error.textContent : null;
-                });
+                const snapshot = await getProcessingSnapshot(page);
+                if (snapshot.mobileInferenceWarningOpen) {
+                    await acknowledgeMobileInferenceWarningIfVisible(page);
+                    continue;
+                }
+
+                errorText = snapshot.errorText;
                 if (errorText) {
                     break;
                 }

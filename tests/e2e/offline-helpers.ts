@@ -185,7 +185,6 @@ export async function clearOfflineRuntimeBundle(page: Page): Promise<void> {
   await page.evaluate(async (storageKey) => {
     window.localStorage.removeItem(storageKey);
     const prefixes = [
-      'uhdr-runtime',
       'uhdr-wasm-assets',
       'uhdr-libheif-assets',
       'uhdr-ai-models',
