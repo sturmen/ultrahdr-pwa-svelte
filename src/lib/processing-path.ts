@@ -1,6 +1,11 @@
 import { probeHeifProcessingPathFromHeaders } from './input-exif.js';
 import { parseJpegCicpFromApp2, isJpegHdrInputCicp } from './jpeg-hdr-processing.ts';
-import { isHeifFamilyBlob, isJpegFamilyBlob } from './image-family.ts';
+import {
+  getFileExtension,
+  isHeifFamilyBlob,
+  isJpegFamilyBlob,
+  isTiffFamilyBlob,
+} from './image-family.ts';
 import {
   isHdrIntentHeifResult,
   isHdrIntentJpegResult,
@@ -95,8 +100,9 @@ export async function classifyInputProcessingPath(
     return 'generated';
   }
 
-  const fileName = file instanceof File ? file.name.toLowerCase() : '';
-  if (file instanceof File && fileName.endsWith('.hif')) {
+  const fileName = file instanceof File ? file.name : '';
+  const extension = getFileExtension(fileName);
+  if (file instanceof File && extension === '.hif') {
     const processHeifHdr = await getProcessHeifHdr();
     const converted = await processHeifHdr(file);
     return isHdrIntentHeifResult(converted)
@@ -104,7 +110,7 @@ export async function classifyInputProcessingPath(
       : 'generated';
   }
 
-  if (file instanceof File && (fileName.endsWith('.heic') || fileName.endsWith('.heif'))) {
+  if (file instanceof File && isHeifFamilyBlob(file)) {
     const processHeic = await getProcessHeic();
     const converted = await processHeic(file, options);
     if (isHdrIntentHeifResult(converted)) {
@@ -116,17 +122,13 @@ export async function classifyInputProcessingPath(
     return 'generated';
   }
 
-  if (fileName.endsWith('.tif') || fileName.endsWith('.tiff')) {
+  if (isTiffFamilyBlob(file)) {
     const processTiff = await getProcessTiff();
     await processTiff(file);
     return 'generated';
   }
 
-  const isJpeg =
-    file.type === 'image/jpeg'
-    || fileName.endsWith('.jpg')
-    || fileName.endsWith('.jpeg');
-  if (isJpeg) {
+  if (isJpegFamilyBlob(file)) {
     const fileBuffer = new Uint8Array(await file.arrayBuffer());
     if (await isUhdrImageWithDecoderFallback(fileBuffer)) {
       return 'preserved';

@@ -111,6 +111,7 @@
     recordUserDiagnostics,
   } from "./diagnostics-events.ts";
   import { bumpAppMountCounter } from "./app-mount-counter.ts";
+  import { ACCEPTED_IMAGE_INPUT_TYPES } from "./image-family.ts";
   import type { OfflineReadinessState } from "./offline-readiness.ts";
 
   type AutomationEnqueueFilesOptions = {
@@ -3496,7 +3497,7 @@
               type="file"
               id="add-files"
               multiple={ !restrictUploadToSingleFile }
-              accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.hif,.tif,.tiff"
+              accept={ACCEPTED_IMAGE_INPUT_TYPES}
               style="display: none;"
               on:change={handleAddFiles}
             />

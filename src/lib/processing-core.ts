@@ -23,6 +23,7 @@ import {
 } from './image-utils.js';
 import { rotateJpeg } from './jpegtran-rotate.js';
 import { IMAGE_MAX_LONG_EDGE } from './constants.ts';
+import { getFileExtension, isHeifFamilyBlob, isTiffFamilyBlob } from './image-family.ts';
 import { DEFAULT_MAX_CONTENT_BOOST } from './max-content-boost.js';
 import { releaseHdrIntentSource } from './hdr-intent-source-release.ts';
 import { releaseSdrPixelSource } from './sdr-pixel-source-release.ts';
@@ -1600,8 +1601,8 @@ async function preprocessFile(
     file: File,
     options: ProcessOptions,
 ): Promise<File | HdrIntentHeifResult | DecodedRasterImage | PreservedHeifResult> {
-    const name = file.name.toLowerCase();
-    if (name.endsWith('.hif')) {
+    const extension = getFileExtension(file.name);
+    if (extension === '.hif') {
         console.log('[Process] Detected HIF, decoding HDR intent...');
         try {
             const processHeifHdr = await getProcessHeifHdr();
@@ -1612,7 +1613,7 @@ async function preprocessFile(
             console.error('[Process] HIF HDR-intent decode failed:', e);
             throw e;
         }
-    } else if (name.endsWith('.heic') || name.endsWith('.heif')) {
+    } else if (isHeifFamilyBlob(file)) {
         console.log('[Process] Detected HEIC/HEIF, converting...');
         try {
             const processHeic = await getProcessHeic();
@@ -1625,7 +1626,7 @@ async function preprocessFile(
             console.error('[Process] HEIC conversion failed:', e);
             throw e;
         }
-    } else if (name.endsWith('.tif') || name.endsWith('.tiff')) {
+    } else if (isTiffFamilyBlob(file)) {
         console.log('[Process] Detected TIFF, converting...');
         try {
             const processTiff = await getProcessTiff();

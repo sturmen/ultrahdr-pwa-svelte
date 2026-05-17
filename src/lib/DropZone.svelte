@@ -1,39 +1,63 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
+  import {
+    ACCEPTED_IMAGE_INPUT_TYPES,
+    isSupportedImageInputName,
+  } from "./image-family.ts";
 
   export let allowMultiple = true;
 
-  const dispatch = createEventDispatcher();
+  type DropZoneEvents = {
+    files: File[];
+  };
+
+  type FileSystemEntryLike = {
+    isFile: boolean;
+    isDirectory: boolean;
+    name: string;
+    file?: (
+      successCallback: (file: File) => void,
+      errorCallback?: (error: DOMException) => void,
+    ) => void;
+    createReader?: () => {
+      readEntries: (
+        successCallback: (entries: FileSystemEntryLike[]) => void,
+        errorCallback?: (error: DOMException) => void,
+      ) => void;
+    };
+  };
+
+  type DataTransferItemWithDirectoryApis = DataTransferItem & {
+    webkitGetAsEntry?: () => FileSystemEntryLike | null;
+    getAsFileSystemHandle?: () => Promise<FileSystemHandleLike | null>;
+  };
+
+  type FileSystemHandleLike = {
+    kind?: string;
+    getFile?: () => Promise<File>;
+    values?: () => AsyncIterable<FileSystemHandleLike>;
+  };
+
+  const dispatch = createEventDispatcher<DropZoneEvents>();
   let isDragOver = false;
   let isDesktopLayout = false;
 
-  // Eligible image extensions (lowercase)
-  const ELIGIBLE_EXTENSIONS = [
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".heic",
-    ".heif",
-    ".hif",
-    ".tif",
-    ".tiff",
-  ];
-
-  function isEligibleFile(fileName) {
-    const lowerName = fileName.toLowerCase();
-    return ELIGIBLE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+  function isEligibleFile(fileName: string): boolean {
+    return isSupportedImageInputName(fileName);
   }
 
   // Recursively read all files from a FileSystemDirectoryEntry
-  async function readDirectoryRecursively(directoryEntry) {
-    const files = [];
-    const reader = directoryEntry.createReader();
+  async function readDirectoryRecursively(directoryEntry: FileSystemEntryLike): Promise<File[]> {
+    const files: File[] = [];
+    const reader = directoryEntry.createReader?.();
+    if (!reader) {
+      return files;
+    }
 
     // readEntries may not return all entries in one call, so we loop
-    const readAllEntries = () => {
+    const readAllEntries = (): Promise<FileSystemEntryLike[]> => {
       return new Promise((resolve, reject) => {
-        const allEntries = [];
+        const allEntries: FileSystemEntryLike[] = [];
         const readBatch = () => {
           reader.readEntries((entries) => {
             if (entries.length === 0) {
@@ -53,8 +77,8 @@
     for (const entry of entries) {
       if (entry.isFile) {
         try {
-          const file = await new Promise((resolve, reject) => {
-            entry.file(resolve, reject);
+          const file = await new Promise<File>((resolve, reject) => {
+            entry.file?.(resolve, reject);
           });
           if (isEligibleFile(file.name)) {
             files.push(file);
@@ -71,7 +95,7 @@
     return files;
   }
 
-  async function readHandleRecursively(handle) {
+  async function readHandleRecursively(handle: FileSystemHandleLike | null): Promise<File[]> {
     if (!handle || typeof handle !== "object") {
       return [];
     }
@@ -89,7 +113,7 @@
       return [];
     }
 
-    const files = [];
+    const files: File[] = [];
     try {
       for await (const childHandle of handle.values()) {
         const childFiles = await readHandleRecursively(childHandle);
@@ -102,8 +126,11 @@
   }
 
   // Extract files from DataTransferItemList, handling both files and directories
-  async function extractFilesFromDataTransfer(dataTransfer) {
-    const files = [];
+  async function extractFilesFromDataTransfer(dataTransfer: DataTransfer | null): Promise<File[]> {
+    const files: File[] = [];
+    if (!dataTransfer) {
+      return files;
+    }
     const items = dataTransfer.items;
 
     if (!items) {
@@ -113,10 +140,10 @@
       );
     }
 
-    const promises = [];
+    const promises: Promise<File[]>[] = [];
 
     for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+      const item = items[i] as DataTransferItemWithDirectoryApis;
       if (item.kind === "file") {
         if (typeof item.getAsFileSystemHandle === "function") {
           promises.push(
@@ -141,8 +168,8 @@
             promises.push(
               (async () => {
                 try {
-                  const file = await new Promise((resolve, reject) => {
-                    entry.file(resolve, reject);
+                  const file = await new Promise<File>((resolve, reject) => {
+                    entry.file?.(resolve, reject);
                   });
                   if (isEligibleFile(file.name)) {
                     return [file];
@@ -174,12 +201,12 @@
     return files;
   }
 
-  function normalizeSelectedFiles(fileCollection) {
+  function normalizeSelectedFiles(fileCollection: FileList | File[]): File[] {
     const files = Array.from(fileCollection || []);
     return allowMultiple ? files : files.slice(0, 1);
   }
 
-  function handleDragOver(e) {
+  function handleDragOver(e: DragEvent) {
     e.preventDefault();
     isDragOver = true;
   }
@@ -188,7 +215,7 @@
     isDragOver = false;
   }
 
-  async function handleDrop(e) {
+  async function handleDrop(e: DragEvent) {
     e.preventDefault();
     isDragOver = false;
 
@@ -198,15 +225,16 @@
     }
   }
 
-  function handleFiles(e) {
-    if (e.target.files && e.target.files.length > 0) {
-      dispatch("files", normalizeSelectedFiles(e.target.files));
+  function handleFiles(e: Event) {
+    const target = e.target as HTMLInputElement | null;
+    if (target?.files && target.files.length > 0) {
+      dispatch("files", normalizeSelectedFiles(target.files));
     }
   }
 
   onMount(() => {
-    let mediaQuery = null;
-    let handleMediaChange = null;
+    let mediaQuery: MediaQueryList | null = null;
+    let handleMediaChange: ((event: MediaQueryListEvent) => void) | null = null;
 
     if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
       mediaQuery = window.matchMedia("(min-width: 1024px)");
@@ -249,7 +277,7 @@
     type="file"
     id="file-upload"
     multiple={allowMultiple}
-    accept="image/jpeg,image/jpg,image/png,image/webp,.heic,.heif,.hif,.tif,.tiff"
+    accept={ACCEPTED_IMAGE_INPUT_TYPES}
     on:change={handleFiles}
     hidden
   />

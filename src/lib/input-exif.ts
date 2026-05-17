@@ -1,4 +1,12 @@
 import { extractExifPayloadFromJpeg } from './exif-utils.js';
+import {
+  isHeifFamilyBlob,
+  isJpegFamilyBlob,
+  isPngFamilyBlob,
+  isTiffFamilyBlob,
+  isWebpFamilyBlob,
+  getFileExtension,
+} from './image-family.ts';
 import type { ProcessingPathClassification } from './processing-types.js';
 
 type InputExifProbeSink = (substage: string) => void;
@@ -209,36 +217,24 @@ function canonicalizeExifPayload(bytes: Uint8Array): Uint8Array | null {
   return null;
 }
 
-function getExtension(fileName: string): string {
-  const index = fileName.lastIndexOf('.');
-  return index === -1 ? '' : fileName.slice(index).toLowerCase();
+function isJpegInput(mimeType: string, extension: string): boolean {
+  return isJpegFamilyBlob({ type: mimeType, name: `input${extension}` });
 }
 
-function isJpegInput(mimeType: string, extension: string): boolean {
-  return (
-    mimeType === 'image/jpeg' ||
-    mimeType === 'image/jpg' ||
-    extension === '.jpg' ||
-    extension === '.jpeg'
-  );
+function getExtension(fileName: string): string {
+  return getFileExtension(fileName);
 }
 
 function isPngInput(mimeType: string, extension: string): boolean {
-  return mimeType === 'image/png' || extension === '.png';
+  return isPngFamilyBlob({ type: mimeType, name: `input${extension}` });
 }
 
 function isWebpInput(mimeType: string, extension: string): boolean {
-  return mimeType === 'image/webp' || extension === '.webp';
+  return isWebpFamilyBlob({ type: mimeType, name: `input${extension}` });
 }
 
 function isHeifInput(mimeType: string, extension: string): boolean {
-  return (
-    mimeType === 'image/heic' ||
-    mimeType === 'image/heif' ||
-    extension === '.heic' ||
-    extension === '.heif' ||
-    extension === '.hif'
-  );
+  return isHeifFamilyBlob({ type: mimeType, name: `input${extension}` });
 }
 
 function hasAsciiMarker(bytes: Uint8Array, marker: string): boolean {
@@ -262,7 +258,7 @@ function hasAsciiMarker(bytes: Uint8Array, marker: string): boolean {
 }
 
 function isTiffInput(mimeType: string, extension: string): boolean {
-  return mimeType === 'image/tiff' || extension === '.tif' || extension === '.tiff';
+  return isTiffFamilyBlob({ type: mimeType, name: `input${extension}` });
 }
 
 function readUInt16(bytes: Uint8Array, offset: number, littleEndian: boolean): number | null {
